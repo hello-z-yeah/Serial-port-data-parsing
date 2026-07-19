@@ -712,6 +712,21 @@ class ProtocolParserApp:
             self.serial_text.insert("end", f"{result.cmd_name}")
             if result.direction:
                 self.serial_text.insert("end", f" [{result.direction}]")
+            # 非详细模式也显示数据段解析内容（只显示数据字段，不显示帧结构字段）
+            data_fields = []
+            in_data_section = False
+            for f in result.fields:
+                ftype = f.get("type", "")
+                fname = f.get("name", "")
+                ftext = f.get("text", "")
+                if ftype == "separator":
+                    in_data_section = True
+                    continue
+                if in_data_section and ftype not in ("header", "version", "cmd", "length", "checksum"):
+                    if ftext:
+                        data_fields.append(f"{fname}={ftext}")
+            if data_fields:
+                self.serial_text.insert("end", f"  {{ {', '.join(data_fields)} }}", "field")
             self.serial_text.insert("end", f"  | {result.raw_hex}\n", "raw")
 
         if self.autoscroll_var.get():

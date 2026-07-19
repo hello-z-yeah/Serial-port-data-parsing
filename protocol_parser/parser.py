@@ -1042,28 +1042,25 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
         elif direction == "response":
             chosen_def, chosen_dir = resp_def, "response"
         else:
-            # 自动识别：尝试两个方向，挑选无错误的；都无错时优先 response（因为请求多为 raw）
+            # 自动识别：尝试两个方向，挑选无错误的；都无错时优先 request
+            # （V3.0 协议中大多数命令是模组主动发起的：心跳、查询、状态上报等）
             req_results, req_ok = _try_parse_direction(frame.data, req_def, cfg)
             resp_results, resp_ok = _try_parse_direction(frame.data, resp_def, cfg)
 
-            if resp_ok and not req_ok:
-                chosen_def, chosen_dir = resp_def, "response"
-                field_results = resp_results
-            elif req_ok and not resp_ok:
+            if req_ok and not resp_ok:
                 chosen_def, chosen_dir = req_def, "request"
                 field_results = req_results
-            elif req_ok and resp_ok:
-                # 都成功：选字段更多的（信息量更大）
-                if len(resp_results) >= len(req_results):
-                    chosen_def, chosen_dir = resp_def, "response"
-                    field_results = resp_results
-                else:
-                    chosen_def, chosen_dir = req_def, "request"
-                    field_results = req_results
-            else:
-                # 都失败：用 response 的结果（通常更结构化）
+            elif resp_ok and not req_ok:
                 chosen_def, chosen_dir = resp_def, "response"
                 field_results = resp_results
+            elif req_ok and resp_ok:
+                # 都成功：优先 request（模组发送），因为模组是主动方
+                chosen_def, chosen_dir = req_def, "request"
+                field_results = req_results
+            else:
+                # 都失败：用 request 的结果
+                chosen_def, chosen_dir = req_def, "request"
+                field_results = req_results
 
         # 重新解析（已选定方向）
         if direction is not None or not field_results:

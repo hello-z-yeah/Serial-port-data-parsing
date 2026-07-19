@@ -81,167 +81,167 @@
   "commands": [
     {
       "cmd_code": "0x20",
-      "name": "心跳检测 HeartbeatDetect",
+      "name": "心跳检测",
       "description": "模组检测MCU是否存在或是否重启复位，10s发送一次",
-      "request":  {"format": "module_status", "name": "模组→MCU 心跳"},
-      "response": {"format": "heartbeat_resp", "name": "MCU→模组 心跳响应"}
+      "request":  {"format": "module_status", "name": "模组→MCU"},
+      "response": {"format": "heartbeat_resp", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x21",
-      "name": "查询设备信息 GetDevInfo",
+      "name": "查询设备信息",
       "description": "模组查询设备信息，包含版本号",
-      "request":  {"format": "raw", "name": "查询请求"},
-      "response": {"format": "dev_version", "name": "设备信息响应"}
+      "request":  {"format": "raw", "name": "模组→MCU"},
+      "response": {"format": "dev_version", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x23",
-      "name": "设备配网 NetConfig",
+      "name": "设备配网",
       "description": "MCU发送配网命令，重置设备进入配网模式",
-      "request":  {"format": "net_config", "name": "MCU配网请求"},
-      "response": {"format": "raw", "name": "模组确认"}
+      "request":  {"format": "net_config", "name": "MCU→模组"},
+      "response": {"format": "raw", "name": "模组→MCU"}
     },
     {
       "cmd_code": "0x22",
-      "name": "报告模组工作状态 NotifyStatus",
+      "name": "报告模组工作状态",
       "description": "模组主动检测自身状态变化，将变化后的状态值及时告知MCU",
-      "request":  {"format": "module_status", "name": "模组状态通知"},
-      "response": {"format": "raw", "name": "MCU确认"}
+      "request":  {"format": "module_status", "name": "模组→MCU"},
+      "response": {"format": "raw", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x01",
-      "name": "命令下发 Set",
+      "name": "命令下发",
       "description": "模组下发控制命令（消息id + 属性单元）",
-      "request":  {"format": "msg_id_then_attr", "name": "模组→MCU 命令"},
-      "response": {"format": "msg_id", "name": "MCU→模组 应答"}
+      "request":  {"format": "msg_id_then_attr", "name": "模组→MCU"},
+      "response": {"format": "msg_id", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x10",
-      "name": "状态上报 Report",
+      "name": "状态上报",
       "description": "MCU主动检测到自身属性值发生变化，及时上报变化值",
-      "request":  {"format": "attr_list", "name": "MCU→模组 上报"},
-      "response": {"format": "raw", "name": "模组应答"}
+      "request":  {"format": "attr_list", "name": "MCU→模组"},
+      "response": {"format": "raw", "name": "模组→MCU"}
     },
     {
       "cmd_code": "0x24",
-      "name": "获取设备快照 GetDevSnapshot",
+      "name": "获取设备快照",
       "description": "获取设备本身所有属性值",
-      "request":  {"format": "raw", "name": "获取快照请求"},
-      "response": {"format": "attr_list", "name": "MCU返回快照"}
+      "request":  {"format": "raw", "name": "模组→MCU"},
+      "response": {"format": "attr_list", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x03",
-      "name": "获取设备属性值 Get",
+      "name": "获取设备属性值",
       "description": "模组查询指定属性",
-      "request":  {"format": "msg_id_then_attr_unit", "name": "查询属性请求"},
-      "response": {"format": "msg_id_then_attr", "name": "MCU返回属性值"}
+      "request":  {"format": "msg_id_then_attr_unit", "name": "模组→MCU"},
+      "response": {"format": "msg_id_then_attr", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x50",
-      "name": "获取模组信息 GetMod",
+      "name": "获取模组信息",
       "description": "测试工具获取模组信息",
-      "request":  {"format": "attr_unit", "name": "查询模组信息"},
-      "response": {"format": "errcode_then_attr", "name": "模组返回信息"}
+      "request":  {"format": "attr_unit", "name": "MCU→模组"},
+      "response": {"format": "errcode_then_attr", "name": "模组→MCU"}
     },
     {
       "cmd_code": "0x51",
-      "name": "设置模组信息 SetMod",
+      "name": "设置模组信息",
       "description": "测试工具设置模组信息",
-      "request":  {"format": "attr_list", "name": "设置模组信息"},
-      "response": {"format": "errcode", "name": "模组确认"}
+      "request":  {"format": "attr_list", "name": "MCU→模组"},
+      "response": {"format": "errcode", "name": "模组→MCU"}
     },
     {
       "cmd_code": "0x11",
-      "name": "设备上报事件 Event",
+      "name": "设备上报事件",
       "description": "MCU上报事件",
-      "request":  {"format": "event", "name": "MCU上报事件"},
-      "response": {"format": "raw", "name": "模组确认"}
+      "request":  {"format": "event", "name": "MCU→模组"},
+      "response": {"format": "raw", "name": "模组→MCU"}
     },
     {
       "cmd_code": "0x12",
-      "name": "模组下发行为 Action",
+      "name": "模组下发行为",
       "description": "模组下发行为",
-      "request":  {"format": "msg_id_then_action", "name": "模组下发行为"},
-      "response": {"format": "msg_id_then_action", "name": "MCU回复行为"}
+      "request":  {"format": "msg_id_then_action", "name": "模组→MCU"},
+      "response": {"format": "msg_id_then_action", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x25",
-      "name": "报告MCU工作状态 NotifyMCUStatus",
+      "name": "报告MCU工作状态",
       "description": "MCU通知模组进入低功耗",
-      "request":  {"format": "mcu_status", "name": "MCU状态通知"},
-      "response": {"format": "raw", "name": "模组确认"}
+      "request":  {"format": "mcu_status", "name": "MCU→模组"},
+      "response": {"format": "raw", "name": "模组→MCU"}
     },
     {
       "cmd_code": "0x26",
-      "name": "获取时间 GetTime",
+      "name": "获取时间",
       "description": "MCU获取时间",
-      "request":  {"format": "get_time", "name": "获取时间请求"},
-      "response": {"format": "get_time_resp", "name": "模组返回时间"}
+      "request":  {"format": "get_time", "name": "MCU→模组"},
+      "response": {"format": "get_time_resp", "name": "模组→MCU"}
     },
     {
       "cmd_code": "0x02",
-      "name": "服务设置 ServiceSet",
+      "name": "服务设置",
       "description": "MCU打开模组某项服务",
-      "request":  {"format": "service_set", "name": "服务设置请求"},
-      "response": {"format": "errcode", "name": "服务设置响应"}
+      "request":  {"format": "service_set", "name": "MCU→模组"},
+      "response": {"format": "errcode", "name": "模组→MCU"}
     },
     {
       "cmd_code": "0x60",
-      "name": "产测状态通知 productNotify",
+      "name": "产测状态通知",
       "description": "模组发送产测状态",
-      "request":  {"format": "product_test", "name": "产测状态通知"},
-      "response": {"format": "raw", "name": "MCU确认"}
+      "request":  {"format": "product_test", "name": "模组→MCU"},
+      "response": {"format": "raw", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x61",
-      "name": "设置产测模式 productSet",
+      "name": "设置产测模式",
       "description": "MCU设置产测模式",
-      "request":  {"format": "product_set", "name": "设置产测模式"},
-      "response": {"format": "raw", "name": "模组确认"}
+      "request":  {"format": "product_set", "name": "MCU→模组"},
+      "response": {"format": "raw", "name": "模组→MCU"}
     },
     {
       "cmd_code": "0x30",
-      "name": "OTA升级启动 StartOTA",
+      "name": "OTA升级启动",
       "description": "模组通知MCU开始升级",
-      "request":  {"format": "ota_start", "name": "OTA启动请求"},
-      "response": {"format": "errcode", "name": "MCU回复启动结果"}
+      "request":  {"format": "ota_start", "name": "模组→MCU"},
+      "response": {"format": "errcode", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x31",
-      "name": "OTA升级包传输 OTATransfer",
+      "name": "OTA升级包传输",
       "description": "模组下发固件数据",
-      "request":  {"format": "partition_pkg", "name": "OTA固件数据"},
-      "response": {"format": "errcode_then_partition", "name": "MCU回复传输结果"}
+      "request":  {"format": "partition_pkg", "name": "模组→MCU"},
+      "response": {"format": "errcode_then_partition", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x32",
-      "name": "查询固件数据校验 QueryCRC",
+      "name": "查询固件数据校验",
       "description": "模组查询固件数据CRC",
-      "request":  {"format": "raw", "name": "查询CRC请求"},
-      "response": {"format": "ota_crc", "name": "MCU回复CRC"}
+      "request":  {"format": "raw", "name": "模组→MCU"},
+      "response": {"format": "ota_crc", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x33",
-      "name": "固件验签 VerifyFirmware",
+      "name": "固件验签",
       "description": "模组开始固件验签",
-      "request":  {"format": "ota_verify", "name": "固件验签请求"},
-      "response": {"format": "errcode", "name": "MCU回复验签结果"}
+      "request":  {"format": "ota_verify", "name": "模组→MCU"},
+      "response": {"format": "errcode", "name": "MCU→模组"}
     }
   ],
   "attributes": {
     "0x00": {
-      "name": "电机控制 motor-control",
+      "name": "电机控制",
       "typeid": 2,
       "access": "只写",
       "enum": {"0": "暂停", "1": "上升", "2": "下降"}
     },
     "0x01": {
-      "name": "工作状态 status",
+      "name": "工作状态",
       "typeid": 2,
       "access": "读",
       "enum": {"0": "停止", "1": "上升中", "2": "下降中"}
     },
     "0x02": {
-      "name": "故障 fault",
+      "name": "故障",
       "typeid": 2,
       "access": "读",
       "enum": {
@@ -251,106 +251,106 @@
       }
     },
     "0x03": {
-      "name": "童锁 physical-controls-locked",
+      "name": "童锁",
       "typeid": 0,
       "access": "读写",
       "enum": {"0": "关闭", "1": "打开"}
     },
     "0x04": {
-      "name": "实时高度 real-time-height",
+      "name": "实时高度",
       "typeid": 4,
       "access": "读",
       "unit": "mm",
       "range": "635~1235"
     },
     "0x05": {
-      "name": "记忆挡位1 memory-one",
+      "name": "记忆挡位1",
       "typeid": 4,
       "access": "读写",
       "unit": "mm",
       "range": "635~1235"
     },
     "0x06": {
-      "name": "记忆挡位2 memory-two",
+      "name": "记忆挡位2",
       "typeid": 4,
       "access": "读写",
       "unit": "mm",
       "range": "635~1235"
     },
     "0x07": {
-      "name": "记忆挡位3 memory-three",
+      "name": "记忆挡位3",
       "typeid": 4,
       "access": "读写",
       "unit": "mm",
       "range": "635~1235"
     },
     "0x08": {
-      "name": "记忆挡位4 memory-four",
+      "name": "记忆挡位4",
       "typeid": 4,
       "access": "读写",
       "unit": "mm",
       "range": "635~1235"
     },
     "0x09": {
-      "name": "执行记忆挡位 action-memory",
+      "name": "执行记忆挡位",
       "typeid": 2,
       "access": "读写",
       "enum": {"0": "NONE", "1": "ACTION 1", "2": "ACTION 2", "3": "ACTION 3", "4": "ACTION 4"}
     },
     "0x0A": {
-      "name": "久坐提醒 sit-reminder",
+      "name": "久坐提醒",
       "typeid": 2,
       "access": "读写",
       "unit": "分钟",
       "range": "0~99"
     },
     "0x0B": {
-      "name": "设定上限 set-upper-limit",
+      "name": "设定上限",
       "typeid": 4,
       "access": "读写",
       "unit": "mm",
       "range": "635~1235"
     },
     "0x0C": {
-      "name": "设定下限 set-lower-limit",
+      "name": "设定下限",
       "typeid": 4,
       "access": "读写",
       "unit": "mm",
       "range": "635~1235"
     },
     "0x0D": {
-      "name": "设置高度 set-height",
+      "name": "设置高度",
       "typeid": 4,
       "access": "读写",
       "unit": "mm",
       "range": "635~1235"
     },
     "0x0E": {
-      "name": "一键复位 one-click-reset",
+      "name": "一键复位",
       "typeid": 0,
       "access": "读写",
       "enum": {"0": "关闭", "1": "打开"}
     },
     "0x0F": {
-      "name": "复位状态 reset-status",
+      "name": "复位状态",
       "typeid": 2,
       "access": "读",
       "enum": {"0": "NONE", "1": "Resetting", "2": "Reset Complete", "3": "Reset Failed"}
     },
     "0x10": {
-      "name": "升降次数 lifting-times",
+      "name": "升降次数",
       "typeid": 4,
       "access": "读",
       "range": "0~65535"
     },
     "0xE0": {
-      "name": "站立状态检测 stand-status",
+      "name": "站立状态检测",
       "typeid": 2,
       "access": "读",
       "enum": {"0": "NO", "1": "YES"}
     },
     "0x12": {
-      "name": "站立时长 stand-time",
+      "name": "站立时长",
       "typeid": 6,
       "access": "仅上报",
       "range": "0~4294967295"
