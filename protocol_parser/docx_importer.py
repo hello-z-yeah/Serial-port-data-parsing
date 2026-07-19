@@ -10,7 +10,7 @@
     cfg = import_from_docx("协议.docx")
     # 保存为 JSON
     import json
-    with open("protocols/my_product.json", "w", encoding="utf-8") as f:
+    with open("product/my_product.json", "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 """
 from __future__ import annotations

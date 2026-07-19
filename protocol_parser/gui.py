@@ -709,6 +709,7 @@ class ProtocolParserApp:
 # ---------- 入口 ----------
 
 def main() -> int:
+    init_protocol_dir()
     root = tk.Tk()
     app = ProtocolParserApp(root)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
