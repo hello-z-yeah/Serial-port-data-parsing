@@ -913,6 +913,87 @@ class ParseResult:
         return d
 
 
+def _build_frame_fields(frame: Frame, cfg: dict, cmd_name: str = "") -> list[FieldResult]:
+    """构建帧结构基础字段列表（帧头、版本、命令字、长度、校验）。"""
+    frame_cfg = cfg.get("frame", {})
+    results: list[FieldResult] = []
+    header_size = frame_cfg.get("header_size", 2)
+    ver_offset = frame_cfg.get("ver_offset", 2)
+    ver_size = frame_cfg.get("ver_size", 1)
+    cmd_offset = frame_cfg.get("cmd_offset", 3)
+    length_offset = frame_cfg.get("length_offset", 4)
+    length_size = frame_cfg.get("length_size", 2)
+
+    # 帧头
+    results.append(FieldResult(
+        name="帧头",
+        type="header",
+        value=frame.header,
+        text=f"0x{frame.header:0{header_size*2}X}",
+        offset=0,
+        length=header_size,
+        raw=frame.raw[:header_size],
+    ))
+
+    # 版本
+    results.append(FieldResult(
+        name="版本",
+        type="version",
+        value=frame.ver,
+        text=f"0x{frame.ver:02X}",
+        offset=ver_offset,
+        length=ver_size,
+        raw=frame.raw[ver_offset:ver_offset + ver_size],
+    ))
+
+    # 命令字
+    cmd_label = f"0x{frame.cmd_code:02X}"
+    if cmd_name:
+        cmd_label += f" {cmd_name}"
+    results.append(FieldResult(
+        name="命令字",
+        type="cmd",
+        value=frame.cmd_code,
+        text=cmd_label,
+        offset=cmd_offset,
+        length=1,
+        raw=frame.raw[cmd_offset:cmd_offset + 1],
+    ))
+
+    # 数据长度
+    results.append(FieldResult(
+        name="数据长度",
+        type="length",
+        value=frame.length,
+        text=f"{frame.length} 字节 (0x{frame.length:04X})",
+        offset=length_offset,
+        length=length_size,
+        raw=frame.raw[length_offset:length_offset + length_size],
+    ))
+
+    # 校验和
+    if frame.checksum_ok is not None and frame.checksum_expected is not None:
+        cs_text = to_hex(frame.checksum_expected)
+        if frame.checksum_ok:
+            cs_text += " [通过]"
+        else:
+            cs_text += " [失败]"
+            if frame.checksum_actual is not None:
+                cs_text += f" (期望 {to_hex(frame.checksum_actual)})"
+        cs_offset = len(frame.raw) - len(frame.checksum_expected)
+        results.append(FieldResult(
+            name="校验和",
+            type="checksum",
+            value=frame.checksum_expected.hex().upper(),
+            text=cs_text,
+            offset=cs_offset,
+            length=len(frame.checksum_expected),
+            raw=frame.checksum_expected,
+        ))
+
+    return results
+
+
 def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseResult:
     """解析一条完整指令。
 
@@ -939,6 +1020,7 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
 
     cmd = find_command(cfg, frame.cmd_code)
     if cmd is None:
+        frame_fields = _build_frame_fields(frame, cfg, "未知命令")
         return ParseResult(
             product=product,
             raw_hex=raw_hex,
@@ -947,6 +1029,7 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
             direction="",
             description=f"协议中未定义命令字 0x{frame.cmd_code:02X}",
             checksum_ok=frame.checksum_ok,
+            fields=[f.to_dict() for f in frame_fields],
         )
 
     # V3.0 双向命令：cmd 含 request/response 子对象
@@ -988,6 +1071,17 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
 
         direction_label = chosen_def.get("name", chosen_dir)
 
+        # 组合：帧结构字段 + 数据字段
+        frame_fields = _build_frame_fields(frame, cfg, cmd.get("name", ""))
+        all_fields = [f.to_dict() for f in frame_fields]
+        all_fields.append({
+            "name": "—— 数据段 ——",
+            "type": "separator",
+            "value": None,
+            "text": "",
+        })
+        all_fields.extend([f.to_dict() for f in field_results])
+
         return ParseResult(
             product=product,
             raw_hex=raw_hex,
@@ -995,7 +1089,7 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
             cmd_name=cmd.get("name", ""),
             direction=direction_label,
             description=cmd.get("description", ""),
-            fields=[f.to_dict() for f in field_results],
+            fields=all_fields,
             checksum_ok=frame.checksum_ok,
             length_match=(len(frame.data) == frame.length),
         )
@@ -1004,6 +1098,17 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
     fields_def = cmd.get("data", {})
     field_results = parse_data_fields(frame.data, fields_def, cfg)
 
+    # 组合：帧结构字段 + 数据字段
+    frame_fields = _build_frame_fields(frame, cfg, cmd.get("name", ""))
+    all_fields = [f.to_dict() for f in frame_fields]
+    all_fields.append({
+        "name": "—— 数据段 ——",
+        "type": "separator",
+        "value": None,
+        "text": "",
+    })
+    all_fields.extend([f.to_dict() for f in field_results])
+
     return ParseResult(
         product=product,
         raw_hex=raw_hex,
@@ -1011,7 +1116,7 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
         cmd_name=cmd.get("name", ""),
         direction=cmd.get("direction", ""),
         description=cmd.get("description", ""),
-        fields=[f.to_dict() for f in field_results],
+        fields=all_fields,
         checksum_ok=frame.checksum_ok,
         length_match=(len(frame.data) == frame.length),
     )

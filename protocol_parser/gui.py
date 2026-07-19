@@ -542,7 +542,15 @@ class ProtocolParserApp:
             if result.error:
                 self.output_text.insert("end", f"错误: {result.error}\n", "err")
             for f in result.fields:
-                self.output_text.insert("end", f"  · {f.get('name', ''):<24} {f.get('text', '')}\n", "field")
+                ftype = f.get("type", "")
+                fname = f.get("name", "")
+                ftext = f.get("text", "")
+                if ftype == "separator":
+                    self.output_text.insert("end", f"  {fname}\n", "header")
+                elif ftype in ("header", "version", "cmd", "length", "checksum"):
+                    self.output_text.insert("end", f"  · {fname:<22} {ftext}\n", "field")
+                else:
+                    self.output_text.insert("end", f"  · {fname:<22} {ftext}\n", "field")
             self.output_text.insert("end", "\n")
 
             if self.log_file:
@@ -648,7 +656,15 @@ class ProtocolParserApp:
             if result.error:
                 self.serial_text.insert("end", f"  错误: {result.error}\n", "err")
             for f in result.fields:
-                self.serial_text.insert("end", f"  · {f.get('name', ''):<24} {f.get('text', '')}\n", "field")
+                ftype = f.get("type", "")
+                fname = f.get("name", "")
+                ftext = f.get("text", "")
+                if ftype == "separator":
+                    self.serial_text.insert("end", f"  {fname}\n", "cmd")
+                elif ftype in ("header", "version", "cmd", "length", "checksum"):
+                    self.serial_text.insert("end", f"  · {fname:<22} {ftext}\n", "field")
+                else:
+                    self.serial_text.insert("end", f"  · {fname:<22} {ftext}\n", "field")
             self.serial_text.insert("end", "\n")
         else:
             self.serial_text.insert("end", f"[{ts_str}] ", "ts")
