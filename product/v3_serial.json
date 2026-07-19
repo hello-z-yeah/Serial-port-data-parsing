@@ -2,6 +2,8 @@
   "product": "v3_serial",
   "description": "串口接入标准协议V3.0（通用帧结构 + 21 条命令；属性表为 E5-HD 升降桌扩展）",
   "version": "3.0",
+  "system": true,
+  "protocol_version": "20260719",
   "frame": {
     "header": "0xA5A5",
     "header_size": 2,

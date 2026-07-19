@@ -2,6 +2,8 @@
   "product": "my_product",
   "description": "我的产品功能协议（示例模板）",
   "version": "1.0",
+  "system": true,
+  "protocol_version": "1",
 
   "frame": {
     "header": "0xA5A5",

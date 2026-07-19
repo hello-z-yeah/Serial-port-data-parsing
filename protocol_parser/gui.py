@@ -67,22 +67,51 @@ def get_protocol_dir() -> Path:
 
 
 def init_protocol_dir() -> None:
-    """初始化协议目录：第一次运行时从内置资源复制初始协议。
+    """初始化协议目录：从内置资源同步系统协议。
 
-    确保打包成 exe 后，用户打开就能看到默认协议（如 v3_serial）。
+    策略：
+    - 带有 "system": true 标记的协议为系统协议，每次启动时检查版本
+    - 如果内置版本比用户目录中的版本新，则自动更新（覆盖）
+    - 用户导入的协议（没有 system 标记）不会被覆盖
     """
+    import json as _json
+    import shutil
+
     user_dir = get_protocol_dir()
 
-    if any(user_dir.glob("*.json")):
+    # 从打包内置资源读取
+    bundled = resource_path("product")
+    if not bundled.exists():
         return
 
-    bundled = resource_path("product")
-    if bundled.exists():
-        import shutil
-        for f in bundled.glob("*.json"):
-            dest = user_dir / f.name
-            if not dest.exists():
-                shutil.copy2(f, dest)
+    for src_file in bundled.glob("*.json"):
+        dest = user_dir / src_file.name
+
+        # 目标文件不存在，直接复制
+        if not dest.exists():
+            shutil.copy2(src_file, dest)
+            continue
+
+        # 两个文件都存在，比较版本号
+        try:
+            with src_file.open("r", encoding="utf-8") as f:
+                src_cfg = _json.load(f)
+            with dest.open("r", encoding="utf-8") as f:
+                dst_cfg = _json.load(f)
+
+            # 只自动更新系统协议（system=true）
+            if not src_cfg.get("system", False):
+                continue
+
+            src_ver = src_cfg.get("protocol_version", "0")
+            dst_ver = dst_cfg.get("protocol_version", "0")
+
+            # 内置版本更新，覆盖用户目录中的旧版本
+            if src_ver > dst_ver:
+                shutil.copy2(src_file, dest)
+        except Exception:
+            # JSON 解析失败等异常，跳过不处理
+            continue
 
 
 # ---------- 主窗口 ----------
