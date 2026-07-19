@@ -204,9 +204,14 @@ class ProtocolParserApp:
         btns.pack(fill="x", pady=(4, 0))
         ttk.Button(btns, text="解析 (Ctrl+Enter)", command=self._parse_paste).pack(side="left")
         ttk.Button(btns, text="清空输入", command=lambda: self.input_text.delete("1.0", "end")).pack(side="left", padx=4)
-        ttk.Label(btns, text="方向:").pack(side="left", padx=(8, 0))
-        self.direction_var = tk.StringVar(value="auto")
-        ttk.Combobox(btns, textvariable=self.direction_var, values=["auto", "request", "response"], width=10, state="readonly").pack(side="left")
+        ttk.Label(btns, text="发送方:").pack(side="left", padx=(8, 0))
+        self.paste_sender_var = tk.StringVar(value="auto")
+        self.paste_sender_combo = ttk.Combobox(
+            btns, textvariable=self.paste_sender_var,
+            values=["自动识别", "模组发送", "MCU发送"],
+            width=10, state="readonly",
+        )
+        self.paste_sender_combo.pack(side="left")
 
         # 输出区
         out_frame = ttk.LabelFrame(tab, text="解析结果", padding=4)
@@ -236,7 +241,7 @@ class ProtocolParserApp:
         cfg_frame.pack(fill="x", padx=4, pady=4)
 
         ttk.Label(cfg_frame, text="串口:").grid(row=0, column=0, padx=2)
-        self.port_combo = ttk.Combobox(cfg_frame, textvariable=self.port_var, width=18)
+        self.port_combo = ttk.Combobox(cfg_frame, textvariable=self.port_var, width=36, state="readonly")
         self.port_combo.grid(row=0, column=1, padx=4)
         ttk.Button(cfg_frame, text="刷新", command=self._refresh_ports).grid(row=0, column=2, padx=2)
 
@@ -250,9 +255,19 @@ class ProtocolParserApp:
         self.detail_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(cfg_frame, text="详细模式", variable=self.detail_var).grid(row=0, column=7)
 
-        ttk.Label(cfg_frame, text="自动滚动:").grid(row=0, column=8, padx=(10, 2))
+        ttk.Label(cfg_frame, text="发送方:").grid(row=0, column=8, padx=(10, 2))
+        self.serial_sender_var = tk.StringVar(value="auto")
+        self.serial_sender_combo = ttk.Combobox(
+            cfg_frame, textvariable=self.serial_sender_var,
+            values=["自动识别", "模组发送", "MCU发送"],
+            width=10, state="readonly",
+        )
+        self.serial_sender_combo.grid(row=0, column=9)
+        self.serial_sender_combo.bind("<<ComboboxSelected>>", self._on_serial_sender_change)
+
+        ttk.Label(cfg_frame, text="自动滚动:").grid(row=0, column=10, padx=(10, 2))
         self.autoscroll_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(cfg_frame, variable=self.autoscroll_var).grid(row=0, column=9)
+        ttk.Checkbutton(cfg_frame, variable=self.autoscroll_var).grid(row=0, column=11)
 
         # 实时输出区
         out_frame = ttk.LabelFrame(tab, text="实时数据", padding=4)
@@ -476,8 +491,12 @@ class ProtocolParserApp:
         if not lines:
             return
 
-        direction = self.direction_var.get()
-        direction = None if direction == "auto" else direction
+        sender = self.paste_sender_var.get()
+        direction = None
+        if sender == "模组发送":
+            direction = "request"
+        elif sender == "MCU发送":
+            direction = "response"
         sync = FrameSynchronizer(self.cfg)
         results: list[tuple[ParseResult, str]] = []
 
@@ -569,11 +588,18 @@ class ProtocolParserApp:
 
     def _refresh_ports(self) -> None:
         ports = SerialCollector.list_ports()
-        port_names = [p["device"] for p in ports]
-        self.port_combo["values"] = port_names
-        if port_names and not self.port_var.get():
+        self._port_list = ports
+        display_list = []
+        for p in ports:
+            desc = p.get("description", "")
+            if desc and desc != p["device"]:
+                display_list.append(f'{p["device"]} - {desc}')
+            else:
+                display_list.append(p["device"])
+        self.port_combo["values"] = display_list
+        if display_list and not self.port_var.get():
             self.port_combo.current(0)
-        self._set_status(f"找到 {len(port_names)} 个串口")
+        self._set_status(f"找到 {len(ports)} 个串口")
 
     def _toggle_serial(self) -> None:
         if self.is_collecting:
@@ -585,10 +611,11 @@ class ProtocolParserApp:
         if not self.cfg:
             messagebox.showwarning("提示", "请先选择产品协议")
             return
-        port = self.port_var.get()
-        if not port:
+        port_display = self.port_var.get()
+        if not port_display:
             messagebox.showwarning("提示", "请选择串口")
             return
+        port = port_display.split(" - ")[0].strip()
         try:
             baudrate = int(self.baudrate_var.get())
         except Exception:
@@ -603,11 +630,19 @@ class ProtocolParserApp:
         def on_error(msg):
             self._ui_queue.append(("serial_error", (msg,)))
 
+        sender = self.serial_sender_var.get()
+        direction = None
+        if sender == "模组发送":
+            direction = "request"
+        elif sender == "MCU发送":
+            direction = "response"
+
         try:
             self.collector = SerialCollector(
                 cfg=self.cfg,
                 port=port,
                 baudrate=baudrate,
+                direction=direction,
                 on_frame=on_frame,
                 on_error=on_error,
             )
@@ -620,6 +655,19 @@ class ProtocolParserApp:
         self.is_collecting = True
         self.start_btn.configure(text="停止监控")
         self._set_status(f"监控中: {port} @ {baudrate}")
+
+    def _on_serial_sender_change(self, event=None) -> None:
+        """串口模式下切换发送方，动态更新解析方向。"""
+        if not self.collector:
+            return
+        sender = self.serial_sender_var.get()
+        direction = None
+        if sender == "模组发送":
+            direction = "request"
+        elif sender == "MCU发送":
+            direction = "response"
+        self.collector.direction = direction
+        self._set_status(f"已切换发送方: {sender}")
 
     def _stop_serial(self) -> None:
         if self.collector:

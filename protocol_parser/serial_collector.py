@@ -136,6 +136,7 @@ class SerialCollector:
     cfg: dict
     port: str
     baudrate: int = 115200
+    direction: str | None = None
     on_frame: Callable[[ParseResult, Frame, float], None] | None = None
     on_error: Callable[[str], None] | None = None
     running: bool = False
@@ -185,7 +186,7 @@ class SerialCollector:
                 frames = self.sync.feed(raw)
                 now = time.time()
                 for frame in frames:
-                    result = parse_frame(frame.raw, self.cfg)
+                    result = parse_frame(frame.raw, self.cfg, direction=self.direction)
                     if self.on_frame:
                         self.on_frame(result, frame, now)
         except Exception as e:
