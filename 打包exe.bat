@@ -1,0 +1,89 @@
+@echo off
+chcp 65001 >nul 2>&1
+setlocal
+
+REM ============================================================
+REM  串口数据解析 - 打包脚本
+REM
+REM  前置条件：
+REM    1. 安装官方 Python 3.11+ ：https://www.python.org/downloads/
+REM       安装时务必勾选以下选项：
+REM         [x] Add python.exe to PATH
+REM         [x] tcl/tk and IDLE（展开 Customize Python 勾选）
+REM    2. 双击此文件即可打包生成 exe
+REM ============================================================
+
+echo.
+echo === 检查 Python 环境 ===
+where python >nul 2>&1
+if errorlevel 1 (
+    echo [错误] 未找到 python.exe。
+    echo 请从 https://www.python.org/downloads/ 安装官方 Python，
+    echo 安装时务必勾选 "Add python.exe to PATH"。
+    pause
+    exit /b 1
+)
+
+python --version
+python -c "import tkinter; print('tkinter OK')" 2>nul
+if errorlevel 1 (
+    echo [错误] 当前 Python 没有 tkinter。
+    echo 请安装 python.org 官方 Python，并勾选 tcl/tk 选项。
+    pause
+    exit /b 1
+)
+
+echo.
+echo === 安装依赖（可能需要 1-3 分钟，请等待）===
+echo     如遇卡顿，请检查网络或代理设置。
+echo.
+echo [1/3] 安装 pyinstaller...
+python -m pip install pyinstaller -i https://pypi.tuna.tsinghua.edu.cn/simple
+if errorlevel 1 (
+    echo [错误] pyinstaller 安装失败。
+    pause
+    exit /b 1
+)
+echo.
+echo [2/3] 安装 pyserial...
+python -m pip install pyserial -i https://pypi.tuna.tsinghua.edu.cn/simple
+if errorlevel 1 (
+    echo [错误] pyserial 安装失败。
+    pause
+    exit /b 1
+)
+echo.
+echo [3/3] 安装 python-docx（用于导入 Word 协议文档）...
+python -m pip install python-docx -i https://pypi.tuna.tsinghua.edu.cn/simple
+if errorlevel 1 (
+    echo [错误] python-docx 安装失败。
+    pause
+    exit /b 1
+)
+
+echo.
+echo === 开始打包 ===
+python -m PyInstaller ^
+    --onefile ^
+    --windowed ^
+    --name "串口数据解析" ^
+    --hidden-import docx ^
+    --hidden-import docx.opc.constants ^
+    --add-data "product;product" ^
+    --add-data "protocol_parser;protocol_parser" ^
+    exe_entry.py
+
+if errorlevel 1 (
+    echo.
+    echo [打包失败]
+    pause
+    exit /b 1
+)
+
+echo.
+echo === 打包完成 ===
+echo 输出文件：%~dp0dist\串口数据解析.exe
+echo.
+echo 双击 串口数据解析.exe 即可启动程序。
+echo.
+pause
