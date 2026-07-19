@@ -1,10 +1,7 @@
 """exe 入口：双击运行，进入交互式粘贴解析模式。
 
 打包命令（在装有 tkinter/PyInstaller 的官方 Python 下）:
-    pyinstaller --onefile --name ProtocolParser --add-data "product;product" --add-data "protocol_parser;protocol_parser" exe_entry.py
-
-不带 GUI 的简化版本（当前环境可打包）:
-    pyinstaller --onefile --name ProtocolParserCLI --add-data "product;product" --add-data "protocol_parser;protocol_parser" --exclude-module tkinter exe_entry.py
+    pyinstaller --onefile --windowed --name "串口数据解析" --hidden-import docx --hidden-import docx.opc.constants --add-data "product;product" --add-data "protocol_parser;protocol_parser" exe_entry.py
 """
 from __future__ import annotations
 
