@@ -66,52 +66,29 @@ def get_protocol_dir() -> Path:
     return dev
 
 
-def init_protocol_dir() -> None:
-    """初始化协议目录：从内置资源同步系统协议。
-
-    策略：
-    - 带有 "system": true 标记的协议为系统协议，每次启动时检查版本
-    - 如果内置版本比用户目录中的版本新，则自动更新（覆盖）
-    - 用户导入的协议（没有 system 标记）不会被覆盖
-    """
-    import json as _json
-    import shutil
-
-    user_dir = get_protocol_dir()
-
-    # 从打包内置资源读取
-    bundled = resource_path("product")
-    if not bundled.exists():
-        return
-
-    for src_file in bundled.glob("*.json"):
-        dest = user_dir / src_file.name
-
-        # 目标文件不存在，直接复制
-        if not dest.exists():
-            shutil.copy2(src_file, dest)
-            continue
-
-        # 两个文件都存在，比较版本号
+def load_builtin_protocol() -> dict:
+    """加载内置的串口3.0基础协议（硬编码在程序中，不受外部文件影响）。"""
+    from protocol_parser.parser import load_protocol as _load
+    bundled = resource_path("product") / "v3_serial.json"
+    if bundled.exists():
         try:
-            with src_file.open("r", encoding="utf-8") as f:
-                src_cfg = _json.load(f)
-            with dest.open("r", encoding="utf-8") as f:
-                dst_cfg = _json.load(f)
+            return _load(bundled)
+        except ProtocolError:
+            pass
+    # 内置文件也找不到时返回空协议
+    return {"product": "串口3.0协议", "description": "内置基础协议", "commands": [], "frame": {}, "enums": {}, "attributes": {}}
 
-            # 只自动更新系统协议（system=true）
-            if not src_cfg.get("system", False):
-                continue
 
-            src_ver = src_cfg.get("protocol_version", "0")
-            dst_ver = dst_cfg.get("protocol_version", "0")
+# 内置 V3.0 协议缓存
+_builtin_v3: dict | None = None
 
-            # 内置版本更新，覆盖用户目录中的旧版本
-            if src_ver > dst_ver:
-                shutil.copy2(src_file, dest)
-        except Exception:
-            # JSON 解析失败等异常，跳过不处理
-            continue
+
+def get_builtin_v3() -> dict:
+    """获取内置 V3.0 协议（单例缓存）。"""
+    global _builtin_v3
+    if _builtin_v3 is None:
+        _builtin_v3 = load_builtin_protocol()
+    return _builtin_v3
 
 
 # ---------- 主窗口 ----------
@@ -289,21 +266,31 @@ class ProtocolParserApp:
     # ---------- 协议加载 ----------
 
     def _load_protocols(self) -> None:
+        """加载协议列表：内置串口3.0协议（始终第一项）+ 用户导入的产品协议。"""
+        products: list[tuple[str, str]] = []  # (product_name, source)
+
+        # 1. 内置串口3.0协议（硬编码，始终可用）
+        products.append(("串口3.0协议", "__builtin_v3__"))
+
+        # 2. 用户导入的产品协议（从外部 product 文件夹读取）
         d = get_protocol_dir()
-        products: list[tuple[str, str]] = []  # (product, file)
         if d.exists():
             for f in sorted(d.glob("*.json")):
+                # 跳过内置协议文件（v3_serial.json 已硬编码在程序内部）
+                if f.name.lower() in ("v3_serial.json", "_template.json"):
+                    continue
                 try:
                     cfg = load_protocol(f)
                     products.append((cfg.get("product", f.stem), str(f)))
                 except ProtocolError:
                     continue
+
         self._product_files = {p: fp for p, fp in products}
         self.product_combo["values"] = [p for p, _ in products]
         if products:
             self.product_combo.current(0)
             self._load_product_cfg()
-        self._set_status(f"已加载 {len(products)} 个协议（目录: {d}）")
+        self._set_status(f"已加载 {len(products)} 个协议（含内置串口3.0协议）")
 
     def _load_product_cfg(self) -> None:
         product = self.product_var.get()
@@ -311,7 +298,12 @@ class ProtocolParserApp:
         if not fp:
             return
         try:
-            self.cfg = load_protocol(fp)
+            if fp == "__builtin_v3__":
+                # 内置串口3.0协议：直接从程序内部加载
+                self.cfg = get_builtin_v3()
+            else:
+                # 用户导入的产品协议：从外部文件加载
+                self.cfg = load_protocol(fp)
             self._set_status(f"已加载协议: {product}（{len(self.cfg.get('commands', []))} 条命令）")
         except ProtocolError as e:
             self.cfg = None
@@ -802,7 +794,6 @@ class ProtocolParserApp:
 # ---------- 入口 ----------
 
 def main() -> int:
-    init_protocol_dir()
     root = tk.Tk()
     app = ProtocolParserApp(root)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
