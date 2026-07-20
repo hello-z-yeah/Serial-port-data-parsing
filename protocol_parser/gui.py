@@ -395,6 +395,12 @@ class ProtocolParserApp:
         # 显示导入结果摘要
         cmd_count = len(cfg.get("commands", []))
         attr_count = len(cfg.get("attributes", {}))
+        base_tag = cfg.get("base_protocol")
+        base_note = ""
+        if base_tag:
+            base_note = (
+                f"已基于 V3.0 标准协议合并（保留 {base_tag} 全部标准命令）\n\n"
+            )
         messagebox.showinfo(
             "导入成功",
             f"已成功导入协议：\n\n"
@@ -402,6 +408,7 @@ class ProtocolParserApp:
             f"命令数: {cmd_count}\n"
             f"属性数: {attr_count}\n"
             f"保存到: {out_path}\n\n"
+            f"{base_note}"
             f"已自动选择该产品，可以直接开始解析数据。",
         )
 

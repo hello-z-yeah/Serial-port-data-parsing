@@ -5,6 +5,14 @@
 - 段落型：提取关键信息（帧头、版本、校验等）
 - 混合型：自动适配
 
+重要策略：
+- 以 V3.0 串口标准协议（v3_serial.json）作为基底
+- 任何导入的新协议仅在 V3.0 基础上"追加"数据：
+  * 帧结构：始终使用 V3.0 基底（标准协议帧）
+  * 命令字：保留 V3.0 全部 21 条标准命令，仅追加 Word 中新增的命令
+  * 枚举表：保留 V3.0 标准枚举，追加 Word 中的新枚举/新取值
+  * 属性表：以 V3.0 基底为底，Word 中定义的属性覆盖/追加
+
 使用：
     from protocol_parser.docx_importer import import_from_docx
     cfg = import_from_docx("协议.docx")
@@ -17,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -508,10 +517,141 @@ def _parse_enum_text(text: str) -> dict[str, str]:
     return result
 
 
+# ---------- V3.0 基底协议 ----------
+
+def _resource_path(relative: str) -> Path:
+    """获取资源路径，兼容开发模式和 PyInstaller 打包模式。"""
+    if hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / relative
+    base = Path(__file__).resolve().parent
+    candidate = base / relative
+    if candidate.exists():
+        return candidate
+    return base.parent / relative
+
+
+def _find_v3_base_file() -> Path | None:
+    """查找 V3.0 基底协议文件 v3_serial.json。
+
+    查找顺序：
+    1. PyInstaller 打包资源：sys._MEIPASS/product/v3_serial.json
+    2. 开发模式：项目根目录/product/v3_serial.json
+    3. exe 同目录：exe_dir/product/v3_serial.json
+    """
+    candidates = [
+        _resource_path("product") / "v3_serial.json",
+    ]
+    # exe 同目录（用户可见的 product 目录）
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / "product" / "v3_serial.json")
+    for c in candidates:
+        if c.exists():
+            return c
+    return None
+
+
+def load_v3_base() -> dict | None:
+    """加载 V3.0 基底协议。找不到时返回 None（退化为旧行为）。"""
+    p = _find_v3_base_file()
+    if p is None:
+        return None
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        if "commands" in cfg and "frame" in cfg:
+            return cfg
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def _parse_cmd_code_int(cmd_code: Any) -> int | None:
+    """把 cmd_code（如 '0x20' / 32）解析为 int。"""
+    if isinstance(cmd_code, int):
+        return cmd_code
+    if isinstance(cmd_code, str):
+        s = cmd_code.strip().lower()
+        try:
+            return int(s, 16) if s.startswith("0x") else int(s, 0)
+        except ValueError:
+            return None
+    return None
+
+
+def merge_with_v3_base(imported: dict, base: dict) -> dict:
+    """把 Word 导入的配置合并到 V3.0 基底之上。
+
+    合并规则：
+    - frame: 始终使用 V3.0 基底（标准协议帧结构不可被覆盖）
+    - commands: V3.0 基底全部保留，追加 Word 中新增命令（同 cmd_code 不覆盖基底）
+    - enums: V3.0 基底全部保留；同枚举名合并取值（基底已有则保留），新枚举直接追加
+    - attributes: V3.0 基底为底，Word 中定义的属性覆盖同名 attrid（产品属性以 Word 为准）
+    """
+    base_commands = base.get("commands", []) or []
+    base_enums = dict(base.get("enums", {}) or {})
+    base_attrs = dict(base.get("attributes", {}) or {})
+    base_frame = base.get("frame", {}) or {}
+
+    # 命令：基底优先，追加 Word 新增
+    seen_codes: set[int] = set()
+    merged_commands: list[dict] = []
+    for cmd in base_commands:
+        code = _parse_cmd_code_int(cmd.get("cmd_code"))
+        if code is not None:
+            seen_codes.add(code)
+        merged_commands.append(cmd)
+    for cmd in imported.get("commands", []) or []:
+        code = _parse_cmd_code_int(cmd.get("cmd_code"))
+        if code is None or code in seen_codes:
+            continue
+        seen_codes.add(code)
+        merged_commands.append(cmd)
+
+    # 枚举：基底优先，合并新取值
+    merged_enums: dict[str, dict] = {k: dict(v) for k, v in base_enums.items()}
+    for enum_name, enum_map in (imported.get("enums", {}) or {}).items():
+        if not isinstance(enum_map, dict):
+            continue
+        if enum_name in merged_enums:
+            for k, v in enum_map.items():
+                if k not in merged_enums[enum_name]:
+                    merged_enums[enum_name][k] = v
+        else:
+            merged_enums[enum_name] = dict(enum_map)
+
+    # 属性：基底为底，Word 覆盖同名 attrid
+    merged_attrs: dict[str, dict] = {k: dict(v) for k, v in base_attrs.items()}
+    for aid, attr in (imported.get("attributes", {}) or {}).items():
+        if not isinstance(attr, dict):
+            continue
+        if aid in merged_attrs:
+            merged = dict(merged_attrs[aid])
+            merged.update(attr)
+            merged_attrs[aid] = merged
+        else:
+            merged_attrs[aid] = dict(attr)
+
+    return {
+        "product": imported.get("product", "product"),
+        "description": imported.get("description", ""),
+        "version": "3.0",
+        "base_protocol": "v3_serial",
+        "frame": base_frame,
+        "enums": merged_enums,
+        "commands": merged_commands,
+        "attributes": merged_attrs,
+        "_imported_from": imported.get("_imported_from", ""),
+    }
+
+
 # ---------- 主入口 ----------
 
 def import_from_docx(path: str | Path, product_name: str | None = None) -> dict:
     """从 Word 文档生成协议 JSON 配置。
+
+    策略：以 V3.0 串口标准协议为基底，Word 文档中的命令/属性/枚举仅在基底之上追加。
+    这样可保证导入新产品后，V3.0 的 21 条标准命令（心跳、查询、配网等）依然可用，
+    不会出现"未知命令"。
 
     Args:
         path: Word 文档路径
@@ -522,7 +662,7 @@ def import_from_docx(path: str | Path, product_name: str | None = None) -> dict:
     """
     parsed = _read_docx(path)
 
-    # 进一步解析
+    # 进一步解析 Word 文档内容
     parsed.frame_config = _parse_frame_config(parsed)
     parsed.commands = _parse_commands(parsed)
     parsed.attributes = _parse_attributes(parsed)
@@ -533,10 +673,10 @@ def import_from_docx(path: str | Path, product_name: str | None = None) -> dict:
     name = re.sub(r"[^\w\u4e00-\u9fff]", "_", name)
     name = re.sub(r"_+", "_", name).strip("_").lower() or "product"
 
-    cfg = {
+    word_cfg = {
         "product": name,
-        "description": parsed.description or f"从 {Path(path).name} 导入的协议",
-        "version": "1.0",
+        "description": parsed.description or f"从 {Path(path).name} 导入的协议（基于 V3.0 基底）",
+        "version": "3.0",
         "frame": parsed.frame_config,
         "enums": parsed.enums,
         "commands": parsed.commands,
@@ -544,7 +684,11 @@ def import_from_docx(path: str | Path, product_name: str | None = None) -> dict:
         "_imported_from": str(Path(path).name),
     }
 
-    return cfg
+    # 合并到 V3.0 基底之上（基底找不到时退化为仅使用 Word 内容）
+    base = load_v3_base()
+    if base is not None:
+        return merge_with_v3_base(word_cfg, base)
+    return word_cfg
 
 
 def save_protocol_json(cfg: dict, output_path: str | Path) -> Path:
