@@ -301,6 +301,27 @@ def _log_error_to_disk(exc: Exception) -> Path:
     return target
 
 
+def _validate_interactive_stdin() -> None:
+    """run_paste_mode 前置校验：sys.stdin 不能用于交互时，直接抛 RuntimeError，
+    不进入 while True + input() 否则会 RuntimeError: lost sys.stdin。
+    """
+    stdin = getattr(sys, "stdin", None)
+    if stdin is None:
+        raise RuntimeError("无法进入粘贴模式：sys.stdin 不可用（当前在 --windowed/noconsole 打包环境中运行，不支持命令行交互）。")
+    try:
+        if not stdin.readable():
+            raise RuntimeError("无法进入粘贴模式：sys.stdin 不可读。")
+    except Exception:
+        raise RuntimeError("无法进入粘贴模式：sys.stdin 不可读。")
+    try:
+        # 无真实 fd（例如 StringIO / PyInstaller --windowed 下被替换成虚拟 fd）时认为不可交互
+        _ = stdin.fileno()
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(
+            "无法进入粘贴模式：sys.stdin 无有效文件描述符，说明当前不是交互式控制台。"
+        ) from e
+
+
 def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
     """交互式粘贴解析。
 
@@ -309,6 +330,8 @@ def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
     支持一次粘贴多条（换行分隔）。
     顶层异常均会：friendly 消息打印，堆栈写 error.log。
     """
+    _validate_interactive_stdin()  # <—— 进入循环前先校验，避免 input() 抛 "lost sys.stdin"
+
     product = cfg.get("product", "unknown")
     print(f"=== 协议解析工具 - 粘贴模式 (产品: {product}) ===")
     print("粘贴 hex 数据（支持空格/逗号分隔，一行一条），按回车解析。")
@@ -326,6 +349,14 @@ def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
         except KeyboardInterrupt:
             print("\n已退出。")
             break
+        except RuntimeError as e:
+            # input() 仍可能在极少数情况抛 RuntimeError: lost sys.stdin；转换成友好说明 + 结束
+            friendly = str(e)
+            if "stdin" not in friendly.lower():
+                friendly = "读取控制台输入失败：可能当前不是交互式控制台环境。"
+            print(f"[!] {friendly}")
+            print("提示：打包后的 GUI 程序请直接双击运行进入图形界面；粘贴模式请在命令行（cmd/PowerShell）下用 python 脚本调用。")
+            return 1
 
         if not line:
             if line_count == 0:

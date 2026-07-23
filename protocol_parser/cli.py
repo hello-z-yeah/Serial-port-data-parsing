@@ -432,6 +432,27 @@ def cmd_ports(args: argparse.Namespace) -> int:
 def cmd_paste(args: argparse.Namespace) -> int:
     from .monitor import ResultLogger, run_paste_mode
 
+    # 进 paste 模式前先确认 stdin 可交互；否则直接返回错误码，不进入 input() 死循环
+    stdin = getattr(sys, "stdin", None)
+    if stdin is None or not getattr(stdin, "readable", lambda: False)():
+        print(
+            "[错误] 粘贴模式需要交互式控制台（sys.stdin 不可用）。\n"
+            "       打包后的 GUI 程序请直接双击运行进入图形界面；\n"
+            "       如需粘贴模式，请在 cmd / PowerShell 下用 python.exe 运行脚本。",
+            file=sys.stderr,
+        )
+        return 3
+    try:
+        _ = stdin.fileno()
+    except Exception:
+        print(
+            "[错误] 粘贴模式需要交互式控制台（sys.stdin 无有效文件描述符）。\n"
+            "       打包后的 GUI 程序请直接双击运行进入图形界面；\n"
+            "       如需粘贴模式，请在 cmd / PowerShell 下用 python.exe 运行脚本。",
+            file=sys.stderr,
+        )
+        return 3
+
     try:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)

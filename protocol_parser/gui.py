@@ -88,6 +88,51 @@ def get_protocol_dir() -> Path:
     return dev
 
 
+# ---------- 崩溃日志（启动期闪退辅助）：写 exe 同级目录 crash_*.log ----------
+
+
+def _crash_log_dir() -> Path:
+    """崩溃日志落盘目录：
+    * 打包 EXE → exe 同级目录；
+    * 开发模式 → 项目根目录（protocol_parser 父级）。
+    """
+    try:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent.parent
+    except Exception:
+        return Path.cwd()
+
+
+def _write_crash_log_gui(exc: BaseException) -> Path | None:
+    """启动期 / 运行期崩溃 → 写 exe 同级目录 crash_时间戳.log，
+    即便 mainloop 和 messagebox 都起不来，用户也能在 exe 旁边找到堆栈。
+    """
+    import traceback as _tb
+
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = _crash_log_dir() / f"crash_{ts}.log"
+        tb_s = _tb.format_exc()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(f"Time:       {datetime.now().isoformat(timespec='seconds')}\n")
+            f.write(f"Frozen:     {getattr(sys, 'frozen', False)}\n")
+            f.write(f"Executable: {sys.executable}\n")
+            f.write(f"MEIPASS:    {getattr(sys, '_MEIPASS', '')}\n")
+            f.write(f"CWD:        {os.getcwd()}\n")
+            f.write(f"Argv:       {sys.argv}\n")
+            f.write("\n========== Exception ==========\n")
+            f.write(f"{type(exc).__module__}.{type(exc).__name__}: {exc}\n")
+            f.write("\n========== Traceback ==========\n")
+            f.write(tb_s)
+            f.write("\n========== sys.path ==========\n")
+            for p in sys.path:
+                f.write(p + "\n")
+        return path
+    except Exception:
+        return None
+
+
 def load_builtin_protocol() -> dict:
     """加载内置的串口3.0基础协议。
 
@@ -739,7 +784,7 @@ class ProtocolParserApp:
         self.cmd_font = tkfont.Font(family=self.font_family_var.get(), size=self.font_size_var.get(), weight="bold")
         # 日志框 Tag 定义颜色（在创建 serial_text 之后会按 theme.get() 刷新）
 
-        # ---- 菜单栏：帮助 → 检查更新 / 关于 ----
+        # ---- 菜单栏（文件 / 帮助）：帮助菜单拆成"关于 + 检查更新"两部分 ----
         self._build_menu_bar()
 
         # 置顶状态
@@ -899,13 +944,29 @@ class ProtocolParserApp:
     # ---------- UI 构建 ----------
 
     def _build_menu_bar(self) -> None:
-        """构建顶部菜单栏：当前只有「帮助」菜单，放检查更新 / 关于。"""
+        """构建顶部菜单栏：
+        * 文件 → 字体与字号设置 / 窗口置顶 / 退出
+        * 帮助 → 检查更新 / 关于（拆成两项，不带分隔符的分组）
+        """
         menubar = tk.Menu(self.root)
+
+        # ---- 文件 ----
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="字体与字号设置…", command=self._safe(self._choose_font_settings),
+                              accelerator="Ctrl+鼠标滚轮")
+        file_menu.add_checkbutton(label="窗口始终置顶", variable=self.topmost_var,
+                                  onvalue=True, offvalue=False,
+                                  command=self._safe(self._toggle_topmost))
+        file_menu.add_separator()
+        file_menu.add_command(label="退出 (Alt+F4)", command=self._safe(self._on_app_close))
+        menubar.add_cascade(label="文件", menu=file_menu)
+
+        # ---- 帮助：严格拆成「关于」+「检查更新」两部分 ----
         help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label=f"关于…", command=self._safe(self._menu_about))
         help_menu.add_command(label="检查更新…", command=self._safe(self._menu_check_update))
-        help_menu.add_separator()
-        help_menu.add_command(label=f"关于（当前 v{VERSION}）", command=self._safe(self._menu_about))
         menubar.add_cascade(label="帮助", menu=help_menu)
+
         self.root.config(menu=menubar)
 
     def _menu_about(self) -> None:
@@ -1147,7 +1208,9 @@ class ProtocolParserApp:
 
     def _build_ui(self) -> None:
         # ============================================================
-        #  顶栏（核心控制区）：只保留 协议 + 串口 + 波特率 + 大号【开始/停止监控】+ 高级设置 ⚙️
+        #  顶栏（最上面一栏 —— 传统布局高频/低频可见）
+        #    第一排：产品协议 | 串口(刷新) | 波特率 | 数据位 | 校验位 | 停止位 | HEX 格式 | 发送方 | [开始/停止监控] | 字体 字号 | A−/A+ | ⚙ 高级
+        #    特点：把过去"仅在 Drawer 里才看到"的帧格式/HEX/发送方也直接放到顶栏，老用户操作更顺手
         # ============================================================
         top = tk.Frame(self.root, bg=self.theme.get("app_bg"), padx=14, pady=10)
         top.pack(fill="x")
@@ -1156,20 +1219,27 @@ class ProtocolParserApp:
             return tk.Label(top, text=text, bg=self.theme.get("app_bg"), fg=self.theme.get("text_secondary"),
                             font=("Microsoft YaHei UI", 9))
 
+        def _tool_button(text: str, cmd, style: str = "Toolbar.TButton", tip: str | None = None) -> ttk.Button:
+            b = ttk.Button(top, text=text, style=style, command=self._safe(cmd))
+            b.pack(side="left", padx=4)
+            if tip:
+                Tooltip(b, tip, self.theme)
+            return b
+
         # 1) 产品协议
         _toolbar_label("产品协议").pack(side="left")
-        self.product_combo = ttk.Combobox(top, textvariable=self.product_var, width=26, state="readonly")
+        self.product_combo = ttk.Combobox(top, textvariable=self.product_var, width=22, state="readonly")
         self.product_combo.pack(side="left", padx=(4, 12))
         self.product_combo.bind("<<ComboboxSelected>>", self._on_product_change)
         Tooltip(self.product_combo,
                 "切换当前要解析/发送的产品协议 JSON。\n放 JSON 到 product/ 目录后，点旁边刷新按钮即可出现。",
                 self.theme)
 
-        # 2) 串口
+        # 2) 串口 + 刷新
         _toolbar_label("串口").pack(side="left")
-        self.port_combo = ttk.Combobox(top, textvariable=self.port_var, width=16, state="readonly")
-        self.port_combo.pack(side="left", padx=(4, 12))
-        Tooltip(self.port_combo, "选择要监控的串口号（如 COM3 / COM5）。\n点右边的小按钮刷新设备列表。", self.theme)
+        self.port_combo = ttk.Combobox(top, textvariable=self.port_var, width=12, state="readonly")
+        self.port_combo.pack(side="left", padx=(4, 2))
+        Tooltip(self.port_combo, "选择要监控的串口号（如 COM3 / COM5）。", self.theme)
         refresh_ports_btn = ttk.Button(top, text="↻", width=3, command=self._safe(self._refresh_ports), style="Toolbar.TButton")
         refresh_ports_btn.pack(side="left", padx=(0, 12))
         Tooltip(refresh_ports_btn, "重新扫描本机可用串口。", self.theme)
@@ -1177,32 +1247,75 @@ class ProtocolParserApp:
         # 3) 波特率
         _toolbar_label("波特率").pack(side="left")
         self.baudrate_combo = ttk.Combobox(
-            top, textvariable=self.baudrate_var, width=10, state="normal",
+            top, textvariable=self.baudrate_var, width=9, state="normal",
             values=[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000, 3000000, 4000000, 5000000, 6000000],
         )
-        self.baudrate_combo.pack(side="left", padx=(4, 16))
-        Tooltip(self.baudrate_combo,
-                "选择或输入任意波特率。\n常用：115200\n支持高达 6,000,000（6M）。",
+        self.baudrate_combo.pack(side="left", padx=(4, 12))
+        Tooltip(self.baudrate_combo, "选择或输入任意波特率（最高 6,000,000 = 6M）。", self.theme)
+
+        # 4) 数据位
+        _toolbar_label("数据位").pack(side="left")
+        ttk.Combobox(top, textvariable=self.bytesize_var, values=[5, 6, 7, 8], width=5, state="readonly").pack(side="left", padx=(4, 12))
+
+        # 5) 校验位（这里没有 parity_var，暂时用 Drawer；如果需要可以新增 IntVar 后再同步）
+        # 6) 停止位
+        _toolbar_label("停止位").pack(side="left")
+        ttk.Combobox(top, textvariable=self.stopbits_var, values=[1, 1.5, 2], width=5, state="readonly").pack(side="left", padx=(4, 12))
+
+        # 7) HEX 格式 + 发送方
+        ttk.Checkbutton(top, text="HEX", variable=self.hex_format_var, style="TCheckbutton").pack(side="left", padx=(0, 8))
+        Tooltip(top.winfo_children()[-1],
+                "HEX 十六进制显示；不勾选则为 ASCII 文本模式。",
                 self.theme)
 
-        # 弹性空白
-        tk.Frame(top, bg=self.theme.get("app_bg")).pack(side="left", fill="x", expand=True)
+        # 发送方（模组 / MCU）
+        ttk.Label(top, text="方向", foreground=self.theme.get("text_secondary"),
+                  background=self.theme.get("app_bg"),
+                  font=("Microsoft YaHei UI", 9)).pack(side="left")
+        sender_frame = tk.Frame(top, bg=self.theme.get("app_bg"))
+        sender_frame.pack(side="left", padx=(2, 12))
+        ttk.Radiobutton(sender_frame, text="模组", variable=self.serial_sender_var, value="模组发送").pack(side="left", padx=(0, 4))
+        ttk.Radiobutton(sender_frame, text="MCU", variable=self.serial_sender_var, value="MCU发送").pack(side="left")
 
-        # 4) 大号 开始/停止监控按钮
+        # 8) 大号 开始/停止监控按钮（绿色Primary/红色Danger切换）
         self.start_btn = ttk.Button(top, text="● 开始监控", style="Primary.TButton",
                                     command=self._safe(self._toggle_serial))
         self.start_btn.pack(side="left", padx=8)
         Tooltip(self.start_btn,
                 "开始监控（绿灯）/ 停止监控（灰）。\n快捷键：F5 开始 / Shift+F5 停止。",
                 self.theme)
-        # 绑定快捷键
         try:
             self.root.bind("<F5>", lambda _e: (self._safe(self._start_serial)(), None)[1] if not self.is_collecting else None)
             self.root.bind("<Shift-F5>", lambda _e: (self._safe(self._stop_serial)(), None)[1] if self.is_collecting else None)
         except Exception:
             pass
 
-        # 5) 高级设置 ⚙️ 按钮（打开 Drawer）
+        # ------------------------------------------------------------
+        # 9) 顶栏"字体设置"入口：等宽字体 Combobox + 字号 Spinbox + A−/A+（快捷，占最上面一栏）
+        # ------------------------------------------------------------
+        # （把原本在 Drawer 内部 + 日志框右上角的控件，都统一放顶栏，用户一眼就能改）
+        _toolbar_label("字体").pack(side="left", padx=(20, 4))
+        self.toolbar_font_combo = ttk.Combobox(
+            top, textvariable=self.font_family_var, width=14, state="readonly",
+            values=self.available_monospace_fonts or ["Consolas"],
+        )
+        self.toolbar_font_combo.pack(side="left", padx=(0, 6))
+        Tooltip(self.toolbar_font_combo, "仅列出系统中的等宽字体（Hex 报文上下对齐不错位）。", self.theme)
+
+        _toolbar_label("字号").pack(side="left")
+        self.toolbar_font_size_sb = ttk.Spinbox(top, from_=8, to=32, width=5, textvariable=self.font_size_var)
+        self.toolbar_font_size_sb.pack(side="left", padx=(4, 8))
+        Tooltip(self.toolbar_font_size_sb,
+                "字号（8~32pt）；也可以 Ctrl + 鼠标滚轮 在日志框内无级缩放。",
+                self.theme)
+
+        # A− / A+ 放大缩小
+        ttk.Button(top, text="A−", width=3, style="Toolbar.TButton",
+                   command=self._safe(lambda: self._zoom_serial_font(-1))).pack(side="left", padx=1)
+        ttk.Button(top, text="A+", width=3, style="Toolbar.TButton",
+                   command=self._safe(lambda: self._zoom_serial_font(+1))).pack(side="left", padx=(1, 8))
+
+        # ⚙ 高级（Drawer 入口 —— 保留，方便用的人再打开更多配置/主题切换）
         self.drawer_btn = tk.Button(
             top, text="⚙ 高级", relief="flat", cursor="hand2", bd=0,
             bg=self.theme.get("app_bg"), fg=self.theme.get("text"),
@@ -1212,7 +1325,7 @@ class ProtocolParserApp:
         )
         self.drawer_btn.pack(side="left", padx=4)
         Tooltip(self.drawer_btn,
-                "打开/关闭「高级设置」抽屉。\n低频配置：数据位/停止位/HEX 模式/发送方/自动滚动/保存日志/保存原始数据/主题/字体…",
+                "打开/关闭「高级设置」抽屉。\n额外配置：主题( Light/Dark + Win11/Classic )、\n保存日志、保存原始数据、自动分割、行距、流控……",
                 self.theme)
 
         # ============================================================
@@ -2156,7 +2269,7 @@ class ProtocolParserApp:
         1) 重建 serial_font / cmd_font 并配置到 serial_text；
         2) 所有 tag 的 font 重新设置（等宽字体保证对齐，仅改大小不变颜色）；
         3) Text spacing3（行间距）= line_spacing_px；
-        4) 右上角 A- / 字号 / A+ 控件同步显示。
+        4) 顶栏字体字号控件 + 右上角 A-/A+/pt label 同步显示。
         """
         # 1) 更新可变 Font
         try:
@@ -2179,10 +2292,10 @@ class ProtocolParserApp:
             spacing3 = 0
         # 4) 同步 tag 颜色/字体（包含 cmd_font）
         self._apply_theme_tags()
-        # 5) 右上角微型控件显示字号
+        # 5) 顶栏 / 右上角两处字号显示（都放到【最上面一栏】后，顶栏字号 Spinbox 会联动，这里保证 Text 也同步）
+        size_pt = int(self.font_size_var.get())
         try:
             if hasattr(self, "_font_size_label") and self._font_size_label is not None:
-                size_pt = int(self.font_size_var.get())
                 self._font_size_label.configure(text=f"{size_pt}pt")
         except Exception:
             pass
@@ -2314,27 +2427,77 @@ class ProtocolParserApp:
                 pass
 
     def _on_app_close(self) -> None:
-        """WM_DELETE_WINDOW：保存偏好 → 停串口 → 关日志/原始文件 → destroy。"""
+        """WM_DELETE_WINDOW 统一关闭流程：
+        ① 保存视觉偏好（theme/font/drawer/topmost/raw 默认）→ extras
+        ② 保存当前串口会话快照（was_collecting/协议/串口/波特率/发送状态）→ 下次恢复用
+        ③ 停周期发送 → 停串口 → close_log_file(写结束标记) → close_save_raw_file
+        ④ root.destroy()
+        """
+        # ① 偏好
         try:
             self._save_preferences()
         except Exception:
             pass
+        # ② 会话快照：复用 _prepare_session_snapshot_for_update()，但 was_collecting=False（手动关窗口=手动停止，下次不自动恢复）
+        try:
+            try:
+                snap = self._prepare_session_snapshot_for_update()
+                snap.was_collecting = False
+            except Exception:
+                snap = None
+            if snap is not None:
+                # 把当前 extras 偏好也合并进 snap（双重保证：_save_preferences 已经写过，但防止 snapshot 被 clear 覆盖时丢掉）
+                try:
+                    extras = dict(snap.extras) if isinstance(snap.extras, dict) else {}
+                    extras.setdefault("theme_mode", self.theme.mode)
+                    extras.setdefault("theme_style", self.theme.style)
+                    extras.setdefault("font_family", self.font_family_var.get())
+                    extras.setdefault("font_size", int(self.font_size_var.get()))
+                    extras.setdefault("line_spacing_px", int(self.line_spacing_px_var.get()))
+                    extras.setdefault("drawer_open", bool(self.drawer.visible) if self.drawer is not None else False)
+                    extras.setdefault("topmost", bool(self.topmost_var.get()))
+                    extras.setdefault("save_raw_enabled_default", bool(self.save_raw_enabled_var.get()))
+                    extras.setdefault("save_raw_path_default", str(self.save_raw_path_var.get()))
+                    extras.setdefault("raw_auto_split_mb", int(self.raw_auto_split_mb_var.get()))
+                    snap.extras = extras
+                except Exception:
+                    pass
+                try:
+                    save_snapshot(snap)
+                except Exception as e:  # noqa: BLE001
+                    try:
+                        _log_error_to_disk(e)
+                    except Exception:
+                        pass
+        except Exception as e:  # noqa: BLE001
+            try:
+                _log_error_to_disk(e)
+            except Exception:
+                pass
+        # ③ 资源释放：先停串口（含周期发送）
         try:
             if self.is_collecting:
                 self._stop_serial()
         except Exception:
             pass
+        # 日志文件：写结束标记后 close
         try:
             if self.log_file is not None:
-                self.log_file.flush()
-                self.log_file.close()
+                try:
+                    self.log_file.write(f"===== 结束记录（共 {getattr(self, 'log_count', 0)} 条） =====\n")
+                    self.log_file.flush()
+                    self.log_file.close()
+                except Exception:
+                    pass
                 self.log_file = None
         except Exception:
             pass
+        # 原始数据文件
         try:
             self._close_save_raw_file()
         except Exception:
             pass
+        # ④ destroy
         try:
             self.root.destroy()
         except Exception:
@@ -3462,13 +3625,27 @@ class ProtocolParserApp:
         bytesize = 8
         stopbits = 1.0
         try:
-            bs = int(self.bytesize_var.get().strip() or 8)
+            # bytesize_var = IntVar（可能是 int），兼容新/老两种类型
+            _bs_raw = self.bytesize_var.get()
+            if isinstance(_bs_raw, int):
+                bs = _bs_raw
+            else:
+                _bs_s = str(_bs_raw).strip()
+                bs = int(_bs_s) if _bs_s else 8
             bytesize = bs if bs in (5, 6, 7, 8) else 8
         except Exception:
             bytesize = 8
         try:
-            sb_raw = self.stopbits_var.get().strip()
-            stopbits = 1.5 if sb_raw == "1.5" else 2.0 if sb_raw == "2" else 1.0
+            # stopbits_var = IntVar 或 StringVar（1/2/1.5），统一转字符串判断
+            _sb_raw = self.stopbits_var.get()
+            sb_raw = str(_sb_raw).strip() if not isinstance(_sb_raw, float) else str(_sb_raw)
+            sb_norm = sb_raw.replace(" ", "")
+            if "1.5" in sb_norm or sb_raw == "1.5":
+                stopbits = 1.5
+            elif sb_norm == "2" or sb_raw == "2":
+                stopbits = 2.0
+            else:
+                stopbits = 1.0
         except Exception:
             stopbits = 1.0
 
@@ -3487,8 +3664,12 @@ class ProtocolParserApp:
             is_hex_format = True
         direction = ""
         try:
-            d = self.direction_var.get().strip()
-            direction = d
+            # 兼容：新代码用 serial_sender_var，老代码快照里 direction 字段从 serial_sender_var 取
+            if hasattr(self, "serial_sender_var"):
+                d = self.serial_sender_var.get()
+            else:
+                d = self.direction_var.get()
+            direction = str(d).strip()
         except Exception:
             direction = ""
         detail_mode = False
@@ -3597,7 +3778,9 @@ def main():
     except Exception as e:
         # 极端情况：DISPLAY / Tk 初始化失败
         friendly, _ = classify_protocol_error(e)
-        log_path = _log_error_to_disk(e)
+        log_path_a = _log_error_to_disk(e)
+        log_path_b = _write_crash_log_gui(e)
+        log_path = log_path_b or log_path_a
         print(f"[错误] 无法启动 GUI：{friendly}", file=sys.stderr)
         if log_path is not None:
             print(f"       详细日志已写入: {log_path}", file=sys.stderr)
@@ -3606,7 +3789,8 @@ def main():
     app: ProtocolParserApp | None = None
     try:
         app = ProtocolParserApp(root, monitor_port=monitor_port, monitor_baud=monitor_baud)
-        root.protocol("WM_DELETE_WINDOW", app.on_close)
+        # ProtocolParserApp.__init__ 内部已经调用 self.root.protocol("WM_DELETE_WINDOW", _on_app_close)，
+        # 覆盖会导致保存偏好/快照/关日志/关串口的逻辑丢失，这里不得再绑定。
 
         # 给 Tk mainloop 再套一层异常兜底，防止第三方回调/事件把堆栈甩到 stderr
         def _safe_mainloop():
@@ -3631,16 +3815,28 @@ def main():
                         print(f"[运行时错误] {friendly}", file=sys.stderr)
                     except Exception:
                         pass
+                    # 运行时严重错误也写 exe 同级 crash log，方便用户夜间抓包查
+                    try:
+                        _write_crash_log_gui(e)
+                    except Exception:
+                        pass
                     break
 
         _safe_mainloop()
         return 0
-    except Exception as e:  # noqa: BLE001  启动阶段兜底
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except BaseException as e:  # noqa: BLE001  启动阶段兜底：任何错误都写 exe 同级 crash.log + 尽力弹窗
+        log_path_a = _log_error_to_disk(e)
+        log_path_b = _write_crash_log_gui(e)
+        log_path = log_path_b or log_path_a
         try:
             friendly, _ = classify_protocol_error(e)
-            log_path = _log_error_to_disk(e)
             try:
-                messagebox.showerror("启动失败", f"{friendly}\n\n日志: {log_path}")
+                msg = f"{friendly}"
+                if log_path is not None:
+                    msg += f"\n\n崩溃日志：{log_path}\n（打包闪退请把此 log 发给开发者）"
+                messagebox.showerror("启动失败", msg)
             except Exception:
                 print(f"[启动失败] {friendly}", file=sys.stderr)
                 if log_path is not None:
