@@ -768,6 +768,14 @@ class ProtocolParserApp:
             messagebox.showerror("导入失败", f"{str(e)}\n\n{traceback.format_exc()}")
             return
 
+        # 显示导入告警（比如命令/属性为空、没读到表格等），让用户马上知道哪里可能不对
+        warnings = imported_cfg.get("_import_warnings") or []
+        if warnings:
+            msg_text = "⚠ 导入时发现以下问题，请检查协议文档格式：\n\n"
+            for i, w in enumerate(warnings, 1):
+                msg_text += f"{i}. {w}\n"
+            messagebox.showwarning("Word 导入告警（不影响继续编辑/保存）", msg_text, parent=self.root)
+
         dlg = AttributeEditorDialog(self.root, imported_cfg)
         self.root.wait_window(dlg.dialog)
 

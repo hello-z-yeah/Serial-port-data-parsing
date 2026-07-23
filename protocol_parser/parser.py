@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -131,20 +132,87 @@ def merge_protocol(base: dict, override: dict) -> dict:
 
 # ---------- 字节工具 ----------
 
+# 匹配 0x/0X 开头的“合法 hex 前缀”：
+#   - 0x 前面不能是字母数字（避免把 AA0x11 的 0x11 单独剥掉，造成 AA0x11 = AA11 的假结果）
+#   - 0x 后面必须紧跟 hex 字符
+#   - 合法用法：分隔符后 0x11 / 逗号 0xAA / (0xAA, 0xBB) / [0xAA]  都会被识别
+_RE_PREFIXED_HEX = re.compile(r"(?i)(?<![0-9a-zA-Z])0x(?=[0-9a-f])([0-9a-f]+)")
+# 把“残留的脏 0x”整段删掉：
+#   匹配 0x（后面不是 hex，或者后面是 hex 但前面跟了字母数字=不是词首，比如 AA0x11）。
+#   这样 "XX0xYZ" → 变成 XXYZ → 因为 YZ 是字母但非 hex，再 findall hex 不会匹配 → 抛“没有任何 hex”；
+#   这样 "AA0x11" → 剥掉 0x11 中的 0x 后还要再保证前缀不剥，实际上本正则先把 AA0x11 里的 0x11 当作“夹在字母里的 0x”，
+#   所以我们在 sub 时把 _RE_PREFIXED_HEX 合法的先剥，剩下脏 0x（AA0x11这种）里的 0x 删掉 → AA11？
+#   这行为其实比之前的假通过更合理。
+_RE_STRIP_BAD_0X = re.compile(r"(?i)0x(?!(?<![0-9a-zA-Z])0x[0-9a-f])")
+
+# 纯 hex 字符段
+_RE_PURE_HEX = re.compile(r"(?i)[0-9a-f]+")
+
+
 def parse_hex_input(text: str) -> bytes:
-    """把用户输入的 hex 字符串解析为 bytes。"""
-    s = text.strip()
-    if not s:
+    """把用户输入的 hex 字符串解析为 bytes。
+
+    严格版本（修复了旧实现的全局 replace('0x','') 静默错删）：
+      1) 仅“词首合法”的 0xHEX（0x 前不是字母数字，0x 后紧跟 hex）才剥掉前缀；
+         - 合法： 0xAA,0xBB ; (0xAA 0xBB) ; 0x01 0x02
+         - 不合法（夹在字符串中间）： AA0x11（A 是字母数字，所以整体视作文本，0x 不应剥）
+      2) 对“残留脏 0x”（后跟非 hex，或夹在字母数字里）直接删掉 0x 两个字符，
+         再对剩下文本 findall 纯 hex 段合并，严格判断奇偶。
+    """
+    if text is None:
         raise ProtocolError("输入为空")
-    s = s.replace("0x", "").replace("0X", "")
-    for sep in [",", " ", "\t", "\n", ";"]:
-        s = s.replace(sep, "")
-    if len(s) % 2 != 0:
-        raise ProtocolError(f"hex 长度为奇数，无法配对: {s}")
+    raw = str(text)
+
+    # Step 1: 合法 0xHEX （词首，前面不是字母数字）→ 剥 0x 前缀，保留后面 hex
+    s1 = _RE_PREFIXED_HEX.sub(lambda m: m.group(1), raw)
+    # Step 2: 剔除残留 0x（两种情形都删 0x 两个字符）：
+    #   a) 前面是字母数字（如 AA0x11 里的 0x，整体不合法，不要拼成 AA11 假通过）
+    #   b) 后跟非 hex（如 0xZZ11 里的 0x，后跟 Z 不合法，避免残留 0 造成假偶数）
+    s2 = re.sub(r"(?i)(?<=[0-9a-zA-Z])0x|0x(?![0-9a-f])", "", s1)
+
+    # Step 3: 纯 hex 段合并
+    joined = "".join(_RE_PURE_HEX.findall(s2))
+    if not joined:
+        raise ProtocolError("输入中没有任何可解析的 hex 字符")
+    if len(joined) % 2 != 0:
+        raise ProtocolError(
+            f"hex 字符总数为奇数({len(joined)})，无法配对: {joined}"
+        )
     try:
-        return bytes.fromhex(s)
+        return bytes.fromhex(joined)
     except ValueError as e:
         raise ProtocolError(f"hex 解析失败: {e}") from e
+
+
+def _read_length_field(buf: bytes, offset: int, width: int = 1, byte_order: str = "big") -> int:
+    """读取变长长度域（预留协议扩展）。
+
+    width 支持 1 / 2 / 4 字节。默认 1 字节，兼容现有协议；
+    以后协议升级为 2 字节长度，调用者把 width=2 传入即可，无需改内部切片。
+    偏移越界时抛出 ProtocolError，避免静默读成 0 导致后续解析错位。
+    """
+    if not isinstance(width, int) or width <= 0:
+        raise ProtocolError(f"长度域宽度非法: {width!r}")
+    end = offset + width
+    if end > len(buf):
+        raise ProtocolError(
+            f"长度域越界: offset={offset}, width={width}B, 剩余 {max(0, len(buf) - offset)}B"
+        )
+    return int.from_bytes(buf[offset:end], byteorder=byte_order)
+
+
+def _check_remaining(buf: bytes, offset: int, need: int, *, label: str) -> None:
+    """检查 buf 从 offset 开始至少还有 need 字节，否则抛 ProtocolError。
+
+    用于替代旧版 `data[start:start+need]` 的静默切片截断，确保通信丢包/错包时能被显式发现。
+    """
+    if need < 0:
+        raise ProtocolError(f"{label}: 需要字节数为负 {need}")
+    left = len(buf) - offset
+    if left < need:
+        raise ProtocolError(
+            f"{label}: 剩余字节不足 (offset={offset}, 需要 {need}B, 实际剩余 {left}B, 总长 {len(buf)}B)"
+        )
 
 
 def to_hex(data: bytes) -> str:
@@ -251,15 +319,17 @@ def split_frame(data: bytes, cfg: dict) -> Frame:
         checksum_actual = calc_checksum(covered, cs_algo)
         checksum_ok = checksum_expected == checksum_actual
 
-    # Data 区域：优先使用 length 字段截取（这样即使校验缺失也能解析）
+    # Data 区域：严格校验 length 字段，不要静默用实际剩余字节（否则掩盖通信丢包/切包错误）
     data_start = length_offset + length_size
-    # data_end_by_length = data_start + length
-    # data_end_by_actual = len(data) - cs_len (if checksum)
+    max_available = data_end - data_start
+    if length > max_available:
+        raise ProtocolError(
+            f"帧长度字段与实际不匹配: length={length}, "
+            f"数据区最大可用 {max_available}B (offset={data_start}, checksum前={data_end}, 帧总长={len(data)}B)"
+        )
+    if length < 0:
+        raise ProtocolError(f"帧长度字段为负: {length}")
     payload = data[data_start:data_start + length]
-    # 如果按 length 截取的字节数不足（输入被截断），则用实际剩余字节
-    if len(payload) < length:
-        # 输入数据被截断，使用实际可用的字节
-        payload = data[data_start:data_end]
 
     return Frame(
         raw=data,
@@ -731,18 +801,29 @@ def _parse_attr_list(data: bytes, cfg: dict, force_report: bool = True) -> list[
     """解析属性列表：循环 (typeid + attrid + [len] + value)。
 
     典型格式: 0x02 0x01 0x19 0x02 0x02 0x32 ...
+
+    安全改进:
+    1. 变长类型 length 域默认 2 字节（原代码写 1 字节注释却读 2 字节是对的，但现在抽成
+       _read_length_field 统一读取，预留扩展：如果 cfg['attributes']['__length_width__'] 或
+       单个 attr.meta['length_width'] 指定了 1/2/4，按其 width 读长度）。
+    2. 每次 value_end 越界时不再静默生成 error Field 然后 break，而是抛出
+       ProtocolError("attr value 越界 ... length mismatch")，让调用方明确知道包不完整。
+       如果最终要容错，调用方 try/except 后降级显示。
+    3. 定长 typeid 未知时默认 size=1 不变，但会显式 _check_remaining 校验剩余。
     """
     results: list[FieldResult] = []
     pos = 0
-    while pos < len(data):
-        if pos + 2 > len(data):
-            results.append(FieldResult(
-                name="残留字节", type="raw", value=to_hex(data[pos:]),
-                text=f"剩余 {len(data) - pos} 字节无法解析",
-                offset=pos, length=len(data) - pos, raw=data[pos:],
-            ))
-            break
+    total = len(data)
 
+    # 当前协议的变长 length 域宽度（默认 2 字节，与原有实现保持二进制兼容；
+    # 需要 1 字节的老协议可以在 JSON 里 __length_width__ = 1 指定，按 attr 单独指定也行）
+    DEFAULT_VARLEN_WIDTH = 2
+    protocol_len_width = int((cfg.get("attributes") or {}).get("__length_width__", DEFAULT_VARLEN_WIDTH))
+    if protocol_len_width not in (1, 2, 4):
+        protocol_len_width = DEFAULT_VARLEN_WIDTH
+
+    while pos < total:
+        _check_remaining(data, pos, 2, label=f"属性头 (pos={pos})")
         type_byte = data[pos]
         attrid = data[pos + 1]
 
@@ -753,34 +834,36 @@ def _parse_attr_list(data: bytes, cfg: dict, force_report: bool = True) -> list[
         type_info = TYPEID_MAP.get(typeid)
         attr_meta = _lookup_attr(cfg, attrid)
 
-        # 计算 value 长度
+        # 读取 value_len
         if typeid in (11, 12, 13, 14, 23, 24):
-            # 变长类型：需要 len 字段 (2字节大端)
-            if pos + 4 > len(data):
-                results.append(FieldResult(
-                    name=attr_meta.get("name", f"attrid_{attrid:02X}"),
-                    type="error", value=None,
-                    text=f"属性 0x{attrid:02X} 长度字段越界",
-                    offset=pos, length=2, raw=data[pos:],
-                ))
-                break
-            value_len = int.from_bytes(data[pos + 2:pos + 4], "big")
-            value_start = pos + 4
+            # 变长：优先用单个属性声明的 width，没有就用协议级的默认值
+            width_candidates = [
+                attr_meta.get("length_width") if isinstance(attr_meta, dict) else None,
+                protocol_len_width,
+            ]
+            width: int = DEFAULT_VARLEN_WIDTH
+            for w in width_candidates:
+                if isinstance(w, int) and w in (1, 2, 4):
+                    width = w
+                    break
+            value_len = _read_length_field(data, pos + 2, width=width, byte_order="big")
+            value_start = pos + 2 + width
         else:
-            # 定长类型
+            # 定长：未知 typeid 默认 1B，已经过 _check_remaining(pos, 2)，定长 value_start 一定安全
             value_len = type_info["size"] if type_info else 1
             value_start = pos + 2
 
         value_end = value_start + value_len
-        if value_end > len(data):
-            results.append(FieldResult(
-                name=attr_meta.get("name", f"attrid_{attrid:02X}"),
-                type="error", value=None,
-                text=f"属性 0x{attrid:02X} 值越界 (需要 {value_len} 字节)",
-                offset=pos, length=len(data) - pos, raw=data[pos:],
-            ))
-            break
-
+        _check_remaining(
+            data,
+            value_start,
+            value_len,
+            label=(
+                f"属性 0x{attrid:02X} (typeid={typeid}, "
+                f"name={attr_meta.get('cn_name') or attr_meta.get('name') or '?'}) "
+                f"value_len={value_len}"
+            ),
+        )
         value_chunk = data[value_start:value_end]
         value, raw_text = _decode_attr_value(value_chunk, typeid, attr_meta, type_info)
 

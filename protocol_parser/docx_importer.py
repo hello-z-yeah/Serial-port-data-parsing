@@ -680,14 +680,42 @@ def import_from_docx(path: str | Path, product_name: str | None = None) -> dict:
         product_name: 自定义产品名（不指定则从文档提取）
 
     Returns:
-        协议配置字典，可直接保存为 JSON
+        协议配置字典，可直接保存为 JSON。
+        若导入过程中发现可疑问题（如命令列表为空、属性列表为空、无任何表头等），
+        cfg["_import_warnings"] 会附带字符串列表，调用方（如 GUI）可以据此弹 warning。
     """
+    warnings: list[str] = []
     parsed = _read_docx(path)
+
+    total_tables = len(parsed.tables)
+    total_paragraphs = len(parsed.paragraphs)
+    # 文档内容为空（没读到任何段落/表格）→ 直接告警，避免用户以为导入成功实际什么都没解析
+    if total_paragraphs == 0 and total_tables == 0:
+        warnings.append("Word 文档未读取到任何段落或表格，请检查 docx 文件是否有效、是否加密、是否为 .doc 老格式。")
 
     # 进一步解析
     parsed.frame_config = _parse_frame_config(parsed)
     parsed.commands = _parse_commands(parsed)
     parsed.attributes = _parse_attributes(parsed)
+
+    if not parsed.commands:
+        warnings.append(
+            "命令列表为空（未解析到任何命令）：请确认表格中包含「命令字/Name/说明/请求响应」列，"
+            "且表头包含「cmd_code/命令/指令」等关键字。"
+        )
+    if not parsed.attributes:
+        warnings.append(
+            "属性列表为空（未解析到任何属性）：请确认属性表存在且表头包含「attrID/Name/属性名称/Type」列。"
+        )
+    if not parsed.frame_config:
+        warnings.append(
+            "帧配置为空：未在文档中发现帧头/长度/校验配置，将使用程序内置 V3.0 默认帧结构。"
+        )
+    if total_tables == 0 and (parsed.commands or parsed.attributes):
+        warnings.append(
+            "未检测到任何表格，但解析结果非空（可能全部来自正文字符串正则匹配）。"
+            "建议使用标准表格填写协议，可显著提升导入准确性。"
+        )
 
     # 产品名
     name = product_name or parsed.product_name or Path(path).stem
@@ -705,6 +733,8 @@ def import_from_docx(path: str | Path, product_name: str | None = None) -> dict:
         "attributes": parsed.attributes,
         "_imported_from": str(Path(path).name),
     }
+    if warnings:
+        cfg["_import_warnings"] = warnings
 
     return cfg
 
