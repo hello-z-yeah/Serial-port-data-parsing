@@ -278,24 +278,22 @@ class ProtocolParserApp:
 
         self.cfg: dict | None = None
         self.product_var = tk.StringVar()
-        self.mode_var = tk.StringVar(value="paste")
 
-        # 启动参数：--monitor port baud 时直接打开串口实时 tab 并填好选中串口/波特率
+        # 启动参数：--monitor port baud 时自动填好选中串口/波特率
         self._monitor_port = monitor_port
         self._monitor_baud = monitor_baud
 
         # 串口相关
         self.port_var = tk.StringVar()
-        self.baudrate_var = tk.IntVar(value=115200)
+        self.baudrate_var = tk.StringVar(value="115200")  # 改成StringVar支持手动输入自定义波特率
         self.bytesize_var = tk.IntVar(value=8)
         self.stopbits_var = tk.IntVar(value=1)
         self.collector: SerialCollector | None = None
         self.is_collecting = False
         self.serial_sender_var = tk.StringVar(value="模组发送")
 
-        # 数据格式
-        self.data_format_var = tk.StringVar(value="HEX")
-        self.paste_data_format_var = tk.StringVar(value="HEX")
+        # 数据格式：HEX格式单选（勾选=HEX，不勾选=ASCII）
+        self.hex_format_var = tk.BooleanVar(value=True)
 
         # 日志
         self.log_path: Path | None = None
@@ -359,13 +357,12 @@ class ProtocolParserApp:
         ttk.Button(right, text="清空", command=self._clear_output).pack(side="left", padx=2)
         ttk.Checkbutton(right, text="置顶", variable=self.topmost_var, command=self._toggle_topmost).pack(side="left", padx=4)
 
-        # 中间内容区
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill="both", expand=True, padx=8, pady=4)
-        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_change)
-
-        self._build_paste_tab()
-        self._build_serial_tab()
+        # 中间内容区：只留串口实时（粘贴解析已删除）
+        self.main_panel = ttk.Frame(self.root)
+        self.main_panel.pack(fill="both", expand=True, padx=8, pady=4)
+        self.main_panel.columnconfigure(0, weight=1)
+        self.main_panel.rowconfigure(1, weight=1)
+        self._build_serial_panel(self.main_panel)
 
         # 底部状态栏
         self.status_var = tk.StringVar(value="就绪")
@@ -376,72 +373,10 @@ class ProtocolParserApp:
         self.stats_var = tk.StringVar(value="")
         ttk.Label(status, textvariable=self.stats_var, anchor="e").grid(row=0, column=1, sticky="e")
 
-    def _build_paste_tab(self) -> None:
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="粘贴解析")
-        self.paste_tab = tab
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(1, weight=1)
-
-        # 输入区
-        input_frame = ttk.LabelFrame(tab, text="Hex 数据（一行一条，支持空格/逗号分隔）", padding=8)
-        input_frame.grid(row=0, column=0, sticky="new", padx=4, pady=4)
-        input_frame.columnconfigure(0, weight=1)
-
-        self.input_text = tk.Text(input_frame, height=4, font=("Consolas", 10), wrap="word")
-        self.input_text.grid(row=0, column=0, sticky="ew")
-        self.input_text.bind("<Control-Return>", lambda e: self._parse_paste())
-        _bind_text_widget_menu(self.input_text, readonly=False)
-
-        # 按钮行
-        btns = ttk.Frame(input_frame)
-        btns.grid(row=1, column=0, sticky="w", pady=(4, 0))
-        ttk.Button(btns, text="解析 (Ctrl+Enter)", command=self._parse_paste).pack(side="left")
-        ttk.Button(btns, text="清空输入", command=lambda: self.input_text.delete("1.0", "end")).pack(side="left", padx=4)
-        ttk.Label(btns, text="发送方:").pack(side="left", padx=(8, 0))
-        self.paste_sender_var = tk.StringVar(value="模组发送")
-        self.paste_sender_combo = ttk.Combobox(
-            btns, textvariable=self.paste_sender_var,
-            values=["模组发送", "MCU发送"],
-            width=10, state="readonly",
-        )
-        self.paste_sender_combo.pack(side="left")
-
-        ttk.Label(btns, text="数据格式:").pack(side="left", padx=(12, 0))
-        ttk.Combobox(
-            btns, textvariable=self.paste_data_format_var,
-            values=["HEX", "ASCII"], width=7, state="readonly",
-        ).pack(side="left", padx=2)
-
-        # 输出区
-        out_frame = ttk.LabelFrame(tab, text="解析结果", padding=4)
-        out_frame.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
-        out_frame.columnconfigure(0, weight=1)
-        out_frame.rowconfigure(0, weight=1)
-
-        self.output_text = tk.Text(out_frame, font=("Consolas", 10), wrap="word", state="disabled")
-        self.output_text.grid(row=0, column=0, sticky="nsew")
-        _bind_text_widget_menu(self.output_text, readonly=True)
-
-        scroll = ttk.Scrollbar(out_frame, command=self.output_text.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.output_text.configure(yscrollcommand=scroll.set)
-
-        self.output_text.tag_configure("header", foreground="#0066CC", font=("Consolas", 10, "bold"))
-        self.output_text.tag_configure("ok", foreground="#008800")
-        self.output_text.tag_configure("err", foreground="#CC0000")
-        self.output_text.tag_configure("field", foreground="#444444")
-        self.output_text.tag_configure("raw", foreground="#888888")
-
-    def _build_serial_tab(self) -> None:
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="串口实时")
-        self.serial_tab = tab
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(1, weight=1)
-
+    def _build_serial_panel(self, parent: tk.Misc) -> None:
+        """构建串口实时主面板（直接嵌在主窗口里，不再包 Notebook Tab）。"""
         # 串口配置区
-        cfg_frame = ttk.LabelFrame(tab, text="串口配置", padding=8)
+        cfg_frame = ttk.LabelFrame(parent, text="串口配置", padding=8)
         cfg_frame.grid(row=0, column=0, sticky="new", padx=4, pady=4)
         cfg_frame.columnconfigure(0, weight=1)
 
@@ -453,7 +388,14 @@ class ProtocolParserApp:
         ttk.Button(row1, text="刷新", command=self._refresh_ports).pack(side="left", padx=2)
 
         ttk.Label(row1, text="波特率:").pack(side="left", padx=(12, 2))
-        ttk.Combobox(row1, textvariable=self.baudrate_var, values=[9600, 19200, 38400, 57600, 115200, 230400, 460800], width=10).pack(side="left", padx=4)
+        # 波特率改为可手动输入自定义值（含6000000=6M支持）
+        self.baudrate_combo = ttk.Combobox(
+            row1, textvariable=self.baudrate_var,
+            values=[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000, 3000000, 4000000, 5000000, 6000000],
+            width=10, state="normal",  # state=normal 允许手动输入任意数字
+        )
+        self.baudrate_combo.pack(side="left", padx=4)
+        ttk.Label(row1, text="(支持自定义, 含6M=6000000)", foreground="#888").pack(side="left", padx=2)
 
         ttk.Label(row1, text="数据位:").pack(side="left", padx=(12, 2))
         ttk.Combobox(row1, textvariable=self.bytesize_var, values=[5, 6, 7, 8], width=4, state="readonly").pack(side="left", padx=4)
@@ -469,24 +411,26 @@ class ProtocolParserApp:
         self.detail_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(row2, text="详细模式", variable=self.detail_var).pack(side="left", padx=2)
 
-        ttk.Label(row2, text="发送方:").pack(side="left", padx=(12, 2))
-        self.serial_sender_combo = ttk.Combobox(
-            row2, textvariable=self.serial_sender_var,
-            values=["模组发送", "MCU发送"],
-            width=10, state="readonly",
-        )
-        self.serial_sender_combo.pack(side="left", padx=2)
-        self.serial_sender_combo.bind("<<ComboboxSelected>>", self._on_serial_sender_change)
+        # 发送方：两个单选 Radiobutton
+        self._sender_frame = ttk.Frame(row2)
+        self._sender_frame.pack(side="left", padx=(16, 2))
+        ttk.Label(self._sender_frame, text="发送方:").pack(side="left", padx=2)
+        self.sender_module = ttk.Radiobutton(self._sender_frame, text="模组发送", variable=self.serial_sender_var, value="模组发送")
+        self.sender_module.pack(side="left", padx=4)
+        self.sender_mcu = ttk.Radiobutton(self._sender_frame, text="MCU发送", variable=self.serial_sender_var, value="MCU发送")
+        self.sender_mcu.pack(side="left", padx=4)
+        self.sender_labels = [self._sender_frame]
 
-        ttk.Label(row2, text="数据格式:").pack(side="left", padx=(12, 2))
-        ttk.Combobox(
-            row2, textvariable=self.data_format_var,
-            values=["HEX", "ASCII"], width=7, state="readonly",
-        ).pack(side="left", padx=2)
-        self.data_format_var.trace_add("write", self._on_data_format_change)
+        # 数据格式：单选勾 HEX 格式
+        self._hex_chk = ttk.Checkbutton(
+            row2, text="HEX格式", variable=self.hex_format_var,
+            command=self._on_hex_format_change,
+        )
+        self._hex_chk.pack(side="left", padx=(16, 2))
+        ttk.Label(row2, text="(不勾选=ASCII)", foreground="#888").pack(side="left", padx=2)
 
         self.autoscroll_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(row2, text="自动滚动", variable=self.autoscroll_var).pack(side="left", padx=(12, 2))
+        ttk.Checkbutton(row2, text="自动滚动", variable=self.autoscroll_var).pack(side="left", padx=(16, 2))
 
         row3 = ttk.Frame(cfg_frame)
         row3.grid(row=2, column=0, sticky="ew", pady=(6, 0))
@@ -503,7 +447,7 @@ class ProtocolParserApp:
         ttk.Label(row3, text="(.dat格式，超过50MB自动分割)").pack(side="left", padx=(8, 2))
 
         # 实时输出区
-        out_frame = ttk.LabelFrame(tab, text="实时数据", padding=4)
+        out_frame = ttk.LabelFrame(parent, text="实时数据", padding=4)
         out_frame.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
         out_frame.columnconfigure(0, weight=1)
         out_frame.rowconfigure(0, weight=1)
@@ -522,6 +466,17 @@ class ProtocolParserApp:
         self.serial_text.tag_configure("cmd", foreground="#0066CC", font=("Consolas", 10, "bold"))
         self.serial_text.tag_configure("field", foreground="#444444")
         self.serial_text.tag_configure("raw", foreground="#888888")
+        self.serial_text.tag_configure("direction", foreground="#E65100", font=("Consolas", 10, "bold"))
+        self.serial_text.tag_configure("pid", foreground="#AD1457", font=("Consolas", 10, "bold"))
+        self.serial_text.tag_configure("model", foreground="#00695C", font=("Consolas", 10, "bold"))
+        self.serial_text.tag_configure("raw_data", foreground="#006064")
+
+        # 初始状态：根据 HEX 格式勾选状态决定是否显示发送方
+        self._on_hex_format_change()
+
+        # Radiobutton 和 Checkbutton 改值时同步给 collector
+        self.serial_sender_var.trace_add("write", self._on_serial_sender_change)
+        self.hex_format_var.trace_add("write", self._on_hex_format_sync_collector)
 
     # ---------- 协议加载 ----------
 
@@ -634,163 +589,28 @@ class ProtocolParserApp:
         scroll.pack(fill="y", side="right")
         text.configure(yscrollcommand=scroll.set)
 
-    def _switch_mode(self) -> None:
-        """切换模式（粘贴解析 / 串口实时）。"""
-        mode = self.mode_var.get()
-        if mode == "paste":
-            self.notebook.select(self.paste_tab)
-        else:
-            self.notebook.select(self.serial_tab)
-            self._refresh_ports()
-
-    def _on_tab_change(self, event=None) -> None:
-        """Notebook 切换 tab 时同步 mode_var。"""
-        cur = self.notebook.select()
-        if cur == str(self.paste_tab):
-            self.mode_var.set("paste")
-        elif cur == str(self.serial_tab):
-            self.mode_var.set("serial")
-            self._refresh_ports()
-
-    def _current_mode(self) -> str:
-        """获取当前模式（基于 notebook 选中tab）。"""
-        cur = self.notebook.select()
-        if cur == str(self.serial_tab):
-            return "serial"
-        return "paste"
-
-    # ---------- 粘贴解析 ----------
-
-    def _parse_paste(self) -> None:
-        """解析粘贴的数据。"""
-        content = self.input_text.get("1.0", "end").strip()
-        if not content:
-            return
-
-        sender = self.paste_sender_var.get()
-        direction = None
-        if sender == "模组发送":
-            direction = "request"
-        elif sender == "MCU发送":
-            direction = "response"
-
-        lines = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
-        if not lines:
-            return
-
-        import json
-        from protocol_parser.parser import ProtocolError
-
-        sync = FrameSynchronizer(self.cfg)
-        results: list[tuple[ParseResult, str]] = []
-
-        for idx, line in enumerate(lines, 1):
-            try:
-                data = parse_hex_input(line)
-                result = parse_frame(data, self.cfg, direction=direction)
-                results.append((result, ""))
-            except ProtocolError as e:
+    def _on_hex_format_change(self) -> None:
+        """HEX格式勾选变化：未勾选=ASCII模式，隐藏并禁用发送方；勾选=HEX模式，显示发送方。"""
+        hex_checked = bool(self.hex_format_var.get())
+        try:
+            state_txt = "normal" if hex_checked else "disabled"
+            for item in (self.sender_module, self.sender_mcu):
                 try:
-                    data = parse_hex_input(line)
-                    frames = sync.feed(data)
-                    if frames:
-                        for frame in frames:
-                            r = parse_frame(frame.raw, self.cfg)
-                            results.append((r, f"（字节流同步：第 {idx} 行）"))
-                    else:
-                        results.append((ParseResult(
-                            product=self.cfg.get("product", ""),
-                            raw_hex=line,
-                            cmd_code="",
-                            cmd_name="解析失败",
-                            direction="",
-                            description="",
-                            error=f"[行 {idx}] 无法识别为完整帧",
-                        ), ""))
-                except ProtocolError as e2:
-                    results.append((ParseResult(
-                        product=self.cfg.get("product", ""),
-                        raw_hex=line,
-                        cmd_code="",
-                        cmd_name="解析失败",
-                        direction="",
-                        description="",
-                        error=f"[行 {idx}] {e2}",
-                    ), ""))
-
-        self._display_paste_results(results)
-        self._set_status(f"已解析 {len(results)} 条指令")
-
-    def _format_raw_display_paste(self, raw_hex: str) -> str:
-        """粘贴标签页数据格式转换。"""
-        if self.paste_data_format_var.get() == "ASCII":
-            try:
-                raw_bytes = bytes.fromhex(raw_hex.replace(" ", ""))
-                return "".join(chr(b) if 32 <= b < 127 else "." for b in raw_bytes)
-            except (ValueError, UnicodeDecodeError):
-                return raw_hex
-        return raw_hex
-
-    def _display_paste_results(self, results: list[tuple[ParseResult, str]]) -> None:
-        """显示粘贴解析结果。"""
-        self.output_text.configure(state="normal")
-        self.output_text.delete("1.0", "end")
-
-        for result, note in results:
-            ts = datetime.now().strftime("%H:%M:%S")
-            self.output_text.insert("end", f"━━━ {ts} ━━━\n", "header")
-            raw_display = self._format_raw_display_paste(result.raw_hex)
-            self.output_text.insert("end", f"原始: {raw_display}\n", "raw")
-            self.output_text.insert("end", f"命令: {result.cmd_code}  {result.cmd_name}")
-            sender_label = self._get_sender_label(self.paste_sender_var.get())
-            if sender_label:
-                self.output_text.insert("end", f"  [{sender_label}]")
-            elif result.direction:
-                self.output_text.insert("end", f"  [{result.direction}]")
-            self.output_text.insert("end", "\n")
-            if note:
-                self.output_text.insert("end", f"{note}\n", "field")
-            if result.description:
-                self.output_text.insert("end", f"说明: {result.description}\n", "field")
-            if result.checksum_ok is not None:
-                tag = "ok" if result.checksum_ok else "err"
-                label = "通过" if result.checksum_ok else "失败"
-                self.output_text.insert("end", f"校验: {label}\n", tag)
-            if result.length_match is False:
-                self.output_text.insert("end", "长度: 字段长度与实际不一致\n", "err")
-
-            for f in result.fields:
-                ftype = f.get("type", "")
-                fname = f.get("name", "")
-                ftext = f.get("text", "")
-                if ftype == "separator":
-                    self.output_text.insert("end", f"\n{fname}\n", "cmd")
-                elif ftype in ("header", "version", "cmd", "length", "checksum"):
-                    self.output_text.insert("end", f"· {fname:<22} {ftext}\n", "field")
-                else:
-                    self.output_text.insert("end", f"· {fname:<22} {ftext}\n", "field")
-                    children = f.get("children", [])
-                    if children and isinstance(children, list):
-                        for child in children:
-                            cname = child.get("name", "")
-                            ctext = child.get("text", "")
-                            if cname and ctext:
-                                self.output_text.insert("end", f"  └─ {cname:<20} {ctext}\n", "field")
-
-            self.output_text.insert("end", "\n")
-
-            if self.log_file:
-                self._write_log(result)
-
-        self.output_text.see("end")
-        self.output_text.configure(state="disabled")
+                    item.configure(state=state_txt)
+                except Exception:
+                    pass
+            if hex_checked:
+                self._sender_frame.pack(side="left", padx=(16, 2), before=self._hex_chk)
+            else:
+                self._sender_frame.pack_forget()
+        except Exception:
+            pass
 
     def _clear_output(self) -> None:
         """清空输出。"""
-        text = self.output_text if self._current_mode() == "paste" else self.serial_text
-        text.configure(state="normal")
-        text.delete("1.0", "end")
-        text.configure(state="disabled")
+        self.serial_text.configure(state="normal")
+        self.serial_text.delete("1.0", "end")
+        self.serial_text.configure(state="disabled")
 
     def _toggle_topmost(self) -> None:
         """切换窗口置顶状态。"""
@@ -837,8 +657,14 @@ class ProtocolParserApp:
             port_combo.current(0)
 
         ttk.Label(frm, text="波特率:").grid(row=1, column=0, sticky="w", pady=4)
-        baudrate_var = tk.IntVar(value=115200)
-        ttk.Combobox(frm, textvariable=baudrate_var, values=[9600, 19200, 38400, 57600, 115200, 230400, 460800], width=10).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=4)
+        baudrate_var = tk.StringVar(value="115200")
+        baud_combo = ttk.Combobox(
+            frm, textvariable=baudrate_var,
+            values=[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000, 3000000, 4000000, 5000000, 6000000],
+            width=10, state="normal",
+        )
+        baud_combo.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=4)
+        ttk.Label(frm, text="(支持自定义,含6M)", foreground="#888").grid(row=1, column=1, sticky="e", padx=(8, 0), pady=4)
 
         btn_frm = ttk.Frame(frm)
         btn_frm.grid(row=2, column=0, columnspan=2, pady=(12, 0))
@@ -849,8 +675,13 @@ class ProtocolParserApp:
                 messagebox.showwarning("提示", "请选择串口", parent=dlg)
                 return
             port = port_display.split(" - ")[0].strip()
-            baudrate = baudrate_var.get()
-            # 启动新进程
+            try:
+                baudrate = int(str(baudrate_var.get()).strip())
+                if baudrate <= 0:
+                    raise ValueError
+            except Exception:
+                messagebox.showwarning("提示", "波特率必须是正整数", parent=dlg)
+                return
             self._spawn_monitor(port, baudrate)
             dlg.destroy()
             self._set_status(f"已打开串口监控进程: {port}")
@@ -862,38 +693,23 @@ class ProtocolParserApp:
         """启动独立进程运行相同程序，传 --monitor port baud。"""
         import subprocess
 
-        # —— 判断如何运行自身 ——
         if getattr(sys, "frozen", False):
-            # PyInstaller EXE：sys.executable 就是打包好的程序
             cmd = [sys.executable, "--monitor", port, str(int(baudrate))]
             DETACHED_PROCESS = 0x00000008
             try:
-                subprocess.Popen(
-                    cmd,
-                    creationflags=DETACHED_PROCESS,
-                    close_fds=True,
-                )
+                subprocess.Popen(cmd, creationflags=DETACHED_PROCESS, close_fds=True)
             except Exception as e:
                 messagebox.showerror("启动失败", f"无法启动新进程（EXE模式）: {e}")
         else:
-            # 开发模式：用相同解释器运行 gui.py
             script_path = Path(__file__).resolve()
             try:
-                subprocess.Popen(
-                    [sys.executable, str(script_path), "--monitor", port, str(int(baudrate))],
-                    close_fds=True,
-                )
+                subprocess.Popen([sys.executable, str(script_path), "--monitor", port, str(int(baudrate))], close_fds=True)
             except Exception as e:
                 messagebox.showerror("启动失败", f"无法启动新进程（开发模式）: {e}")
 
     def _apply_monitor_args(self) -> None:
-        """启动参数 --monitor port baud 生效：切到串口实时tab，选中指定串口/波特率。"""
-        # 切到串口实时 tab
-        self.notebook.select(self.serial_tab)
-        self.mode_var.set("serial")
+        """启动参数 --monitor port baud 生效：选中指定串口/波特率。"""
         self.root.update_idletasks()
-
-        # 刷新串口列表，按名称匹配选中
         self._refresh_ports()
         display_values = list(self.port_combo["values"])
         if self._monitor_port:
@@ -904,15 +720,10 @@ class ProtocolParserApp:
                     break
             if matched >= 0:
                 self.port_combo.current(matched)
-
-        # 填入波特率（下拉中没有就写死）
         try:
-            baud_values = [v for v in list(self.root.children.values()) if hasattr(v, "winfo_name")]
+            self.baudrate_var.set(str(int(self._monitor_baud)))
         except Exception:
-            baud_values = []
-        self.baudrate_var.set(int(self._monitor_baud))
-
-        # 更新窗口标题
+            self.baudrate_var.set(str(self._monitor_baud))
         self.root.title(f"串口监控 - {self._monitor_port} @ {self._monitor_baud}")
 
     # ---------- 串口实时 ----------
@@ -950,9 +761,15 @@ class ProtocolParserApp:
             return
         port = port_display.split(" - ")[0].strip()
         try:
-            baudrate = int(self.baudrate_var.get())
+            baud_s = str(self.baudrate_var.get()).strip()
+            if not baud_s:
+                raise ValueError("empty")
+            baudrate = int(baud_s)
+            if baudrate <= 0:
+                raise ValueError("non-positive")
         except Exception:
-            baudrate = 115200
+            messagebox.showwarning("提示", "波特率必须填写正整数（支持自定义，如6M填6000000）")
+            return
         try:
             bytesize = int(self.bytesize_var.get())
         except Exception:
@@ -976,14 +793,16 @@ class ProtocolParserApp:
             self._ui_queue.append(("serial_raw", (data, ts)))
             self._write_raw_data(data, ts)
 
-        sender = self.serial_sender_var.get()
+        # HEX 未勾选（ASCII模式）时发送方不生效，direction 置为 None
         direction = None
-        if sender == "模组发送":
-            direction = "request"
-        elif sender == "MCU发送":
-            direction = "response"
+        if bool(self.hex_format_var.get()):
+            sender = self.serial_sender_var.get()
+            if sender == "模组发送":
+                direction = "request"
+            elif sender == "MCU发送":
+                direction = "response"
 
-        is_ascii = self.data_format_var.get() == "ASCII"
+        is_ascii = not bool(self.hex_format_var.get())
 
         try:
             self.collector = SerialCollector(
@@ -1014,25 +833,41 @@ class ProtocolParserApp:
         else:
             self._set_status(f"监控中: {port} @ {baudrate} ({mode_label})")
 
-    def _on_serial_sender_change(self, event=None) -> None:
-        """切换发送方。"""
+    def _on_serial_sender_change(self, *args) -> None:
+        """切换发送方（Radiobutton变化会直接改variable，这里主动同步给collector）。"""
+        # 先同步 UI 显示隐藏（防止未来拓展）
+        try:
+            self._on_hex_format_change()
+        except Exception:
+            pass
         if not self.collector:
             return
-        sender = self.serial_sender_var.get()
         direction = None
-        if sender == "模组发送":
-            direction = "request"
-        elif sender == "MCU发送":
-            direction = "response"
+        if bool(self.hex_format_var.get()):
+            sender = self.serial_sender_var.get()
+            if sender == "模组发送":
+                direction = "request"
+            elif sender == "MCU发送":
+                direction = "response"
         self.collector.direction = direction
-        self._set_status(f"已切换发送方: {sender}")
+        self._set_status(f"已切换发送方: {self.serial_sender_var.get()}")
 
-    def _on_data_format_change(self, *args) -> None:
-        """切换数据格式时动态更新 raw_mode。"""
+    def _on_hex_format_sync_collector(self, *args) -> None:
+        """HEX格式勾选变化，更新UI显示/隐藏发送方，并同步raw_mode/direction给collector。"""
+        self._on_hex_format_change()
         if not self.collector:
             return
-        is_ascii = self.data_format_var.get() == "ASCII"
+        is_ascii = not bool(self.hex_format_var.get())
         self.collector.raw_mode = is_ascii
+        # 同步 direction：ASCII不用direction
+        direction = None
+        if not is_ascii:
+            sender = self.serial_sender_var.get()
+            if sender == "模组发送":
+                direction = "request"
+            elif sender == "MCU发送":
+                direction = "response"
+        self.collector.direction = direction
         mode_label = "ASCII" if is_ascii else "HEX"
         self._set_status(f"已切换数据格式: {mode_label}")
 
@@ -1113,11 +948,8 @@ class ProtocolParserApp:
 
         try:
             ts_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            try:
-                fmt = self.data_format_var.get()
-            except Exception:
-                fmt = "HEX"
-            if fmt == "ASCII":
+            is_ascii = not bool(self.hex_format_var.get())
+            if is_ascii:
                 text = data.decode("utf-8", errors="replace")
                 lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
                 for line in lines:
@@ -1179,8 +1011,9 @@ class ProtocolParserApp:
             self.root.after(100, self._process_ui_queue)
 
     def _format_raw_display_serial(self, raw_hex: str) -> str:
-        """串口标签页数据格式转换。"""
-        if self.data_format_var.get() == "ASCII":
+        """串口原始数据显示格式转换。"""
+        is_ascii = not bool(self.hex_format_var.get())
+        if is_ascii:
             try:
                 raw_bytes = bytes.fromhex(raw_hex.replace(" ", ""))
                 return "".join(chr(b) if 32 <= b < 127 else "." for b in raw_bytes)
@@ -1397,7 +1230,10 @@ class ProtocolParserApp:
         ok_tag = "OK" if (result.error is None and result.checksum_ok is not False) else "ERR"
         cs = "✓" if result.checksum_ok else "✗" if result.checksum_ok is False else " "
         self.log_file.write(f"[{ts_str}] {ok_tag} {cs} {result.cmd_code} {result.cmd_name}")
-        sender_label = self._get_sender_label(self.serial_sender_var.get() if self._current_mode() == "serial" else self.paste_sender_var.get())
+        # HEX未勾选（ASCII）时发送方不生效，只在 HEX 模式写发送方标签
+        sender_label = ""
+        if bool(self.hex_format_var.get()):
+            sender_label = self._get_sender_label(self.serial_sender_var.get())
         if sender_label:
             self.log_file.write(f" [{sender_label}]")
         elif result.direction:
@@ -1450,7 +1286,7 @@ def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--monitor", nargs=2, metavar=("PORT", "BAUD"), default=None,
-                    help="启动后直接跳到串口实时Tab并选中指定串口/波特率，例如 --monitor COM40 9600")
+                    help="启动后自动选中指定串口与波特率，例如 --monitor COM40 9600（BAUD支持自定义如 6000000=6M）")
     args, _unknown = ap.parse_known_args()
 
     monitor_port = None
