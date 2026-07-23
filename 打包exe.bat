@@ -81,8 +81,17 @@ if errorlevel 1 (
 )
 
 echo.
+echo === 复制 exe 到项目根目录 ===
+copy /Y "%~dp0dist\串口数据解析.exe" "%~dp0串口数据解析.exe"
+if errorlevel 1 (
+    echo [警告] 复制失败，请手动从 dist 目录复制。
+) else (
+    echo 已复制到：%~dp0串口数据解析.exe
+)
+
+echo.
 echo === 打包完成 ===
-echo 输出文件：%~dp0dist\串口数据解析.exe
+echo 输出文件：%~dp0串口数据解析.exe
 echo.
 echo 双击 串口数据解析.exe 即可启动程序。
 echo.

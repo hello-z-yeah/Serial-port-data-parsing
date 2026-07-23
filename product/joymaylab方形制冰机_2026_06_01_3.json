@@ -1,0 +1,130 @@
+{
+  "product": "joymaylab方形制冰机_2026_06_01_3",
+  "description": "项目背景：觉美制冰机接入小米平台",
+  "version": "1.0",
+  "frame": {
+    "header": "0xA5A5",
+    "header_size": 2,
+    "ver": "0x03",
+    "ver_offset": 2,
+    "ver_size": 1,
+    "cmd_offset": 3,
+    "length_offset": 4,
+    "length_size": 2,
+    "length_byte_order": "big",
+    "checksum": {
+      "algorithm": "sum",
+      "length": 1,
+      "covers": "from_start_to_checksum_exclusive"
+    }
+  },
+  "enums": {},
+  "commands": [
+    {
+      "cmd_code": "0x01",
+      "name": "开关",
+      "description": "开关",
+      "direction": "00",
+      "request": {
+        "format": "raw",
+        "name": "请求"
+      },
+      "response": {
+        "format": "attr_list",
+        "name": "响应"
+      }
+    },
+    {
+      "cmd_code": "0x10",
+      "name": "开关",
+      "description": "开关",
+      "direction": "00",
+      "request": {
+        "format": "raw",
+        "name": "请求"
+      },
+      "response": {
+        "format": "attr_list",
+        "name": "响应"
+      }
+    }
+  ],
+  "attributes": {
+    "0x01": {
+      "name": "工作状态",
+      "typeid": 2,
+      "range": "1: 待机中 2: 制冰中 3: 清洗中 4: 冰满",
+      "enum": {
+        "1": "待机中",
+        "2": "制冰中",
+        "3": "清洗中",
+        "4": "冰满"
+      }
+    },
+    "0x02": {
+      "name": "故障",
+      "typeid": 2,
+      "range": "无故障 缺水 环境温度传感器故障 脱冰异常 水箱温度传感器故障 预冷阶段过长 0-31，按位上报，0为无故障"
+    },
+    "0x03": {
+      "name": "预约制冰时间",
+      "typeid": 4,
+      "range": "最小值: 1 最大值: 1439 步长: 1"
+    },
+    "0x04": {
+      "name": "预约制冰功能开关",
+      "typeid": 0,
+      "range": "0: 关闭 1: 打开",
+      "enum": {
+        "0": "关闭",
+        "1": "打开"
+      }
+    },
+    "0x05": {
+      "name": "UV杀菌",
+      "typeid": 0,
+      "range": "0: 关闭 1: 打开",
+      "enum": {
+        "0": "关闭",
+        "1": "打开"
+      }
+    },
+    "0x06": {
+      "name": "自动上水",
+      "typeid": 0,
+      "range": "0: 关闭 1: 打开",
+      "enum": {
+        "0": "关闭",
+        "1": "打开"
+      }
+    },
+    "0x07": {
+      "name": "一键清洗",
+      "typeid": 0,
+      "range": "0: 停止 1: 清洗",
+      "enum": {
+        "0": "停止",
+        "1": "清洗"
+      }
+    },
+    "0x08": {
+      "name": "制冰开关",
+      "typeid": 0,
+      "range": "0: 关闭 1: 打开",
+      "enum": {
+        "0": "关闭",
+        "1": "打开"
+      }
+    },
+    "0x09": {
+      "name": "冰块大小",
+      "typeid": 2,
+      "range": "最小值: 0 最大值: 16 步长: 1 APP选择-6，模块下发0给MCU"
+    },
+    "0x00": {
+      "name": "开关",
+      "typeid": 0
+    }
+  },
+  "_imported_from": "JOYMAYLAB方形制冰机 2026-06-01(3).docx"
+}

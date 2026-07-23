@@ -74,6 +74,61 @@ def _validate_protocol(cfg: dict) -> None:
         raise ProtocolError("协议配置缺少 'commands' 列表")
 
 
+def merge_protocol(base: dict, override: dict) -> dict:
+    """将 override 协议合并到 base 协议上，override 优先级更高。
+
+    合并规则：
+    - product / description / version：使用 override 的
+    - frame：使用 override 的（如果存在且非空），否则保留 base
+    - commands：以 cmd_code 为键合并，保留 base 的 request/response 格式定义，
+      只用 override 的 name/description 覆盖
+    - attributes：以 attrid 为键合并，override 覆盖/补充 base
+    - enums：递归合并，override 覆盖 base
+    """
+    import copy
+    result = copy.deepcopy(base)
+
+    # 基本元信息
+    for key in ("product", "description", "version", "_imported_from"):
+        if key in override:
+            result[key] = override[key]
+
+    # frame
+    if "frame" in override and override["frame"]:
+        result["frame"] = copy.deepcopy(override["frame"])
+
+    # commands 合并（以 cmd_code 为键）
+    # 策略：完全保留 base 的命令定义（包括 name/description/format），
+    #       只有 override 中独有的命令才添加
+    if "commands" in override:
+        base_cmds = {c["cmd_code"]: c for c in result.get("commands", [])}
+        for cmd in override["commands"]:
+            cmd_code = cmd["cmd_code"]
+            if cmd_code not in base_cmds:
+                base_cmds[cmd_code] = cmd
+        result["commands"] = list(base_cmds.values())
+
+    # attributes 合并（以 attrid 为键）
+    if "attributes" in override:
+        base_attrs = result.get("attributes", {})
+        base_attrs.update(override["attributes"])
+        result["attributes"] = base_attrs
+
+    # enums 合并
+    if "enums" in override:
+        base_enums = result.get("enums", {})
+        for enum_name, enum_map in override["enums"].items():
+            if enum_name in base_enums:
+                merged_enum = copy.deepcopy(base_enums[enum_name])
+                merged_enum.update(enum_map)
+                base_enums[enum_name] = merged_enum
+            else:
+                base_enums[enum_name] = enum_map
+        result["enums"] = base_enums
+
+    return result
+
+
 # ---------- 字节工具 ----------
 
 def parse_hex_input(text: str) -> bytes:
@@ -521,6 +576,46 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
                 3, len(ext), raw=ext,
             ))
         return results
+    if fmt == "dev_info":
+        # 查询设备信息响应：
+        # [属性1(typeid,attrid,val)...] + PID属性(type=0x06,attrid=0xF7,uint32)
+        #   + MODEL属性(type=0x0B,attrid=0xF5,变长string)
+        #   + 属性列表属性(type=0x0E,attrid=0xF3,变长ARRAY，内部也是attr_list格式)
+        # 整体按 attr_list 格式解析，PID/Model/属性列表使用固定name解析
+        attr_results = _parse_attr_list(data, cfg, force_report=False)
+        for fr in attr_results:
+            children = fr.children or []
+            if children and children[0].get("attrid") == "0xF7":
+                fr.name = "设备PID"
+                raw_val = fr.value
+                if isinstance(raw_val, int):
+                    fr.text = f"{raw_val} (0x{raw_val:08X})"
+                continue
+            if children and children[0].get("attrid") == "0xF5":
+                fr.name = "产品Model"
+                # STRING类型去掉单引号，更友好显示
+                if isinstance(fr.value, str) and fr.text.startswith("'") and fr.text.endswith("'"):
+                    fr.text = fr.value
+                continue
+            if children and children[0].get("attrid") == "0xF3":
+                fr.name = "设备属性列表"
+                # ARRAY内部也是 attr_list 格式，递归解析
+                if isinstance(fr.raw, bytes) and len(fr.raw) >= 4:
+                    # 取出变长value部分（跳过typeid,attrid,2字节长度 = 4字节）
+                    inner_value = fr.raw[4:]
+                    if inner_value:
+                        try:
+                            inner_results = _parse_attr_list(inner_value, cfg, force_report=False)
+                            # 把内层解析结果作为children附加
+                            fr.text = f"共 {len(inner_results)} 个属性"
+                            fr.children = (children or []) + [
+                                {"__inner_field__": True, **ir.to_dict()}
+                                for ir in inner_results
+                            ]
+                        except Exception:
+                            pass
+                continue
+        return attr_results
     if fmt == "net_config":
         # 配网方式
         if not data:
@@ -660,8 +755,8 @@ def _parse_attr_list(data: bytes, cfg: dict, force_report: bool = True) -> list[
 
         # 计算 value 长度
         if typeid in (11, 12, 13, 14, 23, 24):
-            # 变长类型：需要 len 字段
-            if pos + 3 > len(data):
+            # 变长类型：需要 len 字段 (2字节大端)
+            if pos + 4 > len(data):
                 results.append(FieldResult(
                     name=attr_meta.get("name", f"attrid_{attrid:02X}"),
                     type="error", value=None,
@@ -669,8 +764,8 @@ def _parse_attr_list(data: bytes, cfg: dict, force_report: bool = True) -> list[
                     offset=pos, length=2, raw=data[pos:],
                 ))
                 break
-            value_len = data[pos + 2]
-            value_start = pos + 3
+            value_len = int.from_bytes(data[pos + 2:pos + 4], "big")
+            value_start = pos + 4
         else:
             # 定长类型
             value_len = type_info["size"] if type_info else 1
@@ -1038,9 +1133,21 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
         resp_def = cmd.get("response", {})
 
         if direction == "request":
-            chosen_def, chosen_dir = req_def, "request"
+            # 用户选择"模组发送"，匹配 name="模组→MCU" 的格式
+            if req_def.get("name") == "模组→MCU":
+                chosen_def, chosen_dir = req_def, "request"
+            elif resp_def.get("name") == "模组→MCU":
+                chosen_def, chosen_dir = resp_def, "response"
+            else:
+                chosen_def, chosen_dir = req_def, "request"
         elif direction == "response":
-            chosen_def, chosen_dir = resp_def, "response"
+            # 用户选择"MCU发送"，匹配 name="MCU→模组" 的格式
+            if req_def.get("name") == "MCU→模组":
+                chosen_def, chosen_dir = req_def, "request"
+            elif resp_def.get("name") == "MCU→模组":
+                chosen_def, chosen_dir = resp_def, "response"
+            else:
+                chosen_def, chosen_dir = resp_def, "response"
         else:
             # 自动识别：尝试两个方向，挑选无错误的；都无错时优先 request
             # （V3.0 协议中大多数命令是模组主动发起的：心跳、查询、状态上报等）
@@ -1064,7 +1171,14 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
 
         # 重新解析（已选定方向）
         if direction is not None or not field_results:
-            field_results = parse_data_fields(frame.data, chosen_def, cfg)
+            try:
+                field_results = parse_data_fields(frame.data, chosen_def, cfg)
+            except ProtocolError as e:
+                field_results = [FieldResult(
+                    name="解析错误", type="error", value=None,
+                    text=f"{e}（方向={chosen_dir}，数据长度={len(frame.data)}）",
+                    offset=0, length=len(frame.data), raw=to_hex(frame.data),
+                )]
 
         direction_label = chosen_def.get("name", chosen_dir)
 
@@ -1093,7 +1207,14 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
 
     # 旧版定长命令
     fields_def = cmd.get("data", {})
-    field_results = parse_data_fields(frame.data, fields_def, cfg)
+    try:
+        field_results = parse_data_fields(frame.data, fields_def, cfg)
+    except ProtocolError as e:
+        field_results = [FieldResult(
+            name="解析错误", type="error", value=None,
+            text=f"{e}（数据长度={len(frame.data)}）",
+            offset=0, length=len(frame.data), raw=to_hex(frame.data),
+        )]
 
     # 组合：帧结构字段 + 数据字段
     frame_fields = _build_frame_fields(frame, cfg, cmd.get("name", ""))

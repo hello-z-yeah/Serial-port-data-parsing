@@ -1,0 +1,106 @@
+{
+  "product": "西蒙智能浴霸米家功能协议20260427",
+  "description": "项目背景：西蒙智能浴霸接入小米平台",
+  "version": "1.0",
+  "frame": {
+    "header": "0xA5A5",
+    "header_size": 2,
+    "ver": "0x03",
+    "ver_offset": 2,
+    "ver_size": 1,
+    "cmd_offset": 3,
+    "length_offset": 4,
+    "length_size": 2,
+    "length_byte_order": "big",
+    "checksum": {
+      "algorithm": "sum",
+      "length": 1,
+      "covers": "from_start_to_checksum_exclusive"
+    }
+  },
+  "enums": {},
+  "commands": [],
+  "attributes": {
+    "0x00": {
+      "name": "on",
+      "typeid": 0,
+      "range": "[0,1]",
+      "enum": {
+        "0": "关闭",
+        "1": "打开"
+      }
+    },
+    "0x01": {
+      "name": "night-light-switch",
+      "typeid": 0,
+      "range": "[0,1]",
+      "enum": {
+        "0": "关闭",
+        "1": "打开"
+      }
+    },
+    "0x02": {
+      "name": "status",
+      "typeid": 0,
+      "range": "[0]",
+      "enum": {
+        "0": "关闭",
+        "1": "打开"
+      }
+    },
+    "0x03": {
+      "name": "mode",
+      "typeid": 2,
+      "range": "[0,6]",
+      "enum": {
+        "0": "待机",
+        "1": "取暖",
+        "2": "吹风",
+        "3": "换气",
+        "4": "干燥"
+      }
+    },
+    "0x04": {
+      "name": "target-temperature",
+      "typeid": 2,
+      "range": "[30,42]"
+    },
+    "0x05": {
+      "name": "horizontal-swing",
+      "typeid": 0,
+      "range": "[0,1]",
+      "enum": {
+        "0": "关闭",
+        "1": "打开"
+      }
+    },
+    "0x06": {
+      "name": "fan-level",
+      "typeid": 2,
+      "range": "[0,1]",
+      "enum": {
+        "0": "低档",
+        "1": "高档"
+      }
+    },
+    "0x07": {
+      "name": "ventilate-level",
+      "typeid": 2,
+      "range": "[0,1]",
+      "enum": {
+        "0": "低档",
+        "1": "高档"
+      }
+    },
+    "0x08": {
+      "name": "remote-controllable",
+      "typeid": 0,
+      "range": "[0,1]",
+      "enum": {
+        "0": "远程不可控",
+        "1": "远程可控"
+      }
+    }
+  },
+  "_imported_from": "西蒙智能浴霸米家功能协议20260427.docx"
+}

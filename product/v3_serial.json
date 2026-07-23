@@ -1,6 +1,6 @@
 {
   "product": "v3_serial",
-  "description": "串口接入标准协议V3.0（通用帧结构 + 21 条命令；属性表为 E5-HD 升降桌扩展）",
+  "description": "串口接入标准协议V3.0（通用帧结构 + 21 条命令；属性表为空，由产品协议定义）",
   "version": "3.0",
   "system": true,
   "protocol_version": "20260719",
@@ -89,9 +89,9 @@
     {
       "cmd_code": "0x21",
       "name": "查询设备信息",
-      "description": "模组查询设备信息，包含版本号",
+      "description": "模组查询设备信息，包含版本号、PID、Model、属性列表",
       "request":  {"format": "raw", "name": "模组→MCU"},
-      "response": {"format": "dev_version", "name": "MCU→模组"}
+      "response": {"format": "dev_info", "name": "MCU→模组"}
     },
     {
       "cmd_code": "0x23",
@@ -227,133 +227,5 @@
       "response": {"format": "errcode", "name": "MCU→模组"}
     }
   ],
-  "attributes": {
-    "0x00": {
-      "name": "电机控制",
-      "typeid": 2,
-      "access": "只写",
-      "enum": {"0": "暂停", "1": "上升", "2": "下降"}
-    },
-    "0x01": {
-      "name": "工作状态",
-      "typeid": 2,
-      "access": "读",
-      "enum": {"0": "停止", "1": "上升中", "2": "下降中"}
-    },
-    "0x02": {
-      "name": "故障",
-      "typeid": 2,
-      "access": "读",
-      "enum": {
-        "0": "无故障", "1": "E01", "2": "E02", "3": "E03", "4": "E04",
-        "5": "E07", "6": "E08", "7": "E09", "8": "E20", "9": "E21",
-        "10": "E22", "11": "E23", "12": "E30", "13": "_OL", "14": "连接异常"
-      }
-    },
-    "0x03": {
-      "name": "童锁",
-      "typeid": 0,
-      "access": "读写",
-      "enum": {"0": "关闭", "1": "打开"}
-    },
-    "0x04": {
-      "name": "实时高度",
-      "typeid": 4,
-      "access": "读",
-      "unit": "mm",
-      "range": "635~1235"
-    },
-    "0x05": {
-      "name": "记忆挡位1",
-      "typeid": 4,
-      "access": "读写",
-      "unit": "mm",
-      "range": "635~1235"
-    },
-    "0x06": {
-      "name": "记忆挡位2",
-      "typeid": 4,
-      "access": "读写",
-      "unit": "mm",
-      "range": "635~1235"
-    },
-    "0x07": {
-      "name": "记忆挡位3",
-      "typeid": 4,
-      "access": "读写",
-      "unit": "mm",
-      "range": "635~1235"
-    },
-    "0x08": {
-      "name": "记忆挡位4",
-      "typeid": 4,
-      "access": "读写",
-      "unit": "mm",
-      "range": "635~1235"
-    },
-    "0x09": {
-      "name": "执行记忆挡位",
-      "typeid": 2,
-      "access": "读写",
-      "enum": {"0": "NONE", "1": "ACTION 1", "2": "ACTION 2", "3": "ACTION 3", "4": "ACTION 4"}
-    },
-    "0x0A": {
-      "name": "久坐提醒",
-      "typeid": 2,
-      "access": "读写",
-      "unit": "分钟",
-      "range": "0~99"
-    },
-    "0x0B": {
-      "name": "设定上限",
-      "typeid": 4,
-      "access": "读写",
-      "unit": "mm",
-      "range": "635~1235"
-    },
-    "0x0C": {
-      "name": "设定下限",
-      "typeid": 4,
-      "access": "读写",
-      "unit": "mm",
-      "range": "635~1235"
-    },
-    "0x0D": {
-      "name": "设置高度",
-      "typeid": 4,
-      "access": "读写",
-      "unit": "mm",
-      "range": "635~1235"
-    },
-    "0x0E": {
-      "name": "一键复位",
-      "typeid": 0,
-      "access": "读写",
-      "enum": {"0": "关闭", "1": "打开"}
-    },
-    "0x0F": {
-      "name": "复位状态",
-      "typeid": 2,
-      "access": "读",
-      "enum": {"0": "NONE", "1": "Resetting", "2": "Reset Complete", "3": "Reset Failed"}
-    },
-    "0x10": {
-      "name": "升降次数",
-      "typeid": 4,
-      "access": "读",
-      "range": "0~65535"
-    },
-    "0xE0": {
-      "name": "站立状态检测",
-      "typeid": 2,
-      "access": "读",
-      "enum": {"0": "NO", "1": "YES"}
-    },
-    "0x12": {
-      "name": "站立时长",
-      "typeid": 6,
-      "access": "仅上报",
-      "range": "0~4294967295"
-    }
-  }
+  "attributes": {}
 }

@@ -136,9 +136,13 @@ class SerialCollector:
     cfg: dict
     port: str
     baudrate: int = 115200
+    bytesize: int = 8
+    stopbits: int = 1
     direction: str | None = None
     on_frame: Callable[[ParseResult, Frame, float], None] | None = None
     on_error: Callable[[str], None] | None = None
+    on_raw: Callable[[bytes, float], None] | None = None  # 原始数据回调（ASCII模式）
+    raw_mode: bool = False  # True=仅输出原始数据，不做协议解析
     running: bool = False
     _thread: threading.Thread | None = None
     _serial: "serial.Serial | None" = None
@@ -150,12 +154,14 @@ class SerialCollector:
         if self.running:
             return
         self.sync = FrameSynchronizer(self.cfg)
+        bytesize_map = {5: serial.FIVEBITS, 6: serial.SIXBITS, 7: serial.SEVENBITS, 8: serial.EIGHTBITS}
+        stopbits_map = {1: serial.STOPBITS_ONE, 1.5: serial.STOPBITS_ONE_POINT_FIVE, 2: serial.STOPBITS_TWO}
         self._serial = serial.Serial(
             port=self.port,
             baudrate=self.baudrate,
-            bytesize=serial.EIGHTBITS,
+            bytesize=bytesize_map.get(self.bytesize, serial.EIGHTBITS),
             parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
+            stopbits=stopbits_map.get(self.stopbits, serial.STOPBITS_ONE),
             timeout=0.1,
         )
         self.running = True
@@ -183,12 +189,29 @@ class SerialCollector:
                 if not raw:
                     continue
 
-                frames = self.sync.feed(raw)
                 now = time.time()
+
+                # raw_mode：直接回调原始字节，不做协议解析
+                if self.raw_mode:
+                    if self.on_raw:
+                        self.on_raw(raw, now)
+                    continue
+
+                # HEX 模式：帧同步 + 协议解析
+                frames = self.sync.feed(raw)
                 for frame in frames:
-                    result = parse_frame(frame.raw, self.cfg, direction=self.direction)
-                    if self.on_frame:
-                        self.on_frame(result, frame, now)
+                    try:
+                        result = parse_frame(frame.raw, self.cfg, direction=self.direction)
+                    except Exception as e:
+                        if self.on_error:
+                            self.on_error(f"帧解析异常（已跳过）: {e}")
+                        continue
+                    try:
+                        if self.on_frame:
+                            self.on_frame(result, frame, now)
+                    except Exception as e:
+                        if self.on_error:
+                            self.on_error(f"回调异常（已跳过）: {e}")
         except Exception as e:
             if self.on_error:
                 self.on_error(f"采集异常: {e}")

@@ -413,13 +413,18 @@ def _parse_typeid(text: str) -> int | None:
 
 
 def _parse_attributes(parsed: ParsedDocument) -> dict:
-    """识别属性表。"""
+    """识别属性表。
+
+    支持两种格式：
+    1. 表格型：包含 attrid/属性id 列的表格
+    2. 段落型：如 "0x01   工作状态" + "类型: typeid=2, 访问: ?" + "枚举: ..." 的段落组
+    """
     attributes: dict = {}
 
+    # ---- 表格型属性表 ----
     for table in parsed.raw_tables:
         if not table:
             continue
-        # 找表头
         header_idx = -1
         for i, row in enumerate(table):
             row_text = " ".join(row).lower()
@@ -446,7 +451,6 @@ def _parse_attributes(parsed: ParsedDocument) -> dict:
             if aid_col >= len(row):
                 continue
             aid_text = row[aid_col]
-            # 属性 ID 通常以 hex 形式书写（0A / 0E / E0 等），优先按 hex 解析
             aid = _find_hex_int(aid_text)
             if aid is None:
                 aid = _find_int(aid_text)
@@ -461,25 +465,20 @@ def _parse_attributes(parsed: ParsedDocument) -> dict:
                 "name": row[name_col] if name_col is not None and name_col < len(row) else "",
             }
 
-            # typeid
             if type_col is not None and type_col < len(row):
                 tid = _parse_typeid(row[type_col])
                 if tid is not None:
                     attr["typeid"] = tid
 
-            # access
             if access_col is not None and access_col < len(row):
                 attr["access"] = row[access_col]
 
-            # unit
             if unit_col is not None and unit_col < len(row) and row[unit_col]:
                 attr["unit"] = row[unit_col]
 
-            # range
             if range_col is not None and range_col < len(row) and row[range_col]:
                 attr["range"] = row[range_col]
 
-            # enum（取值说明列）
             if enum_col is not None and enum_col < len(row) and row[enum_col]:
                 enum_text = row[enum_col]
                 enum_map = _parse_enum_text(enum_text)
@@ -488,22 +487,144 @@ def _parse_attributes(parsed: ParsedDocument) -> dict:
 
             attributes[key] = attr
 
+    # ---- 段落型属性表 ----
+    paragraph_attrs = _parse_attributes_from_paragraphs(parsed.raw_paragraphs)
+    for key, attr in paragraph_attrs.items():
+        if key not in attributes:
+            attributes[key] = attr
+
+    return attributes
+
+
+def _parse_attributes_from_paragraphs(paragraphs: list[str]) -> dict:
+    """从段落文本中识别属性表。
+
+    匹配模式：
+        0x01   工作状态
+              类型: typeid=2, 访问: ?
+              枚举:
+                1: 待机中 2: 制冰中 3: 清洗中 4: 冰满
+        0x02   故障
+              类型: typeid=2, 访问: ?
+              范围 无故障 缺水 ...
+    """
+    import re as _re
+    attributes: dict = {}
+    i = 0
+    n = len(paragraphs)
+
+    # 属性ID行正则
+    attr_id_pattern = _re.compile(r'^\s*(0[xX][0-9a-fA-F]{1,2})\s+(.+)$')
+    # 类型行
+    type_pattern = _re.compile(r'^\s*(?:类型|type)[：:]\s*(.+?)\s*$', _re.IGNORECASE)
+    # 枚举开始行
+    enum_start_pattern = _re.compile(r'^\s*(?:枚举|enum)\s*[：:]\s*$', _re.IGNORECASE)
+    # 范围行
+    range_pattern = _re.compile(r'^\s*(?:范围|range)\s+(.+?)\s*$', _re.IGNORECASE)
+
+    while i < n:
+        line = paragraphs[i]
+        m = attr_id_pattern.match(line)
+        if not m:
+            i += 1
+            continue
+
+        aid_hex = m.group(1)
+        name = m.group(2).strip()
+        try:
+            aid = int(aid_hex, 16)
+        except ValueError:
+            i += 1
+            continue
+
+        i += 1
+        attr: dict[str, Any] = {"name": name}
+
+        enum_lines: list[str] = []
+        in_enum = False
+
+        while i < n:
+            next_line = paragraphs[i]
+            # 下一个属性ID行，退出
+            if attr_id_pattern.match(next_line):
+                break
+
+            # 类型行
+            tm = type_pattern.match(next_line)
+            if tm:
+                type_text = tm.group(1)
+                tid = _parse_typeid(type_text)
+                if tid is not None:
+                    attr["typeid"] = tid
+                acc_match = _re.search(r'(?:访问|access)\s*[=：:]\s*(\S+)', type_text, _re.IGNORECASE)
+                if acc_match:
+                    attr["access"] = acc_match.group(1)
+                i += 1
+                continue
+
+            # 枚举开始行
+            if enum_start_pattern.match(next_line):
+                in_enum = True
+                i += 1
+                continue
+
+            # 范围行
+            rm = range_pattern.match(next_line)
+            if rm:
+                attr["range"] = rm.group(1).strip()
+                i += 1
+                continue
+
+            # 枚举项
+            if in_enum:
+                enum_item_match = _re.match(r'^\s*(\d+)\s*[：:=]\s*(.+)', next_line)
+                if enum_item_match:
+                    enum_lines.append(next_line.strip())
+                    i += 1
+                    continue
+                # 枚举结束
+                in_enum = False
+                if enum_lines:
+                    enum_map = _parse_enum_text("; ".join(enum_lines))
+                    if enum_map:
+                        attr["enum"] = enum_map
+                    enum_lines = []
+                i += 1
+                continue
+
+            if next_line.strip() == "":
+                i += 1
+                continue
+
+            break
+
+        # 处理剩余枚举
+        if enum_lines:
+            enum_map = _parse_enum_text("; ".join(enum_lines))
+            if enum_map:
+                attr["enum"] = enum_map
+
+        key = f"0x{aid:02X}"
+        if key not in attributes and attr.get("name"):
+            attributes[key] = attr
+
     return attributes
 
 
 def _parse_enum_text(text: str) -> dict[str, str]:
-    """解析枚举文本，如 "0:关 1:开" / "0=关闭, 1=打开"。"""
+    """解析枚举文本，如 "0:关 1:开" / "0=关闭, 1=打开" / "1: 待机中 2: 制冰中 3: 清洗中"。"""
     if not text:
         return {}
     result: dict[str, str] = {}
-    # 分割多个枚举项
     parts = re.split(r"[;,，；\n]+", text)
     for part in parts:
-        # 匹配 "数字:文本" / "数字=文本" / "数字 文本"
-        m = re.match(r"\s*(\d+)\s*[:=：]\s*(.+)", part)
-        if m:
-            k, v = m.group(1), m.group(2).strip()
-            if v:
+        part = part.strip()
+        if not part:
+            continue
+        matches = re.findall(r'(\d+)\s*[:=：]\s*(.*?)(?=\s+\d+\s*[:=：]|$)', part)
+        for k, v in matches:
+            v = v.strip()
+            if v and k not in result:
                 result[k] = v
     return result
 

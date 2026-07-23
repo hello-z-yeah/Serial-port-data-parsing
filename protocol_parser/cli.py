@@ -11,6 +11,7 @@ from .parser import (
     ProtocolError,
     TYPEID_MAP,
     load_protocol,
+    merge_protocol,
     parse_frame,
     parse_hex_input,
     to_hex,
@@ -112,6 +113,10 @@ def cmd_parse(args: argparse.Namespace) -> int:
     try:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)
+        # 与V3.0基础协议合并
+        from .gui import get_builtin_v3
+        base_cfg = get_builtin_v3()
+        cfg = merge_protocol(base_cfg, cfg)
     except ProtocolError as e:
         print(f"错误: {e}", file=sys.stderr)
         return 2
@@ -134,6 +139,10 @@ def cmd_batch(args: argparse.Namespace) -> int:
     try:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)
+        # 与V3.0基础协议合并
+        from .gui import get_builtin_v3
+        base_cfg = get_builtin_v3()
+        cfg = merge_protocol(base_cfg, cfg)
     except ProtocolError as e:
         print(f"错误: {e}", file=sys.stderr)
         return 2
@@ -197,6 +206,10 @@ def cmd_show(args: argparse.Namespace) -> int:
     try:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)
+        # 与V3.0基础协议合并
+        from .gui import get_builtin_v3
+        base_cfg = get_builtin_v3()
+        cfg = merge_protocol(base_cfg, cfg)
     except ProtocolError as e:
         print(f"错误: {e}", file=sys.stderr)
         return 2
@@ -328,6 +341,10 @@ def cmd_serial(args: argparse.Namespace) -> int:
     try:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)
+        # 与V3.0基础协议合并
+        from .gui import get_builtin_v3
+        base_cfg = get_builtin_v3()
+        cfg = merge_protocol(base_cfg, cfg)
     except ProtocolError as e:
         print(f"错误: {e}", file=sys.stderr)
         return 2
@@ -372,6 +389,10 @@ def cmd_paste(args: argparse.Namespace) -> int:
     try:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)
+        # 与V3.0基础协议合并
+        from .gui import get_builtin_v3
+        base_cfg = get_builtin_v3()
+        cfg = merge_protocol(base_cfg, cfg)
     except ProtocolError as e:
         print(f"错误: {e}", file=sys.stderr)
         return 2
