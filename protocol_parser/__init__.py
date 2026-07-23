@@ -2,7 +2,7 @@
 Author: 侯泽钰 houzeyu@xiaojiang.cc
 Date: 2026-07-20 12:36:35
 LastEditors: 侯泽钰 houzeyu@xiaojiang.cc
-LastEditTime: 2026-07-23 17:48:45
+LastEditTime: 2026-07-23 21:15:36
 FilePath: \Serial-port-data-parsing\protocol_parser\__init__.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''

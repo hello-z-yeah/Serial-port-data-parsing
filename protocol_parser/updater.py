@@ -46,6 +46,12 @@ GHPROXY_PREFIX = "https://mirror.ghproxy.com/"
 ALLOWED_EXE_EXTS = (".exe",)
 
 
+# 避免循环 import：运行时才从 protocol_parser.parser 拿 UpdaterError
+def _UpdaterError(message: str, friendly_msg: str | None = None) -> Exception:
+    from protocol_parser.parser import UpdaterError
+    return UpdaterError(message=message, friendly_msg=friendly_msg)
+
+
 @dataclass
 class UpdateInfo:
     """检查更新结果。has_new=False 时后面字段可能为空。"""
@@ -123,9 +129,14 @@ def check_update(
     current_version: str,
     repo: str,
     timeout: float = 12.0,
+    *,
+    raise_on_error: bool = False,
 ) -> UpdateInfo:
     """调用 GitHub /repos/{repo}/releases/latest，比较版本号。
-    网络/解析失败不会崩溃，直接返回 has_new=False（失败当作无更新，不阻塞用户）。"""
+
+    默认网络/解析失败当作无更新，返回 has_new=False；
+    若 raise_on_error=True 则统一抛 UpdaterError（GUI 可据此分类 friendly_msg）。
+    """
     api_url = f"https://api.github.com/repos/{repo}/releases/latest"
     latest_json: dict | None = None
     last_exc: Exception | None = None
@@ -137,10 +148,35 @@ def check_update(
         last_exc = e
         latest_json = None
 
-    # 2) GitHub 不通，尝试用 ghproxy 代理解析同一页（ghproxy 也能转发 API，但它主要加速文件。
-    #    这里 API 不行就作罢，至少下载阶段会加速。）
+    # 2) GitHub 不通，尝试用 ghproxy 代理解析同一页
+    proxied_url = GHPROXY_PREFIX + api_url if api_url.startswith("https://") else api_url
+    if not isinstance(latest_json, dict) and proxied_url != api_url:
+        try:
+            latest_json = _urlopen_json(proxied_url, timeout=timeout)
+            last_exc = None
+        except (URLError, HTTPError, TimeoutError, OSError, ValueError) as e:
+            last_exc = e
+            latest_json = None
+
     info = UpdateInfo(has_new=False, current_version=current_version)
     if not isinstance(latest_json, dict):
+        if raise_on_error and last_exc is not None:
+            e = last_exc
+            if isinstance(e, HTTPError):
+                raise _UpdaterError(
+                    message=f"check_update HTTP {e.code}: {api_url}",
+                    friendly_msg=f"检查更新失败，服务器返回 {e.code}，请稍后重试。",
+                ) from e
+            if isinstance(e, TimeoutError):
+                raise _UpdaterError(
+                    message=f"check_update timeout: {api_url}",
+                    friendly_msg="检查更新超时，请检查网络后重试。",
+                ) from e
+            # URLError / OSError / ValueError
+            raise _UpdaterError(
+                message=f"check_update failed: {type(e).__name__}: {e}",
+                friendly_msg="无法连接到更新服务器，请检查网络或稍后重试。",
+            ) from e
         return info
 
     tag: str = str(latest_json.get("tag_name") or "")
@@ -241,26 +277,63 @@ def download_exe(
     chunk_size: int = 64 * 1024,
 ) -> int:
     """分块下载 EXE 到 dst_path，返回下载字节数。
-    progress_cb(downloaded, total)  total 可能为 0（服务器没给 Content-Length）。"""
+
+    网络/IO 异常统一转 UpdaterError，确保上层 classify_protocol_error 能拿到友好消息。
+    """
     tmp_path = dst_path + ".part"
     req = request.Request(download_url, headers={"User-Agent": "Serial-port-data-parsing-updater/1.0"})
-    with request.urlopen(req, timeout=timeout) as resp:
-        length_header = resp.headers.get("Content-Length")
-        total = int(length_header) if length_header and length_header.isdigit() else 0
-        downloaded = 0
-        with open(tmp_path, "wb") as fp:
-            while True:
-                data = resp.read(chunk_size)
-                if not data:
-                    break
-                fp.write(data)
-                downloaded += len(data)
-                if progress_cb is not None:
-                    try:
-                        progress_cb(downloaded, total)
-                    except Exception:
-                        pass
-    os.replace(tmp_path, dst_path)
+    try:
+        with request.urlopen(req, timeout=timeout) as resp:
+            length_header = resp.headers.get("Content-Length")
+            total = int(length_header) if length_header and length_header.isdigit() else 0
+            downloaded = 0
+            with open(tmp_path, "wb") as fp:
+                while True:
+                    data = resp.read(chunk_size)
+                    if not data:
+                        break
+                    fp.write(data)
+                    downloaded += len(data)
+                    if progress_cb is not None:
+                        try:
+                            progress_cb(downloaded, total)
+                        except Exception:
+                            pass
+    except (HTTPError, URLError, TimeoutError, OSError) as e:
+        # 清理临时文件
+        try:
+            if os.path.isfile(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+        if isinstance(e, HTTPError):
+            raise _UpdaterError(
+                message=f"download HTTP {e.code}: {download_url}",
+                friendly_msg=f"下载失败，服务器返回错误 {e.code}，请检查网络或稍后重试。",
+            ) from e
+        if isinstance(e, TimeoutError):
+            raise _UpdaterError(
+                message=f"download timeout: {download_url}",
+                friendly_msg="下载超时，请检查网络后重试。",
+            ) from e
+        if isinstance(e, URLError):
+            reason = str(e.reason) if getattr(e, "reason", None) else str(e)
+            raise _UpdaterError(
+                message=f"download URLError: {reason}",
+                friendly_msg="无法连接到下载服务器，请检查网络或稍后重试。",
+            ) from e
+        # OSError (磁盘满 / 权限等)
+        raise _UpdaterError(
+            message=f"download IO error: {e}",
+            friendly_msg="下载时写入文件失败，请检查磁盘空间或文件权限。",
+        ) from e
+    try:
+        os.replace(tmp_path, dst_path)
+    except OSError as e:
+        raise _UpdaterError(
+            message=f"rename tmp to dst failed: {e}",
+            friendly_msg="下载完成但无法写入目标文件，请关闭占用该程序的进程后重试。",
+        ) from e
     return downloaded
 
 
@@ -306,19 +379,51 @@ def _exe_path() -> str:
     return os.path.abspath(sys.argv[0])
 
 
-def prepare_update_and_quit(new_exe_path: str, wait_ms_before_replace: int = 2000) -> None:
-    """主程序更新最后一步：用 bat 替换 EXE。
-    - 新 EXE 要与旧 EXE 同一分区（保证 os.replace 原子）。
-    - 调用后本函数会直接 os._exit(0)，不再返回。
+def prepare_update_and_quit(
+    new_exe_path: str,
+    wait_ms_before_replace: int = 2000,
+    *,
+    snapshot_path: str | None = None,
+) -> None:
+    """主程序更新最后一步：写快照 → 启动 bat 替换 → 主动 os._exit(0)。
+
+    流程严格顺序（关键：释放串口/文件锁，才能让替换/重启不出错）：
+      1. 快照 snapshot_path 已经由 GUI 在调本函数之前：停止串口、flush 磁盘、save_snapshot 完成；
+         这里只负责把快照路径告诉 bat（bat 不会动它，新版程序起来后自己 load/clear）。
+      2. 生成隐藏 vbs → bat，延迟 N 秒等旧 EXE 完全关闭，再：
+         - 重命名旧 EXE → .old
+         - move 新 EXE → 原名
+         - start 新 EXE
+         - 删 .old / 临时 / bat 自删
+      3. 本函数 os._exit(0) 立刻退出，不跑 atexit（避免残留句柄锁文件/串口）。
+
+    新参数：
+      snapshot_path: 会话快照 JSON 绝对路径。新版 GUI 启动时会从 default_session_path() 读，
+                     这里仅做存在性校验，便于定位"快照没写上"的问题。
     """
     new_exe_path = os.path.abspath(new_exe_path)
     if not os.path.isfile(new_exe_path):
-        raise FileNotFoundError(new_exe_path)
+        raise _UpdaterError(
+            message=f"new exe not found: {new_exe_path}",
+            friendly_msg="找不到要更新的安装包文件，请重新下载更新。",
+        )
 
     old_exe = _exe_path()
     if not old_exe.lower().endswith(".exe"):
         # 开发模式：脚本不是 exe，直接告诉用户手动替换
-        raise RuntimeError("开发模式（脚本运行）不支持在线自更新，请手动打包为 EXE 再更新。")
+        raise _UpdaterError(
+            message="dev mode cannot self-update",
+            friendly_msg="开发模式（脚本运行）不支持在线自更新，请手动打包为 EXE 再更新。",
+        )
+
+    # 快照可选但一旦提供就必须能读取（debug 用：防止"更新完没恢复串口"定位到是快照没写上）
+    if snapshot_path:
+        snapshot_path = os.path.abspath(snapshot_path)
+        if not os.path.isfile(snapshot_path):
+            raise _UpdaterError(
+                message=f"snapshot file not found before update: {snapshot_path}",
+                friendly_msg="更新前保存会话失败，已中止更新。请重试或手动重启。",
+            )
 
     old_dir = os.path.dirname(old_exe)
     old_name = os.path.basename(old_exe)
@@ -326,9 +431,9 @@ def prepare_update_and_quit(new_exe_path: str, wait_ms_before_replace: int = 200
     bat_path = os.path.join(old_dir, "_updater.bat")
     vbs_path = os.path.join(old_dir, "_updater_run.vbs")
 
-    # 把更新器脚本和 VBS 隐藏启动都准备好
     wait_sec = max(1, int(wait_ms_before_replace // 1000))
-    # 1) bat 主体：延时 -> 重命名旧 exe -> 新 exe 覆盖原名 -> 启动 -> 删除旧 -> 删 bat 自己
+
+    # 注意：bat 不应该删除 _update_session.json，由新程序启动成功后自己清。
     bat_content = (
         "@echo off\r\n"
         f"timeout /t {wait_sec} /nobreak >nul\r\n"
@@ -338,12 +443,13 @@ def prepare_update_and_quit(new_exe_path: str, wait_ms_before_replace: int = 200
         f'start "" "{old_dir}\\{old_name}"\r\n'
         f'if exist "{tmp_old}" del /f /q "{tmp_old}"\r\n'
         f'if exist "{os.path.basename(new_exe_path)}" del /f /q "{os.path.basename(new_exe_path)}"\r\n'
+        # 顺手清理旧 bat/vbs 自己，和已超过 1 天的 session（防止长期残留）
+        f'forfiles /p "{old_dir}" /m "_update_session.json" /d -7 /c "cmd /c del /f /q @path" 2>nul\r\n'
         f'(goto) 2>nul & del "%~f0"\r\n'
     )
     with open(bat_path, "w", encoding="gbk", errors="ignore") as fp:
         fp.write(bat_content)
 
-    # 2) 用 VBS 隐藏运行 bat（避免黑框一闪而过）
     vbs_content = (
         'Set ws = CreateObject("Wscript.Shell")\r\n'
         + f'ws.Run """{bat_path}""", 0, False\r\n'
@@ -362,7 +468,6 @@ def prepare_update_and_quit(new_exe_path: str, wait_ms_before_replace: int = 200
             close_fds=True,
         )
     except Exception:
-        # VBS 失败也兜底：直接 start bat
         try:
             import subprocess
             os.startfile(bat_path)  # type: ignore[attr-defined]

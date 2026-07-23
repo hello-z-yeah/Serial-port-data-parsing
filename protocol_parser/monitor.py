@@ -12,7 +12,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
-from .parser import ParseResult, ProtocolError, load_protocol, parse_frame, parse_hex_input, to_hex
+from .parser import (
+    ParseResult,
+    ProtocolError,
+    classify_protocol_error,
+    load_protocol,
+    parse_frame,
+    parse_hex_input,
+    to_hex,
+)
 from .serial_collector import FrameSynchronizer, SerialCollector
 
 
@@ -277,12 +285,29 @@ import re  # noqa: E402  （放在文件底部以免污染其他代码）
 
 # ---------- 粘贴交互模式 ----------
 
+def _log_error_to_disk(exc: Exception) -> Path:
+    import traceback
+    from datetime import datetime
+    target = Path.cwd() / "error.log"
+    try:
+        with target.open("a", encoding="utf-8") as f:
+            f.write(
+                f"\n===== {datetime.now().isoformat(timespec='seconds')} "
+                f"{type(exc).__name__} =====\n"
+            )
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=f)
+    except Exception:
+        pass
+    return target
+
+
 def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
     """交互式粘贴解析。
 
     用户粘贴 hex 数据后按回车，立即解析。
     输入空行退出。
     支持一次粘贴多条（换行分隔）。
+    顶层异常均会：friendly 消息打印，堆栈写 error.log。
     """
     product = cfg.get("product", "unknown")
     print(f"=== 协议解析工具 - 粘贴模式 (产品: {product}) ===")
@@ -295,7 +320,10 @@ def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
     while True:
         try:
             line = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
+            print("\n已退出。")
+            break
+        except KeyboardInterrupt:
             print("\n已退出。")
             break
 
@@ -307,7 +335,6 @@ def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
 
         line_count += 1
 
-        # 尝试整行解析为一条完整指令
         try:
             data = parse_hex_input(line)
             result = parse_frame(data, cfg)
@@ -317,27 +344,46 @@ def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
             if logger:
                 logger.log(result)
         except ProtocolError as e:
+            friendly, debug = classify_protocol_error(e)
             # 整行解析失败，可能是帧流数据 — 用同步器试试
-            print(f"\n[!] 整行解析失败: {e}")
+            print(f"\n[!] {friendly}")
+            if debug:
+                print(f"    详细: {debug}")
             print("    尝试作为字节流进行帧同步...")
             try:
                 data = parse_hex_input(line)
                 frames = sync.feed(data)
                 if frames:
                     for frame in frames:
-                        result = parse_frame(frame.raw, cfg)
-                        print()
-                        print(render_result_detail(result))
-                        print()
-                        if logger:
-                            logger.log(result)
+                        try:
+                            result = parse_frame(frame.raw, cfg)
+                            print()
+                            print(render_result_detail(result))
+                            print()
+                            if logger:
+                                logger.log(result)
+                        except ProtocolError as e2:
+                            f2, d2 = classify_protocol_error(e2)
+                            print(f"    子帧错误: {f2}")
+                            if d2:
+                                print(f"        详细: {d2}")
+                            _log_error_to_disk(e2)
                     print(f"    共提取 {len(frames)} 帧。")
                 else:
                     print("    未提取到完整帧（可能数据不足）。")
                     print(f"    缓冲区剩余 {sync.partial_bytes} 字节。")
-            except ProtocolError as e2:
-                print(f"    也失败: {e2}\n")
-
+            except ProtocolError as e3:
+                f3, d3 = classify_protocol_error(e3)
+                print(f"    也失败: {f3}")
+                if d3:
+                    print(f"        详细: {d3}")
+                _log_error_to_disk(e3)
+            print()
+        except Exception as e:  # noqa: BLE001  顶层兜底
+            friendly, _ = classify_protocol_error(e)
+            log_path = _log_error_to_disk(e)
+            print(f"\n[错误] {friendly}")
+            print(f"         堆栈已写入: {log_path}\n")
     return 0
 
 
@@ -359,13 +405,18 @@ def run_serial_mode(
     print("按 Ctrl+C 停止\n")
 
     def on_frame(result: ParseResult, frame, ts: float) -> None:
-        if detail:
-            print(render_result_detail(result, ts))
-            print("-" * 60)
-        else:
-            print(render_result_compact(result, ts))
-        if logger:
-            logger.log(result, ts)
+        try:
+            if detail:
+                print(render_result_detail(result, ts))
+                print("-" * 60)
+            else:
+                print(render_result_compact(result, ts))
+            if logger:
+                logger.log(result, ts)
+        except Exception as e:  # noqa: BLE001  工作线程不能裸抛堆栈
+            friendly, _ = classify_protocol_error(e)
+            print(f"[错误] on_frame: {friendly}")
+            _log_error_to_disk(e)
 
     def on_error(msg: str) -> None:
         print(f"[错误] {msg}")
@@ -380,8 +431,12 @@ def run_serial_mode(
 
     try:
         collector.start()
-    except Exception as e:
-        print(f"打开串口失败: {e}")
+    except Exception as e:  # noqa: BLE001
+        friendly, debug = classify_protocol_error(e)
+        print(f"打开串口失败: {friendly}", file=sys.stderr)
+        if debug:
+            print(f"  详细: {debug}", file=sys.stderr)
+        _log_error_to_disk(e)
         return 2
 
     print(f"[已连接] 等待数据...\n")
@@ -391,8 +446,15 @@ def run_serial_mode(
             time.sleep(0.1)
     except KeyboardInterrupt:
         print("\n\n正在停止...")
+    except Exception as e:  # noqa: BLE001  监控线程兜底
+        friendly, _ = classify_protocol_error(e)
+        print(f"\n[错误] 监控循环异常: {friendly}", file=sys.stderr)
+        _log_error_to_disk(e)
     finally:
-        collector.stop()
+        try:
+            collector.stop()
+        except Exception as e2:  # noqa: BLE001
+            _log_error_to_disk(e2)
 
     if collector.sync:
         print(f"共接收 {collector.sync.frame_count} 帧，错误 {collector.sync.error_count} 次。")

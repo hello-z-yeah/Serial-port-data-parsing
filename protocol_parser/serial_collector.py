@@ -131,22 +131,37 @@ class FrameSynchronizer:
 
 @dataclass
 class SerialCollector:
-    """串口数据采集器：连接串口，实时解析帧，回调输出。"""
+    """串口数据采集器：连接串口，实时解析帧，回调输出；支持全双工安全发送。
+
+    接收路径（RX）：
+      - on_frame(result, Frame, ts) : HEX 模式解析到一条帧
+      - on_error(msg)               : 串口/解析异常，用于 GUI 弹窗提示
+      - on_raw(data, ts)            : ASCII 模式下原始字节块（HEX 模式不会触发）
+
+    发送路径（TX）：
+      - send(frame_bytes) / send_raw(plain_bytes_or_str) 把数据写到端口；
+        内部自带 _write_lock（线程锁），保证 GUI 线程点一次"发送"和后台的"周期发送线程"
+        不会把字节流穿插写入。
+      - on_tx_sent(data_sent, direction_label, ts) : 成功写入后回调，用于 GUI 同屏
+        显示 TX（颜色 / 方向标签 / 日志写入时区分 RX/TX）。
+    """
 
     cfg: dict
     port: str
     baudrate: int = 115200
     bytesize: int = 8
-    stopbits: int = 1
+    stopbits: float = 1.0  # 允许 1.5（之前是 int，兼容 GUI 下拉"1 / 1.5 / 2"）
     direction: str | None = None
     on_frame: Callable[[ParseResult, Frame, float], None] | None = None
     on_error: Callable[[str], None] | None = None
-    on_raw: Callable[[bytes, float], None] | None = None  # 原始数据回调（ASCII模式）
+    on_raw: Callable[[bytes, float], None] | None = None  # ASCII 模式 RX 回调
     raw_mode: bool = False  # True=仅输出原始数据，不做协议解析
+    on_tx_sent: Callable[[bytes, str, float], None] | None = None  # bytes, dir_label, ts
     running: bool = False
     _thread: threading.Thread | None = None
     _serial: "serial.Serial | None" = None
     sync: FrameSynchronizer | None = None
+    _write_lock: threading.Lock | None = None
 
     def start(self) -> None:
         if not HAS_SERIAL:
@@ -156,12 +171,18 @@ class SerialCollector:
         self.sync = FrameSynchronizer(self.cfg)
         bytesize_map = {5: serial.FIVEBITS, 6: serial.SIXBITS, 7: serial.SEVENBITS, 8: serial.EIGHTBITS}
         stopbits_map = {1: serial.STOPBITS_ONE, 1.5: serial.STOPBITS_ONE_POINT_FIVE, 2: serial.STOPBITS_TWO}
+        sb = self.stopbits
+        try:
+            sb_val = stopbits_map.get(float(sb), serial.STOPBITS_ONE)
+        except Exception:
+            sb_val = serial.STOPBITS_ONE
+        self._write_lock = self._write_lock or threading.Lock()
         self._serial = serial.Serial(
             port=self.port,
             baudrate=self.baudrate,
             bytesize=bytesize_map.get(self.bytesize, serial.EIGHTBITS),
             parity=serial.PARITY_NONE,
-            stopbits=stopbits_map.get(self.stopbits, serial.STOPBITS_ONE),
+            stopbits=sb_val,
             timeout=0.1,
         )
         self.running = True
@@ -172,8 +193,104 @@ class SerialCollector:
         self.running = False
         if self._thread:
             self._thread.join(timeout=1.0)
+            self._thread = None
         if self._serial and self._serial.is_open:
-            self._serial.close()
+            try:
+                self._serial.close()
+            except Exception:
+                pass
+            self._serial = None
+
+    # ------------------------------------------------------------------
+    # 全双工发送：统一走锁，保证写入原子
+    # ------------------------------------------------------------------
+
+    def _send_bytes_locked(self, payload: bytes, dir_label: str) -> int:
+        """写串口的真正底层入口：
+        - 必须已 start()（_serial open）否则抛错
+        - 加 _write_lock
+        - 成功后 on_tx_sent(data, dir_label, now)
+        """
+        if not self._serial or not self._serial.is_open:
+            raise RuntimeError("串口未打开，请先开始监控再发送")
+        if not payload:
+            return 0
+        if self._write_lock is None:
+            self._write_lock = threading.Lock()
+        import time as _t
+        with self._write_lock:
+            n = self._serial.write(payload)
+            self._serial.flush()
+        ts = _t.time()
+        try:
+            if self.on_tx_sent:
+                self.on_tx_sent(bytes(payload), dir_label, ts)
+        except Exception as e:  # noqa: BLE001
+            try:
+                if self.on_error:
+                    self.on_error(f"TX 回调异常: {e}")
+            except Exception:
+                pass
+        return n
+
+    def send(self, frame_bytes: bytes | str) -> int:
+        """发送一个协议型完整帧。
+        - frame_bytes: bytes 或 HEX 字符串（"A5 A5 03 20 ..."）
+        """
+        from protocol_parser.parser import to_hex, _parse_int, EncodeFrameError
+
+        payload: bytes
+        if isinstance(frame_bytes, (bytes, bytearray)):
+            payload = bytes(frame_bytes)
+        elif isinstance(frame_bytes, str):
+            s = frame_bytes.strip()
+            s_clean = s.replace(" ", "").replace("\n", "").replace("\r", "").replace("\t", "")
+            if s_clean.lower().startswith("0x"):
+                s_clean = s_clean[2:]
+            if len(s_clean) % 2 == 1:
+                s_clean = "0" + s_clean
+            try:
+                payload = bytes.fromhex(s_clean)
+            except Exception as e:
+                from protocol_parser.parser import EncodeFrameError
+                raise EncodeFrameError(f"TX HEX 字符串非法：{frame_bytes!r}，原因：{e}") from e
+        else:
+            raise TypeError("send() 需要 bytes 或 HEX 字符串")
+        return self._send_bytes_locked(payload, "TX")
+
+    def send_raw(self, data, *, as_text: bool | None = None) -> int:
+        """发送原始字节。
+        参数：
+          data      : bytes / bytearray / str
+          as_text   : None → 根据 data 类型推断（str 视为 ASCII/UTF-8，bytes 直接写）
+                      True → str.encode() 写文本；False → 字符串当 HEX 写。
+        """
+        if isinstance(data, (bytes, bytearray)):
+            payload = bytes(data)
+        elif isinstance(data, str):
+            if as_text is None:
+                # 启发式：如果全是 hex+空格 且长度>0，当作 HEX；否则文本
+                s = data.strip()
+                hex_chars = set("0123456789abcdefABCDEF \t\n\r")
+                looks_like_hex = (
+                    len(s) > 0
+                    and all(c in hex_chars for c in s)
+                    and (any(c in "0123456789abcdefABCDEF" for c in s))
+                )
+                if looks_like_hex:
+                    return self.send(data)  # 当作 HEX 字符串
+                payload = data.encode("utf-8")
+            elif as_text:
+                payload = data.encode("utf-8")
+            else:
+                return self.send(data)
+        else:
+            raise TypeError("send_raw() 需要 bytes 或 str")
+        return self._send_bytes_locked(payload, "TX")
+
+    # ------------------------------------------------------------------
+    # 读取循环（保留原有逻辑，不再多加）
+    # ------------------------------------------------------------------
 
     def _read_loop(self) -> None:
         assert self._serial is not None and self.sync is not None

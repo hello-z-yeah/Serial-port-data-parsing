@@ -10,6 +10,9 @@ from .parser import (
     ParseResult,
     ProtocolError,
     TYPEID_MAP,
+    _log_error_to_disk as _parser_log_error,
+    classify_protocol_error,
+    get_builtin_v3,
     load_protocol,
     merge_protocol,
     parse_frame,
@@ -18,6 +21,43 @@ from .parser import (
 )
 
 DEFAULT_PROTOCOL_DIR = Path(__file__).resolve().parent.parent / "product"
+
+
+def _log_error_to_disk(exc: Exception) -> Path:
+    """兼容旧调用：统一转发到 parser._log_error_to_disk（带 datetime/Path/tempfile 兜底）。"""
+    return _parser_log_error(exc)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except ProtocolError as e:
+        friendly, debug = classify_protocol_error(e)
+        print(f"[错误] {friendly}", file=sys.stderr)
+        if debug:
+            print(f"       详细: {debug}", file=sys.stderr)
+        try:
+            _log_error_to_disk(e)
+        except Exception:
+            pass
+        return 2
+    except KeyboardInterrupt:
+        print("[提示] 用户中断", file=sys.stderr)
+        return 130
+    except Exception as e:  # noqa: BLE001  —— 顶层兜底，绝对不让堆栈直接裸抛
+        friendly, debug = classify_protocol_error(e)
+        print(f"[错误] {friendly}", file=sys.stderr)
+        log_path = _log_error_to_disk(e)
+        if debug:
+            print(f"       详细: {debug}", file=sys.stderr)
+        print(f"       堆栈已写入: {log_path}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 
 
 def find_protocol_file(product: str, protocol_dir: Path | None = None) -> Path:
@@ -114,17 +154,20 @@ def cmd_parse(args: argparse.Namespace) -> int:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)
         # 与V3.0基础协议合并
-        from .gui import get_builtin_v3
         base_cfg = get_builtin_v3()
         cfg = merge_protocol(base_cfg, cfg)
     except ProtocolError as e:
-        print(f"错误: {e}", file=sys.stderr)
+        friendly, _ = classify_protocol_error(e)
+        _log_error_to_disk(e)
+        print(f"[错误] {friendly}", file=sys.stderr)
         return 2
 
     try:
         data = parse_hex_input(args.hex)
     except ProtocolError as e:
-        print(f"错误: {e}", file=sys.stderr)
+        friendly, _ = classify_protocol_error(e)
+        _log_error_to_disk(e)
+        print(f"[错误] {friendly}", file=sys.stderr)
         return 2
 
     result = parse_frame(data, cfg, direction=args.direction)
@@ -140,11 +183,12 @@ def cmd_batch(args: argparse.Namespace) -> int:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)
         # 与V3.0基础协议合并
-        from .gui import get_builtin_v3
         base_cfg = get_builtin_v3()
         cfg = merge_protocol(base_cfg, cfg)
     except ProtocolError as e:
-        print(f"错误: {e}", file=sys.stderr)
+        friendly, _ = classify_protocol_error(e)
+        _log_error_to_disk(e)
+        print(f"[错误] {friendly}", file=sys.stderr)
         return 2
 
     in_path = Path(args.file)
@@ -207,11 +251,12 @@ def cmd_show(args: argparse.Namespace) -> int:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)
         # 与V3.0基础协议合并
-        from .gui import get_builtin_v3
         base_cfg = get_builtin_v3()
         cfg = merge_protocol(base_cfg, cfg)
     except ProtocolError as e:
-        print(f"错误: {e}", file=sys.stderr)
+        friendly, _ = classify_protocol_error(e)
+        _log_error_to_disk(e)
+        print(f"[错误] {friendly}", file=sys.stderr)
         return 2
 
     print(f"产品: {cfg.get('product')}")
@@ -342,11 +387,12 @@ def cmd_serial(args: argparse.Namespace) -> int:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)
         # 与V3.0基础协议合并
-        from .gui import get_builtin_v3
         base_cfg = get_builtin_v3()
         cfg = merge_protocol(base_cfg, cfg)
     except ProtocolError as e:
-        print(f"错误: {e}", file=sys.stderr)
+        friendly, _ = classify_protocol_error(e)
+        _log_error_to_disk(e)
+        print(f"[错误] {friendly}", file=sys.stderr)
         return 2
 
     logger = None
@@ -390,11 +436,12 @@ def cmd_paste(args: argparse.Namespace) -> int:
         proto_file = find_protocol_file(args.product, args.protocol_dir)
         cfg = load_protocol(proto_file)
         # 与V3.0基础协议合并
-        from .gui import get_builtin_v3
         base_cfg = get_builtin_v3()
         cfg = merge_protocol(base_cfg, cfg)
     except ProtocolError as e:
-        print(f"错误: {e}", file=sys.stderr)
+        friendly, _ = classify_protocol_error(e)
+        _log_error_to_disk(e)
+        print(f"[错误] {friendly}", file=sys.stderr)
         return 2
 
     logger = None
@@ -410,9 +457,32 @@ def cmd_paste(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI 总入口：最外层统一兜底，不允许把堆栈直接抛给用户。
+
+    退出码：
+      0 → 成功
+      2 → 已知协议/配置错误（ProtocolError 子类），已打印 friendly 提示
+      1 → 未知错误，friendly 提示 + error.log 路径已写入 stderr
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except ProtocolError as e:
+        friendly, _ = classify_protocol_error(e)
+        print(f"[错误] {friendly}", file=sys.stderr)
+        try:
+            log_path = _log_error_to_disk(e)
+            print(f"       详情已写入: {log_path}", file=sys.stderr)
+        except Exception:
+            pass
+        return 2
+    except Exception as e:  # noqa: BLE001  顶层兜底必须要广
+        friendly, _ = classify_protocol_error(e)
+        log_path = _log_error_to_disk(e)
+        print(f"[错误] {friendly}", file=sys.stderr)
+        print(f"       堆栈已写入: {log_path}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

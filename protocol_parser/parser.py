@@ -13,12 +13,184 @@ import json
 import re
 import struct
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 
 class ProtocolError(Exception):
-    """协议解析相关错误。"""
+    """协议解析相关错误基类。
+
+    - message: 开发可读的原始信息（会被日志记录）
+    - friendly_msg: 面向终端用户的一句话提示（GUI弹窗/CLI stderr 用）
+    调用方优先显示 friendly_msg，再把 message 和堆栈写 error.log。
+    """
+
+    default_friendly = "协议解析出现未知错误，请检查输入数据或协议配置。"
+
+    def __init__(self, message: str, friendly_msg: str | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.friendly_msg = friendly_msg or self.default_friendly
+
+
+class ProtocolConfigError(ProtocolError):
+    """协议配置文件本身有问题（缺字段、格式错、路径不存在等）。"""
+
+    default_friendly = "协议配置无效，请检查导入的协议文件内容。"
+
+
+class HexParseError(ProtocolError):
+    """HEX 文本输入解析失败。"""
+
+    default_friendly = "HEX 输入格式不正确，请检查是否包含空格、0x 前缀和成对的 0-9/A-F 字符。"
+
+
+class FrameTooShortError(ProtocolError):
+    """帧总长度不足以读取帧头/版本/命令字/长度字段。"""
+
+    default_friendly = "收到的数据太短，可能串口还没收完整一帧，或波特率/帧配置不匹配。"
+
+
+class FrameHeaderMismatchError(ProtocolError):
+    """帧头不匹配（通常是切帧切错位置，或协议 header 配置错）。"""
+
+    default_friendly = "帧头不匹配，请检查当前协议帧头与对端设备是否一致。"
+
+
+class FrameVersionMismatchError(ProtocolError):
+    default_friendly = "帧版本不匹配，请检查协议版本是否一致。"
+
+
+class FrameLengthMismatchError(ProtocolError):
+    """length 字段与实际 payload 长度不一致（丢包/错包常见）。"""
+
+    default_friendly = "帧长度字段与实际数据不符，常见原因是串口丢包、波特率错误或对端发错包。"
+
+
+class FrameLengthOverflowError(ProtocolError):
+    """length 字段为负或超过安全上限。"""
+
+    default_friendly = "帧长度异常（过大或为负），可能是帧头误识别或收到错误数据。"
+
+
+class FrameChecksumError(ProtocolError):
+    """校验和错误。"""
+
+    default_friendly = "帧校验和错误，请检查通信是否受干扰、波特率/停止位是否匹配。"
+
+
+class AttrLengthMismatchError(ProtocolError):
+    """属性列表里单个属性的 length 超过剩余字节。"""
+
+    default_friendly = "属性长度越界，常见于协议配置错误或帧丢包。"
+
+
+class AttrTypeUnsupportedError(ProtocolError):
+    default_friendly = "遇到未定义的属性类型，请升级解析程序或核对协议版本。"
+
+
+class AttrValueParseError(ProtocolError):
+    """属性值按 type 解析失败（字节不够、格式错等）。"""
+
+    default_friendly = "属性值解析失败，常见于属性类型与实际数据不一致。"
+
+
+class DataFieldParseError(ProtocolError):
+    """命令 data_def 定长解析失败。"""
+
+    default_friendly = "命令字段解析失败，请检查命令的字段定义是否与实际帧数据匹配。"
+
+
+class ChecksumAlgoError(ProtocolError):
+    default_friendly = "协议帧校验算法未配置，请检查帧配置 checksum 部分。"
+
+
+class CoversConfigError(ProtocolError):
+    default_friendly = "协议校验覆盖范围配置不合法。"
+
+
+class FormatUnsupportedError(ProtocolError):
+    default_friendly = "数据格式不支持。"
+
+
+class EnumUnmatchedError(ProtocolError):
+    default_friendly = "数值未匹配到任何枚举项，显示原始值。"  # 通常不抛，仅兜底
+
+
+class IntegerParseError(ProtocolError):
+    default_friendly = "配置项无法解析为整数，请检查协议配置。"
+
+
+class DocxImportError(ProtocolError):
+    """Word 协议导入失败。"""
+
+    default_friendly = "Word 协议解析失败，请确认文档格式与导入模板一致。"
+
+
+class UpdaterError(ProtocolError):
+    """在线更新过程中可预期的错误。"""
+    default_friendly = "在线更新失败，请检查网络或稍后重试。"
+
+
+class EncodeFrameError(ProtocolError):
+    """组包（发送编码）过程中可预期的错误：格式错/枚举错/字段值不合法等。"""
+    default_friendly = "指令组包失败，请检查命令字段取值或协议配置。"
+
+
+def classify_protocol_error(exc: Exception) -> tuple[str, str]:
+    """把任意异常收敛为 (friendly_msg, debug_message) 二元组。
+
+    - ProtocolError 子类自带 friendly_msg；
+    - 其他 Exception 统一给"未知错误 + 写入 error.log"的友好提示，避免把堆栈甩给用户。
+    """
+    if isinstance(exc, ProtocolError):
+        debug = getattr(exc, "message", None) or str(exc)
+        return exc.friendly_msg, debug
+    friendly = "程序遇到未知错误，详情已记录到 error.log，请反馈给开发者。"
+    try:
+        debug = f"{type(exc).__name__}: {exc}"
+    except Exception:
+        debug = type(exc).__name__
+    return friendly, debug
+
+
+def _log_error_to_disk(exc: Exception) -> Path:
+    """把异常堆栈写入工作目录 error.log，失败时静默回退到临时目录。
+
+    - CLI/GUI/Monitor 共用，保证错误日志落盘一致；
+    - 写入失败绝对不抛，不因为写日志导致二次崩溃。
+    """
+    import sys
+    import traceback
+
+    try:
+        log_path = Path.cwd() / "error.log"
+    except Exception:
+        try:
+            log_path = Path(__file__).resolve().parent / "error.log"
+        except Exception:
+            return Path("error.log")
+
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {type(exc).__name__}: {exc}\n")
+            f.write(stack)
+            f.write("-" * 60 + "\n")
+    except Exception:
+        try:
+            import tempfile
+            tmp_dir = Path(tempfile.gettempdir())
+            log_path = tmp_dir / "protocol_parser_error.log"
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{ts}] {type(exc).__name__}: {exc}\n{stack}{'-'*60}\n")
+        except Exception:
+            pass
+    return log_path
 
 
 # ---------- V3.0 typeid 类型表 ----------
@@ -61,18 +233,81 @@ TYPEID_FORCE_REPORT_BIT = 0x80
 def load_protocol(path: str | Path) -> dict:
     p = Path(path)
     if not p.exists():
-        raise ProtocolError(f"协议配置文件不存在: {p}")
-    with p.open("r", encoding="utf-8") as f:
-        cfg = json.load(f)
+        raise ProtocolConfigError(f"协议配置文件不存在: {p}")
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError) as e:
+        raise ProtocolConfigError(f"协议配置文件读取失败: {e}") from e
     _validate_protocol(cfg)
     return cfg
 
 
 def _validate_protocol(cfg: dict) -> None:
     if "product" not in cfg:
-        raise ProtocolError("协议配置缺少 'product' 字段")
+        raise ProtocolConfigError("协议配置缺少 'product' 字段")
     if "commands" not in cfg or not isinstance(cfg["commands"], list):
-        raise ProtocolError("协议配置缺少 'commands' 列表")
+        raise ProtocolConfigError("协议配置缺少 'commands' 列表")
+
+
+# ---------- 内置 V3.0 协议（CLI/GUI 共用，避免 CLI 依赖 gui.py） ----------
+_builtin_v3: dict | None = None
+
+
+def _default_protocol_dir() -> Path:
+    """返回默认协议目录（兼容 PyInstaller / 开发模式）。"""
+    try:
+        import sys as _sys
+        if getattr(_sys, "frozen", False):
+            exe_dir = Path(_sys.executable).resolve().parent
+            proto_dir = exe_dir / "product"
+            proto_dir.mkdir(parents=True, exist_ok=True)
+            return proto_dir
+    except Exception:
+        pass
+    dev = Path(__file__).resolve().parent.parent / "product"
+    try:
+        dev.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return dev
+
+
+def _load_builtin_v3_fallback() -> dict:
+    """加载内置 v3 协议（优先用户 product/v3_serial.json，否则回退空结构）。"""
+    base = _default_protocol_dir()
+    candidate = base / "v3_serial.json"
+    if candidate.exists():
+        try:
+            return load_protocol(candidate)
+        except ProtocolError:
+            pass
+    # 也尝试包内的 product 资源
+    try:
+        bundled = Path(__file__).resolve().parent.parent / "product" / "v3_serial.json"
+        if bundled.exists() and bundled.resolve() != candidate.resolve():
+            return load_protocol(bundled)
+    except Exception:
+        pass
+    return {
+        "product": "串口3.0协议",
+        "description": "内置基础协议",
+        "commands": [],
+        "frame": {},
+        "enums": {},
+        "attributes": {},
+    }
+
+
+def get_builtin_v3(refresh: bool = False) -> dict:
+    """获取内置串口 3.0 基础协议（模块级缓存）。
+
+    CLI / GUI 共用，这样 CLI 不用依赖 gui.py（避免在没装 tkinter 的环境运行失败）。
+    """
+    global _builtin_v3
+    if refresh or _builtin_v3 is None:
+        _builtin_v3 = _load_builtin_v3_fallback()
+    return _builtin_v3
 
 
 def merge_protocol(base: dict, override: dict) -> dict:
@@ -160,7 +395,7 @@ def parse_hex_input(text: str) -> bytes:
          再对剩下文本 findall 纯 hex 段合并，严格判断奇偶。
     """
     if text is None:
-        raise ProtocolError("输入为空")
+        raise HexParseError("输入为空")
     raw = str(text)
 
     # Step 1: 合法 0xHEX （词首，前面不是字母数字）→ 剥 0x 前缀，保留后面 hex
@@ -173,44 +408,34 @@ def parse_hex_input(text: str) -> bytes:
     # Step 3: 纯 hex 段合并
     joined = "".join(_RE_PURE_HEX.findall(s2))
     if not joined:
-        raise ProtocolError("输入中没有任何可解析的 hex 字符")
+        raise HexParseError("输入中没有任何可解析的 hex 字符")
     if len(joined) % 2 != 0:
-        raise ProtocolError(
+        raise HexParseError(
             f"hex 字符总数为奇数({len(joined)})，无法配对: {joined}"
         )
     try:
         return bytes.fromhex(joined)
     except ValueError as e:
-        raise ProtocolError(f"hex 解析失败: {e}") from e
+        raise HexParseError(f"hex 解析失败: {e}") from e
 
 
 def _read_length_field(buf: bytes, offset: int, width: int = 1, byte_order: str = "big") -> int:
-    """读取变长长度域（预留协议扩展）。
-
-    width 支持 1 / 2 / 4 字节。默认 1 字节，兼容现有协议；
-    以后协议升级为 2 字节长度，调用者把 width=2 传入即可，无需改内部切片。
-    偏移越界时抛出 ProtocolError，避免静默读成 0 导致后续解析错位。
-    """
     if not isinstance(width, int) or width <= 0:
-        raise ProtocolError(f"长度域宽度非法: {width!r}")
+        raise AttrLengthMismatchError(f"长度域宽度非法: {width!r}")
     end = offset + width
     if end > len(buf):
-        raise ProtocolError(
+        raise AttrLengthMismatchError(
             f"长度域越界: offset={offset}, width={width}B, 剩余 {max(0, len(buf) - offset)}B"
         )
     return int.from_bytes(buf[offset:end], byteorder=byte_order)
 
 
 def _check_remaining(buf: bytes, offset: int, need: int, *, label: str) -> None:
-    """检查 buf 从 offset 开始至少还有 need 字节，否则抛 ProtocolError。
-
-    用于替代旧版 `data[start:start+need]` 的静默切片截断，确保通信丢包/错包时能被显式发现。
-    """
     if need < 0:
-        raise ProtocolError(f"{label}: 需要字节数为负 {need}")
+        raise AttrLengthMismatchError(f"{label}: 需要字节数为负 {need}")
     left = len(buf) - offset
     if left < need:
-        raise ProtocolError(
+        raise AttrLengthMismatchError(
             f"{label}: 剩余字节不足 (offset={offset}, 需要 {need}B, 实际剩余 {left}B, 总长 {len(buf)}B)"
         )
 
@@ -238,7 +463,7 @@ def calc_checksum(data: bytes, algorithm: str) -> bytes:
                 crc = (crc << 1) ^ 0x07 if crc & 0x80 else crc << 1
                 crc &= 0xFF
         return bytes([crc])
-    raise ProtocolError(f"不支持的校验算法: {algorithm}")
+    raise ChecksumAlgoError(f"不支持的校验算法: {algorithm}")
 
 
 # ---------- 帧拆分 ----------
@@ -266,30 +491,42 @@ def split_frame(data: bytes, cfg: dict) -> Frame:
     # 帧头
     header_size = frame_cfg.get("header_size", 2)
     if len(data) < header_size:
-        raise ProtocolError(f"数据过短 ({len(data)}B)，无法读取帧头")
+        raise FrameTooShortError(f"数据过短 ({len(data)}B)，无法读取帧头")
     header = int.from_bytes(data[:header_size], "big")
     expected_header = _parse_int(frame_cfg.get("header", "0xA5A5"))
     if header != expected_header:
-        raise ProtocolError(
+        raise FrameHeaderMismatchError(
             f"帧头不匹配: 期望 0x{expected_header:04X}, 实际 0x{header:04X}"
         )
 
     # 版本
     ver_offset = frame_cfg.get("ver_offset", 2)
     ver_size = frame_cfg.get("ver_size", 1)
+    if len(data) < ver_offset + ver_size:
+        raise FrameTooShortError(
+            f"数据过短 ({len(data)}B)，无法读取版本字段 (offset={ver_offset}, size={ver_size})"
+        )
     ver = int.from_bytes(data[ver_offset:ver_offset + ver_size], "big")
     expected_ver = frame_cfg.get("ver")
     if expected_ver is not None and ver != _parse_int(expected_ver):
-        raise ProtocolError(f"版本不匹配: 期望 {_parse_int(expected_ver)}, 实际 {ver}")
+        raise FrameVersionMismatchError(f"版本不匹配: 期望 {_parse_int(expected_ver)}, 实际 {ver}")
 
     # 命令字
     cmd_offset = frame_cfg.get("cmd_offset", 3)
+    if len(data) <= cmd_offset:
+        raise FrameTooShortError(
+            f"数据过短 ({len(data)}B)，无法读取命令字 (offset={cmd_offset})"
+        )
     cmd_code = data[cmd_offset]
 
     # 数据长度
     length_offset = frame_cfg.get("length_offset", 4)
     length_size = frame_cfg.get("length_size", 2)
     length_byte_order = frame_cfg.get("length_byte_order", "big")
+    if len(data) < length_offset + length_size:
+        raise FrameTooShortError(
+            f"数据过短 ({len(data)}B)，无法读取长度字段 (offset={length_offset}, size={length_size})"
+        )
     length = int.from_bytes(
         data[length_offset:length_offset + length_size],
         byteorder=length_byte_order,
@@ -314,7 +551,7 @@ def split_frame(data: bytes, cfg: dict) -> Frame:
         elif covers == "from_cmd_to_checksum_exclusive":
             covered = data[cmd_offset:data_end]
         else:
-            raise ProtocolError(f"不支持的 covers: {covers}")
+            raise CoversConfigError(f"不支持的 covers: {covers}")
 
         checksum_actual = calc_checksum(covered, cs_algo)
         checksum_ok = checksum_expected == checksum_actual
@@ -323,12 +560,12 @@ def split_frame(data: bytes, cfg: dict) -> Frame:
     data_start = length_offset + length_size
     max_available = data_end - data_start
     if length > max_available:
-        raise ProtocolError(
+        raise FrameLengthMismatchError(
             f"帧长度字段与实际不匹配: length={length}, "
             f"数据区最大可用 {max_available}B (offset={data_start}, checksum前={data_end}, 帧总长={len(data)}B)"
         )
     if length < 0:
-        raise ProtocolError(f"帧长度字段为负: {length}")
+        raise FrameLengthOverflowError(f"帧长度字段为负: {length}")
     payload = data[data_start:data_start + length]
 
     return Frame(
@@ -394,7 +631,10 @@ class FieldResult:
         if self.children:
             d["children"] = self.children
         if self.raw is not None:
-            d["raw"] = self.raw.hex().upper()
+            if isinstance(self.raw, (bytes, bytearray, memoryview)):
+                d["raw"] = bytes(self.raw).hex().upper()
+            else:
+                d["raw"] = str(self.raw)
         return d
 
 
@@ -444,8 +684,8 @@ def _parse_fixed_field(data: bytes, fdef: dict, cfg: dict) -> FieldResult:
     ftype = fdef.get("type", "hex")
     chunk = data[offset:offset + length]
     if len(chunk) < length:
-        raise ProtocolError(
-            f"字段 '{fdef['name']}' 越界: offset={offset}, length={length}, 帧总长 {len(data)}"
+        raise DataFieldParseError(
+            f"字段 '{fdef.get('name', '?')}' 越界: offset={offset}, length={length}, 帧总长 {len(data)}"
         )
 
     value, text = _decode_chunk(chunk, ftype, fdef, cfg)
@@ -482,15 +722,12 @@ def _parse_fixed_field(data: bytes, fdef: dict, cfg: dict) -> FieldResult:
 def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[FieldResult]:
     """按格式名解析 Data 块。"""
     if fmt == "attr_list":
-        # 多个属性值拼接：循环解析 typeid + attrid + [len] + value
         return _parse_attr_list(data, cfg, force_report=data_def.get("force_report", True))
     if fmt == "attr_unit":
-        # 属性 id 单元：每字节一个 attrid
         return _parse_attr_unit(data, cfg)
     if fmt == "msg_id_then_attr_unit":
-        # 消息 id + 属性 id 单元（每字节一个 attrid）
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取消息 id")
         msg_id = data[0]
         results = [FieldResult(
             name="消息id", type="uint8", value=msg_id, text=str(msg_id),
@@ -499,9 +736,8 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
         results.extend(_parse_attr_unit(data[1:], cfg))
         return results
     if fmt == "msg_id_then_attr":
-        # 消息 id（1B） + 属性单元
         if not data:
-            raise ProtocolError("Data 为空，无法读取消息 id")
+            raise AttrValueParseError("Data 为空，无法读取消息 id")
         msg_id = data[0]
         results = [FieldResult(
             name="消息id",
@@ -515,9 +751,8 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
         results.extend(_parse_attr_list(data[1:], cfg, force_report=True))
         return results
     if fmt == "msg_id":
-        # 仅消息 id
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取消息 id")
         msg_id = data[0]
         return [FieldResult(
             name="消息id",
@@ -529,9 +764,8 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             raw=data[:1],
         )]
     if fmt == "msg_id_then_action":
-        # 消息 id + 行为 id + 行为参数
         if len(data) < 2:
-            raise ProtocolError("Data 过短")
+            raise AttrValueParseError("Data 过短，无法读取消息 id + 行为 id")
         msg_id = data[0]
         action_id = data[1]
         results = [
@@ -548,9 +782,8 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             results.extend(_parse_attr_list(data[2:], cfg, force_report=True))
         return results
     if fmt == "event":
-        # 事件 id + 事件参数
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取事件 id")
         event_id = data[0]
         results = [FieldResult(
             name="事件 Event ID", type="uint8", value=event_id,
@@ -561,7 +794,7 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
         return results
     if fmt == "errcode":
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取错误码")
         err = data[0]
         err_map = cfg.get("enums", {}).get("errcode", {})
         text = err_map.get(str(err), f"未知({err})")
@@ -570,9 +803,8 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             offset=0, length=1, raw=data[:1],
         )]
     if fmt == "errcode_then_attr":
-        # 错误码 + 属性列表
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取错误码")
         err = data[0]
         err_map = cfg.get("enums", {}).get("errcode", {})
         text = err_map.get(str(err), f"未知({err})")
@@ -583,9 +815,8 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
         results.extend(_parse_attr_list(data[1:], cfg, force_report=True))
         return results
     if fmt == "errcode_then_partition":
-        # 错误码 + 分区序号(2B 大端) + 升级包序号(1B)
         if len(data) < 4:
-            raise ProtocolError("Data 过短")
+            raise AttrValueParseError("Data 长度不足 4 字节 (错误码 + 分区 + 升级包)")
         err = data[0]
         err_map = cfg.get("enums", {}).get("errcode", {})
         err_text = err_map.get(str(err), f"未知({err})")
@@ -597,9 +828,8 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             FieldResult("升级包序号", "uint8", pkg, str(pkg), 3, 1, raw=data[3:4]),
         ]
     if fmt == "partition_pkg":
-        # 分区序号(2B 大端) + 升级包序号(1B) + 升级数据(n)
         if len(data) < 3:
-            raise ProtocolError("Data 过短")
+            raise AttrValueParseError("Data 长度不足 3 字节 (分区 + 升级包序号)")
         partition = int.from_bytes(data[:2], "big")
         pkg = data[2]
         fw_data = data[3:]
@@ -610,9 +840,8 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
         ]
         return results
     if fmt == "ota_crc":
-        # 分区序号(2B) + CRC32(4B)
         if len(data) < 6:
-            raise ProtocolError("Data 过短")
+            raise AttrValueParseError("Data 长度不足 6 字节 (分区 + CRC32)")
         partition = int.from_bytes(data[:2], "big")
         crc = int.from_bytes(data[2:6], "big")
         return [
@@ -620,9 +849,8 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             FieldResult("CRC32", "uint32_be", crc, f"0x{crc:08X}", 2, 4, raw=data[2:6]),
         ]
     if fmt == "partition_then_attr":
-        # 分区序号(2B) + CRC32(4B)
         if len(data) < 6:
-            raise ProtocolError("Data 过短")
+            raise AttrValueParseError("Data 长度不足 6 字节 (分区 + CRC32)")
         partition = int.from_bytes(data[:2], "big")
         crc = int.from_bytes(data[2:6], "big")
         return [
@@ -630,9 +858,8 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             FieldResult("CRC32", "uint32_be", crc, f"0x{crc:08X}", 2, 4, raw=data[2:6]),
         ]
     if fmt == "dev_version":
-        # 设备版本 3B（主.次.修正） + 扩展信息
         if len(data) < 3:
-            raise ProtocolError("Data 过短")
+            raise AttrValueParseError("Data 长度不足 3 字节 (主/次/修正版本号)")
         major, minor, patch = data[0], data[1], data[2]
         ver_text = f"{major}.{minor}.{patch}"
         results = [FieldResult(
@@ -647,11 +874,6 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             ))
         return results
     if fmt == "dev_info":
-        # 查询设备信息响应：
-        # [属性1(typeid,attrid,val)...] + PID属性(type=0x06,attrid=0xF7,uint32)
-        #   + MODEL属性(type=0x0B,attrid=0xF5,变长string)
-        #   + 属性列表属性(type=0x0E,attrid=0xF3,变长ARRAY，内部也是attr_list格式)
-        # 整体按 attr_list 格式解析，PID/Model/属性列表使用固定name解析
         attr_results = _parse_attr_list(data, cfg, force_report=False)
         for fr in attr_results:
             children = fr.children or []
@@ -663,20 +885,16 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
                 continue
             if children and children[0].get("attrid") == "0xF5":
                 fr.name = "产品Model"
-                # STRING类型去掉单引号，更友好显示
                 if isinstance(fr.value, str) and fr.text.startswith("'") and fr.text.endswith("'"):
                     fr.text = fr.value
                 continue
             if children and children[0].get("attrid") == "0xF3":
                 fr.name = "设备属性列表"
-                # ARRAY内部也是 attr_list 格式，递归解析
                 if isinstance(fr.raw, bytes) and len(fr.raw) >= 4:
-                    # 取出变长value部分（跳过typeid,attrid,2字节长度 = 4字节）
                     inner_value = fr.raw[4:]
                     if inner_value:
                         try:
                             inner_results = _parse_attr_list(inner_value, cfg, force_report=False)
-                            # 把内层解析结果作为children附加
                             fr.text = f"共 {len(inner_results)} 个属性"
                             fr.children = (children or []) + [
                                 {"__inner_field__": True, **ir.to_dict()}
@@ -687,41 +905,35 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
                 continue
         return attr_results
     if fmt == "net_config":
-        # 配网方式
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取配网方式")
         v = data[0]
         net_map = cfg.get("enums", {}).get("net_config_type", {})
         text = net_map.get(str(v), f"未知({v})")
         return [FieldResult("配网方式", "uint8", v, text, 0, 1, raw=data[:1])]
     if fmt == "module_status":
-        # 模组工作状态
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取模组状态")
         v = data[0]
         status_map = cfg.get("enums", {}).get("module_status", {})
         text = status_map.get(str(v), f"未知({v})")
         return [FieldResult("模组工作状态", "uint8", v, text, 0, 1, raw=data[:1])]
     if fmt == "heartbeat_resp":
-        # 心跳响应: 0=重启后第一次 1=正常 2=正在升级
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取心跳响应")
         v = data[0]
         hb_map = cfg.get("enums", {}).get("heartbeat_resp", {})
         text = hb_map.get(str(v), f"未知({v})")
         return [FieldResult("MCU心跳值", "uint8", v, text, 0, 1, raw=data[:1])]
     if fmt == "get_time":
-        # 时区(1B)
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取时区")
         tz = data[0]
-        # 处理负数
         tz_val = tz if tz < 128 else tz - 256
         return [FieldResult("时区", "int8", tz_val, f"UTC{'+' if tz_val >= 0 else ''}{tz_val}", 0, 1, raw=data[:1])]
     if fmt == "get_time_resp":
-        # 错误码(1B) + 时区(1B) + 年(1B, 0=2000) + 月(1B) + 日(1B) + 星期(1B) + 时(1B) + 分(1B) + 秒(1B)
         if len(data) < 9:
-            raise ProtocolError("Data 长度不足 9 字节")
+            raise AttrValueParseError("Data 长度不足 9 字节，无法解析时间响应")
         err = data[0]
         tz = data[1]
         tz_val = tz if tz < 128 else tz - 256
@@ -746,42 +958,36 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             FieldResult("秒", "uint8", second, str(second), 8, 1, raw=data[8:9]),
         ]
     if fmt == "service_set":
-        # 服务数据：属性列表（attrid + value）
         return _parse_attr_list(data, cfg, force_report=True)
     if fmt == "product_test":
-        # 产测状态
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取产测状态")
         v = data[0]
         prod_map = cfg.get("enums", {}).get("product_test_status", {})
         text = prod_map.get(str(v), f"未知({v})")
         return [FieldResult("产测状态", "uint8", v, text, 0, 1, raw=data[:1])]
     if fmt == "product_set":
-        # 产测指令
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取产测指令")
         v = data[0]
         prod_map = cfg.get("enums", {}).get("product_test_cmd", {})
         text = prod_map.get(str(v), f"未知({v})")
         return [FieldResult("产测指令", "uint8", v, text, 0, 1, raw=data[:1])]
     if fmt == "ota_start":
-        # 验签类型
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取 OTA 验签类型")
         v = data[0]
         sign_map = cfg.get("enums", {}).get("ota_sign_type", {})
         text = sign_map.get(str(v), f"未知({v})")
         return [FieldResult("验签类型", "uint8", v, text, 0, 1, raw=data[:1])]
     if fmt == "ota_verify":
-        # 验签值（变长）
         return [FieldResult(
             "验签值", "raw", to_hex(data), to_hex(data),
             0, len(data), raw=data,
         )]
     if fmt == "mcu_status":
-        # MCU 工作状态
         if not data:
-            raise ProtocolError("Data 为空")
+            raise AttrValueParseError("Data 为空，无法读取 MCU 工作状态")
         v = data[0]
         status_map = cfg.get("enums", {}).get("mcu_status", {})
         text = status_map.get(str(v), f"未知({v})")
@@ -792,7 +998,7 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             0, len(data), raw=data,
         )]
 
-    raise ProtocolError(f"不支持的 format: {fmt}")
+    raise FormatUnsupportedError(f"不支持的 format: {fmt}")
 
 
 # ---------- 属性块解析 ----------
@@ -1060,7 +1266,7 @@ def _decode_chunk(chunk: bytes, ftype: str, fdef: dict, cfg: dict) -> tuple[Any,
     if ftype == "version3":
         return (chunk[0], chunk[1], chunk[2]), f"{chunk[0]}.{chunk[1]}.{chunk[2]}"
 
-    raise ProtocolError(f"不支持的字段类型: {ftype}")
+    raise AttrTypeUnsupportedError(f"不支持的字段类型: {ftype}")
 
 
 # ---------- 属性表查询 ----------
@@ -1090,7 +1296,7 @@ def _parse_int(v: Any) -> int:
         if s.startswith("0x"):
             return int(s, 16)
         return int(s, 0)
-    raise ProtocolError(f"无法解析为整数: {v}")
+    raise IntegerParseError(f"无法解析为整数: {v}")
 
 
 # ---------- 顶层解析 ----------
@@ -1355,3 +1561,616 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
         checksum_ok=frame.checksum_ok,
         length_match=(len(frame.data) == frame.length),
     )
+
+
+# =========================================================================
+# 协议型组包 / 发送编码（V3.0 编码器）
+# =========================================================================
+#
+# 思路：和 parse_frame 共用 frame cfg 与 calc_checksum，保证帧头、长度、CRC
+#       与解析侧完全对称；用户侧只要给 cmd_code + 简化版"字段字典"即可。
+#
+# 支持的简化字段输入：
+#   - raw              : bytes/bytearray/str(HEX 字符串)  → 直接做 data 段
+#   - uint8            : int → 1 字节
+#   - uint16_be / int16_be / uint32_be / uint32_be 等 → 整数→多字节
+#   - enum             : int → 1 字节
+#   - msg_id           : int → 1 字节消息号
+#   - module_status / heartbeat_resp / net_config_type / mcu_status / errcode /
+#     product_test_status / product_test_cmd / ota_sign_type
+#                      : 对应 1 字节枚举（按 cfg.enums 映射名→值；用户给字符串也行）
+#   - attr_list        : [(attrid_int_or_hex, value, typeid_int), ...] 简写列表，每单元按 typeid 编码
+#   - attr_unit        : [attrid_int_or_hex, ...]  每字节一个 attrid
+#
+# 方向缺省：request（"模组发送"对应方向=request；用户也可写 "request"/"response" 字符串）
+# =========================================================================
+
+
+def _encode_int(v, width: int, byte_order: str, signed: bool) -> bytes:
+    """统一的整数编码（对 Enum/字符串/十六进制字符串也兜底转 int）。"""
+    try:
+        if isinstance(v, bool):
+            v_int = int(v)
+        elif isinstance(v, int):
+            v_int = v
+        elif isinstance(v, str):
+            s = v.strip()
+            if s.lower().startswith("0x"):
+                v_int = int(s, 16)
+            else:
+                v_int = int(s, 0)
+        else:
+            v_int = int(v)
+    except Exception as e:
+        raise EncodeFrameError(f"整数编码失败：{v!r}，原因：{e}") from e
+    try:
+        return int(v_int).to_bytes(width, byte_order, signed=signed)
+    except Exception as e:
+        raise EncodeFrameError(f"整数 {v_int!r} 无法用 {width} 字节编码（signed={signed}）：{e}") from e
+
+
+def _enum_name_to_value(cfg: dict, enum_name: str, value) -> int:
+    """把枚举值解析为 uint8：int/0x 字符串原样；若给的是字符串（如"OK"）就按 enums 反查。"""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value & 0xFF
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            raise EncodeFrameError(f"枚举 {enum_name} 的值为空")
+        try:
+            if s.lower().startswith("0x"):
+                return int(s, 16) & 0xFF
+            if all(c.isdigit() or c in "+- " for c in s):
+                return int(s, 0) & 0xFF
+        except Exception:
+            pass
+        # 尝试字符串→枚举数字映射
+        enums = cfg.get("enums", {}) or {}
+        table = enums.get(enum_name, {}) or {}
+        # 可能是 {"0":"OK"} 也可能是 {0:"OK"}；两种都反查
+        for k, v in table.items():
+            if isinstance(v, str) and v == s:
+                if isinstance(k, int):
+                    return k & 0xFF
+                try:
+                    return int(k, 0) & 0xFF
+                except Exception:
+                    continue
+            if k == s:
+                if isinstance(k, int):
+                    return k & 0xFF
+                try:
+                    return int(k, 0) & 0xFF
+                except Exception:
+                    continue
+        raise EncodeFrameError(f"枚举 {enum_name} 找不到值 {s!r}")
+    raise EncodeFrameError(f"枚举 {enum_name} 不支持的类型 {type(value)!r}")
+
+
+def _encode_attrid_int(attrid) -> int:
+    """接受 0x10 / "0x10" / 16 三种形式。"""
+    if isinstance(attrid, bool):
+        return int(attrid) & 0xFF
+    if isinstance(attrid, int):
+        return attrid & 0xFF
+    if isinstance(attrid, str):
+        s = attrid.strip()
+        if not s:
+            raise EncodeFrameError("attrid 为空")
+        try:
+            if s.lower().startswith("0x"):
+                return int(s, 16) & 0xFF
+            return int(s, 0) & 0xFF
+        except Exception as e:
+            raise EncodeFrameError(f"attrid 编码失败：{attrid!r}，原因：{e}") from e
+    raise EncodeFrameError(f"attrid 不支持类型 {type(attrid)!r}")
+
+
+def _encode_scalar_value(cfg: dict, value, typeid: int | None, *, for_attr: bool):
+    """把一个标量值编码成 bytes。
+    - typeid 存在且为 attr：按 TYPEID_MAP 的 size/ctype/scale 反编码；
+    - typeid 不存在：按 value 原始类型推断（int→1B/str(ascii)/bytes 直接用）
+    """
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, str):
+        s = value.strip()
+        if for_attr and s.lower().startswith("0x") and len(s) % 2 == 0:
+            try:
+                return bytes.fromhex(s.replace(" ", "").replace("0x", ""))
+            except Exception:
+                pass
+        return s.encode("utf-8")
+    if isinstance(value, bool):
+        return bytes([int(value)])
+    if isinstance(value, int):
+        # attr 的标量先看 typeid → size
+        if for_attr and typeid is not None:
+            ti = TYPEID_MAP.get(typeid)
+            if ti and "size" in ti:
+                signed = bool(ti.get("ctype", "").startswith("int"))
+                byte_order = "little" if "_le" in ti.get("ctype", "") else "big"
+                return int(value).to_bytes(ti["size"], byte_order, signed=signed)
+        # 无 typeid ：最小 1 字节（不要溢出）
+        nbytes = max(1, (value.bit_length() + 7) // 8)
+        if value < 0:
+            nbytes = max(1, ((value + 1).bit_length() + 8) // 8)
+        try:
+            return int(value).to_bytes(nbytes, "big", signed=(value < 0))
+        except Exception:
+            nbytes += 1
+            return int(value).to_bytes(nbytes, "big", signed=True)
+    if isinstance(value, float):
+        import struct as _struct
+        return _struct.pack(">f", float(value))
+    raise EncodeFrameError(f"标量编码失败：不支持类型 {type(value)!r}（value={value!r}）")
+
+
+def _encode_attr_list(cfg: dict, items: list) -> bytes:
+    """items: [(attrid, value[, typeid]), ...]
+    attr_list 在 V3 中每单元结构：
+        - attrid(1B) + typeid(1B) + len_bytes(1B 或 2B？：这里默认按 TYPEID_MAP.size；
+          没有 size 时按实际 value 编码长度后再用 1 字节 len)
+    简化：按 typeid_map 有 size 用 size；否则用 value 实际编码长度，1 字节 len。
+    """
+    out = bytearray()
+    if not isinstance(items, list):
+        raise EncodeFrameError(f"attr_list 期望列表，实际 {type(items)!r}")
+    for it in items:
+        if not isinstance(it, (list, tuple)):
+            raise EncodeFrameError(f"attr_list 每项必须是 (attrid, value[, typeid])，实际 {it!r}")
+        typeid: int | None = None
+        if len(it) == 3:
+            attrid, value, typeid = it
+        elif len(it) == 2:
+            attrid, value = it
+        else:
+            raise EncodeFrameError(f"attr_list 每项长度应为 2/3，实际 {len(it)}：{it!r}")
+        typeid_i: int = 0 if typeid is None else _encode_attrid_int(typeid)
+        type_info = TYPEID_MAP.get(typeid_i) if typeid_i else None
+        val_raw = _encode_scalar_value(cfg, value, typeid_i, for_attr=True)
+        # 应用 scale（反向：解析是乘 scale，编码就除 scale）
+        if type_info and isinstance(value, (int, float)):
+            scale = type_info.get("scale")
+            if scale:
+                from math import isclose
+                try:
+                    unscaled = value / float(scale)
+                    if abs(unscaled - round(unscaled)) < 1e-9:
+                        unscaled = int(round(unscaled))
+                        signed = bool(type_info.get("ctype", "").startswith("int"))
+                        byte_order = "little" if "_le" in type_info.get("ctype", "") else "big"
+                        size = type_info.get("size") or len(val_raw)
+                        val_raw = int(unscaled).to_bytes(size, byte_order, signed=signed)
+                except Exception:
+                    pass
+        attrid_i = _encode_attrid_int(attrid)
+        out.append(attrid_i)
+        out.append(typeid_i)
+        length_byte = max(1, len(val_raw)) & 0xFF
+        out.append(length_byte)
+        out.extend(val_raw[:length_byte])
+    return bytes(out)
+
+
+def _encode_attr_unit(cfg: dict, attrids) -> bytes:
+    if isinstance(attrids, (list, tuple)):
+        pass
+    else:
+        attrids = [attrids]
+    out = bytearray()
+    for a in attrids:
+        out.append(_encode_attrid_int(a))
+    return bytes(out)
+
+
+def _encode_raw_bytes(raw, *, field_name: str = "raw") -> bytes:
+    """把 HEX 字符串 / bytes / bytearray 统一转 bytes。"""
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw)
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return b""
+        # 允许 "A5 A5 03 20..." / "A5A50320" / "0xA5A50320"
+        s_clean = s.replace(" ", "").replace("\n", "").replace("\r", "").replace("\t", "")
+        if s_clean.lower().startswith("0x"):
+            s_clean = s_clean[2:]
+        if len(s_clean) % 2 == 1:
+            s_clean = "0" + s_clean
+        try:
+            return bytes.fromhex(s_clean)
+        except Exception as e:
+            raise EncodeFrameError(f"{field_name} HEX 解析失败：{raw!r}，原因：{e}") from e
+    raise EncodeFrameError(f"{field_name} 需要 bytes / HEX 字符串，实际 {type(raw)!r}")
+
+
+def _encode_cmd_data_by_format(cfg: dict, fmt: str, fields: dict) -> bytes:
+    """按 JSON 里声明的 format 字符串编码 data 段字节。"""
+    fmt = (fmt or "").lower()
+
+    # --- 常见原子枚举 / 单值 ---
+    if fmt in ("raw",):
+        raw = fields.get("raw") if isinstance(fields, dict) else fields
+        if raw is None:
+            raw = fields.get("data", b"") if isinstance(fields, dict) else b""
+        return _encode_raw_bytes(raw, field_name="data(raw)")
+
+    if fmt in ("errcode", "module_status", "heartbeat_resp", "net_config_type",
+               "mcu_status", "product_test_status", "product_test_cmd", "ota_sign_type"):
+        # value 可以从 fields["value"] 取，也可以是 dict 直接 {"errcode":"OK"} 走字段
+        if isinstance(fields, dict):
+            candidates = [fields.get("value"), fields.get(fmt)]
+            # 允许直接 {"errcode": "OK"} 这种
+            val = next((c for c in candidates if c is not None), None)
+            if val is None and len(fields) == 1:
+                val = next(iter(fields.values()))
+        else:
+            val = fields
+        if val is None:
+            return b"\x00"
+        return bytes([_enum_name_to_value(cfg, fmt, val)])
+
+    if fmt in ("msg_id",):
+        if isinstance(fields, dict):
+            v = fields.get("msg_id") or fields.get("value") or 0
+        else:
+            v = fields
+        return _encode_int(v, 1, "big", False)
+
+    if fmt == "attr_unit":
+        # fields 格式：{"attrids": [0x01, 0x02]} 或直接传 attrids 列表
+        if isinstance(fields, dict):
+            ids = fields.get("attrids", [])
+        else:
+            ids = fields
+        return _encode_attr_unit(cfg, ids)
+
+    if fmt in ("attr_list", "msg_id_then_attr", "msg_id_then_attr_unit",
+               "errcode_then_attr", "event", "partition_pkg", "ota_crc",
+               "ota_verify", "service_set", "get_time", "get_time_resp",
+               "dev_info", "net_config", "msg_id_then_action",
+               "errcode_then_partition", "ota_start", "product_test",
+               "product_set"):
+        # 这些复合格式：用户可以直接给 "raw" 字段当 data 段，由用户自己负责；
+        # 当 fields 里没 raw 时，就按格式关键字做轻量编码（足够 GUI 表单使用）。
+        if isinstance(fields, dict) and ("raw" in fields or "data" in fields):
+            return _encode_raw_bytes(fields.get("raw") or fields.get("data", b""))
+
+        # --- attr_list / msg_id_then_attr / errcode_then_attr / event：通用 attr ---
+        if fmt in ("attr_list", "event"):
+            if isinstance(fields, dict):
+                items = fields.get("attrs") or fields.get("items") or []
+            else:
+                items = fields or []
+            return _encode_attr_list(cfg, list(items) if items else [])
+
+        if fmt == "msg_id":
+            return b"\x00"
+
+        if fmt == "msg_id_then_attr":
+            if isinstance(fields, dict):
+                mid = fields.get("msg_id") or 0
+                items = fields.get("attrs") or fields.get("items") or []
+            else:
+                mid, items = 0, fields if isinstance(fields, (list, tuple)) else []
+            buf = bytearray()
+            buf += _encode_int(mid, 1, "big", False)
+            buf += _encode_attr_list(cfg, list(items) if items else [])
+            return bytes(buf)
+
+        if fmt == "msg_id_then_attr_unit":
+            if isinstance(fields, dict):
+                mid = fields.get("msg_id") or 0
+                ids = fields.get("attrids") or fields.get("attrs") or []
+            else:
+                mid, ids = 0, fields if isinstance(fields, (list, tuple)) else []
+            buf = bytearray()
+            buf += _encode_int(mid, 1, "big", False)
+            buf += _encode_attr_unit(cfg, ids)
+            return bytes(buf)
+
+        if fmt == "errcode_then_attr":
+            if isinstance(fields, dict):
+                err = fields.get("errcode") or fields.get("value") or 0
+                items = fields.get("attrs") or fields.get("items") or []
+            else:
+                err, items = 0, fields if isinstance(fields, (list, tuple)) else []
+            buf = bytearray()
+            buf += bytes([_enum_name_to_value(cfg, "errcode", err)])
+            buf += _encode_attr_list(cfg, list(items) if items else [])
+            return bytes(buf)
+
+        if fmt == "msg_id_then_action":
+            if isinstance(fields, dict):
+                mid = fields.get("msg_id") or 0
+                items = fields.get("actions") or fields.get("items") or fields.get("attrs") or []
+            else:
+                mid, items = 0, fields if isinstance(fields, (list, tuple)) else []
+            buf = bytearray()
+            buf += _encode_int(mid, 1, "big", False)
+            buf += _encode_attr_list(cfg, list(items) if items else [])
+            return bytes(buf)
+
+        if fmt in ("partition_pkg", "errcode_then_partition"):
+            # partition(uint16_be) + pkg(uint8) + fw_data(bytes) / 或前面加 errcode(uint8)
+            if isinstance(fields, dict):
+                err = fields.get("errcode")
+                part = fields.get("partition") or 0
+                pkg = fields.get("package") or fields.get("pkg") or 0
+                data = _encode_raw_bytes(fields.get("data") or fields.get("fw_data") or b"")
+            else:
+                err, part, pkg, data = None, 0, 0, b""
+            buf = bytearray()
+            if fmt == "errcode_then_partition":
+                buf += bytes([_enum_name_to_value(cfg, "errcode", (err if err is not None else 0))])
+            buf += _encode_int(part, 2, "big", False)
+            buf += _encode_int(pkg, 1, "big", False)
+            buf += data
+            return bytes(buf)
+
+        if fmt in ("ota_crc",):
+            if isinstance(fields, dict):
+                part = fields.get("partition") or 0
+                crc = fields.get("crc32") or fields.get("crc") or 0
+            else:
+                part, crc = 0, 0
+            buf = bytearray()
+            buf += _encode_int(part, 2, "big", False)
+            buf += _encode_int(crc, 4, "big", False)
+            return bytes(buf)
+
+        if fmt in ("ota_verify",):
+            if isinstance(fields, dict):
+                st = fields.get("ota_sign_type") or fields.get("sign_type") or 1
+                raw = _encode_raw_bytes(fields.get("sign_value") or fields.get("value") or fields.get("data") or b"")
+            else:
+                st, raw = 1, _encode_raw_bytes(fields or b"")
+            buf = bytearray()
+            buf += bytes([_enum_name_to_value(cfg, "ota_sign_type", st)])
+            buf += raw
+            return bytes(buf)
+
+        if fmt in ("ota_start",):
+            if isinstance(fields, dict):
+                raw = _encode_raw_bytes(fields.get("raw") or fields.get("data") or fields.get("meta") or b"")
+            else:
+                raw = _encode_raw_bytes(fields or b"")
+            # 简单：按 ota_start 格式就原样 raw（产品协议可自行 override）
+            return raw
+
+        if fmt in ("service_set",):
+            if isinstance(fields, dict):
+                raw = _encode_raw_bytes(fields.get("raw") or fields.get("data") or b"")
+            else:
+                raw = _encode_raw_bytes(fields or b"")
+            return raw
+
+        if fmt in ("net_config",):
+            if isinstance(fields, dict):
+                t = fields.get("net_config_type") or fields.get("value") or 1
+                raw = _encode_raw_bytes(fields.get("raw") or fields.get("data") or fields.get("extra") or b"")
+            else:
+                t, raw = 1, _encode_raw_bytes(fields or b"")
+            buf = bytearray()
+            buf += bytes([_enum_name_to_value(cfg, "net_config_type", t)])
+            buf += raw
+            return bytes(buf)
+
+        if fmt in ("get_time",):
+            if isinstance(fields, dict):
+                tz = fields.get("timezone") or fields.get("tz") or 0
+            else:
+                tz = fields or 0
+            return _encode_int(tz, 1, "big", True)
+
+        if fmt in ("get_time_resp",):
+            if isinstance(fields, dict):
+                err = fields.get("errcode") or 0
+                tz = fields.get("timezone") or fields.get("tz") or 0
+                year = fields.get("year") or 0
+                month = fields.get("month") or 0
+                day = fields.get("day") or 0
+                weekday = fields.get("weekday") or 0
+                hour = fields.get("hour") or 0
+                minute = fields.get("minute") or 0
+                second = fields.get("second") or 0
+            else:
+                err, tz, year, month, day, weekday, hour, minute, second = 0, 0, 0, 0, 0, 0, 0, 0, 0
+            buf = bytearray()
+            buf += bytes([_enum_name_to_value(cfg, "errcode", err)])
+            buf += _encode_int(tz, 1, "big", True)
+            for v in (year, month, day, weekday, hour, minute, second):
+                buf += _encode_int(v, 1, "big", False)
+            return bytes(buf)
+
+        if fmt in ("dev_info", "product_test", "product_set"):
+            if isinstance(fields, dict):
+                raw = _encode_raw_bytes(fields.get("raw") or fields.get("data") or b"")
+            else:
+                raw = _encode_raw_bytes(fields or b"")
+            return raw
+
+        # 兜底：按 raw 解析空数据（至少能发一个空命令）
+        return b""
+
+    # 未知 format：如果用户给了 raw 就用 raw，否则空 data 段
+    if isinstance(fields, dict):
+        if "raw" in fields or "data" in fields:
+            return _encode_raw_bytes(fields.get("raw") or fields.get("data", b""))
+    return b""
+
+
+def encode_frame(
+    cmd_code,
+    cfg: dict,
+    *,
+    direction: str = "request",
+    fields: dict | list | None = None,
+    data: bytes | str | None = None,
+) -> bytes:
+    """根据 V3.0 帧结构把命令 + 字段字典组包成一条完整帧 bytes。
+
+    参数：
+      cmd_code   : 0x20 / "0x20" / 32
+      cfg        : 协议配置（内置 V3 或 merge 之后的产品协议，需要包含 frame）
+      direction  : "request" 或 "response"（决定用 command 里的 request/response format）
+      fields     : 数据段字段字典，具体键由 format 决定；也可以直接传 attrs 列表
+      data       : 优先级最高；如果给了 bytes/HEX 字符串，直接当 data 段（跳过 format 编码）
+
+    示例：
+        bytes = encode_frame(0x20, cfg, direction="request", fields={"value": 1})
+                  → heartbeat req，module_status=1
+
+        bytes = encode_frame("0x01", cfg, fields={"msg_id": 7, "attrs": [(0x12, True, 0x01)]})
+                  → msg_id_then_attr：msg_id=7，attrid=0x12 type=bool value=True
+    """
+    if not isinstance(cfg, dict):
+        raise ProtocolConfigError("encode_frame 需要 dict 类型的协议 cfg")
+    frame_cfg = cfg.get("frame", {}) or {}
+    header_size = int(frame_cfg.get("header_size", 2))
+    header_raw = frame_cfg.get("header", "0xA5A5")
+    ver_offset = int(frame_cfg.get("ver_offset", 2))
+    ver_size = int(frame_cfg.get("ver_size", 1))
+    cmd_offset = int(frame_cfg.get("cmd_offset", 3))
+    length_offset = int(frame_cfg.get("length_offset", 4))
+    length_size = int(frame_cfg.get("length_size", 2))
+    length_byte_order = frame_cfg.get("length_byte_order", "big")
+    ver_raw = frame_cfg.get("ver", "0x03")
+    cs_cfg = frame_cfg.get("checksum", {}) or {}
+    cs_algo = cs_cfg.get("algorithm", "sum").lower()
+    cs_len = int(cs_cfg.get("length", 1))
+
+    # 解析 cmd_code
+    cmd_int = 0
+    try:
+        if isinstance(cmd_code, bool):
+            cmd_int = int(cmd_code)
+        elif isinstance(cmd_code, int):
+            cmd_int = cmd_code
+        elif isinstance(cmd_code, str):
+            s = cmd_code.strip()
+            cmd_int = _parse_int(s if s else "0")
+        else:
+            cmd_int = int(cmd_code)
+    except Exception as e:
+        raise EncodeFrameError(f"cmd_code 解析失败：{cmd_code!r}，原因：{e}") from e
+    cmd_int &= 0xFF
+
+    # 方向
+    if direction is None:
+        direction = "request"
+    direction = str(direction).strip().lower() or "request"
+    if direction not in ("request", "response"):
+        raise EncodeFrameError(f"direction 只能是 'request' 或 'response'，实际 {direction!r}")
+
+    # 按命令找到 format（找不到就默认 raw）
+    commands = cfg.get("commands", []) or []
+    chosen_def: dict = {"format": "raw", "name": ""}
+    for c in commands:
+        this_code_s = c.get("cmd_code", "")
+        this_code_int: int | None = None
+        try:
+            this_code_int = _parse_int(this_code_s) if this_code_s else None
+        except Exception:
+            this_code_int = None
+        matched = (this_code_int is not None and (this_code_int & 0xFF) == cmd_int)
+        if matched:
+            dir_block = c.get(direction, {}) or {}
+            if isinstance(dir_block, dict) and "format" in dir_block:
+                chosen_def = dir_block
+            elif isinstance(c.get("format"), str):
+                # 老格式：{format, direction} 平层 command（兼容 joymay 等产品协议）
+                chosen_def = {"format": c.get("format", "raw"), "name": c.get("name", "")}
+            break
+
+    fmt = chosen_def.get("format") or "raw"
+
+    # 1) 如果 data 显式给了，直接用 data
+    data_bytes = b""
+    if data is not None:
+        data_bytes = _encode_raw_bytes(data, field_name="data")
+    else:
+        # 2) 否则按 format 从 fields 编码
+        if fields is None:
+            fields_payload: dict | list = {} if fmt not in ("attr_list", "event", "msg_id_then_attr",
+                                                             "msg_id_then_attr_unit",
+                                                             "errcode_then_attr",
+                                                             "msg_id_then_action") else []
+        else:
+            fields_payload = fields
+        try:
+            data_bytes = _encode_cmd_data_by_format(cfg, fmt, fields_payload)
+        except EncodeFrameError:
+            raise
+        except ProtocolError:
+            raise
+        except Exception as e:
+            raise EncodeFrameError(f"按 format={fmt} 编码 data 段失败：{e}") from e
+
+    # data_len
+    data_len = len(data_bytes)
+    try:
+        length_bytes = data_len.to_bytes(length_size, length_byte_order, signed=False)
+    except Exception as e:
+        raise EncodeFrameError(f"数据长度 {data_len} 无法用 {length_size} 字节编码（order={length_byte_order}）：{e}") from e
+
+    # header_bytes / ver_bytes
+    header_bytes = _encode_raw_bytes(str(header_raw), field_name="header")
+    if len(header_bytes) < header_size:
+        header_bytes = b"\x00" * (header_size - len(header_bytes)) + header_bytes
+    elif len(header_bytes) > header_size:
+        header_bytes = header_bytes[-header_size:]
+    ver_bytes_raw = _encode_raw_bytes(str(ver_raw), field_name="ver")
+    if len(ver_bytes_raw) < ver_size:
+        ver_bytes_raw = b"\x00" * (ver_size - len(ver_bytes_raw)) + ver_bytes_raw
+    elif len(ver_bytes_raw) > ver_size:
+        ver_bytes_raw = ver_bytes_raw[-ver_size:]
+
+    cmd_byte = bytes([cmd_int])
+
+    # 拼出"帧头 + ver + cmd + length + data"主体（不含 checksum）
+    pre_body = bytearray()
+    # 前 header_size 字节 → header
+    pre_body.extend(header_bytes)
+    # 接下来从 ver_offset 到 ver_offset+ver_size：先 pad 零再塞 ver_bytes_raw
+    # 简化：按 V3 声明的顺序 —— header(2) + ver(1) + cmd(1) + length(2) + data(n) + cs(1)
+    # 对于自定义 offset 的协议，用 bytearray 先拉长再写各段（允许段之间有 pad）
+    total_no_cs = length_offset + length_size + data_len
+    body = bytearray(total_no_cs)
+    # header
+    body[0:header_size] = header_bytes
+    # ver
+    body[ver_offset:ver_offset + ver_size] = ver_bytes_raw
+    # cmd
+    if cmd_offset + 1 > total_no_cs:
+        raise EncodeFrameError(f"cmd_offset={cmd_offset} 超出帧主体长度 {total_no_cs}")
+    body[cmd_offset:cmd_offset + 1] = cmd_byte
+    # length
+    if length_offset + length_size > total_no_cs:
+        raise EncodeFrameError(f"length_offset={length_offset} 超出帧主体长度 {total_no_cs}")
+    body[length_offset:length_offset + length_size] = length_bytes
+    # data
+    data_start = length_offset + length_size
+    if data_start + data_len > total_no_cs:
+        raise EncodeFrameError(
+            f"data 段位置溢出：data_start={data_start} data_len={data_len} total_no_cs={total_no_cs}"
+        )
+    if data_len > 0:
+        body[data_start:data_start + data_len] = data_bytes
+
+    # 校验和：covers 目前只实现 from_start_to_checksum_exclusive（对 body 全体求校验）
+    if cs_len <= 0 or cs_algo == "none":
+        return bytes(body)
+    try:
+        cs_bytes = calc_checksum(bytes(body), cs_algo)
+    except ChecksumAlgoError:
+        # 未知算法兜底：不发校验
+        return bytes(body)
+    if len(cs_bytes) < cs_len:
+        cs_bytes = b"\x00" * (cs_len - len(cs_bytes)) + cs_bytes
+    elif len(cs_bytes) > cs_len:
+        cs_bytes = cs_bytes[-cs_len:]
+    return bytes(body) + cs_bytes
