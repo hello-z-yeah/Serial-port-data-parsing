@@ -25,6 +25,8 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from protocol_parser import (  # noqa: E402
+    VERSION,
+    UPDATER_GITHUB_REPO,
     ParseResult,
     ProtocolError,
     load_protocol,
@@ -33,6 +35,14 @@ from protocol_parser import (  # noqa: E402
     to_hex,
 )
 from protocol_parser.serial_collector import FrameSynchronizer, SerialCollector  # noqa: E402
+from protocol_parser.updater import (  # noqa: E402
+    UpdateInfo,
+    check_update as _updater_check,
+    download_exe as _updater_download,
+    verify_sha256 as _updater_verify,
+    prepare_update_and_quit as _updater_apply,
+    compute_sha256 as _updater_sha,
+)
 
 
 # ---------- 资源路径（兼容 PyInstaller 单文件模式） ----------
@@ -269,9 +279,12 @@ def _bind_text_widget_menu(widget, readonly: bool = False) -> None:
 class ProtocolParserApp:
     def __init__(self, root: tk.Tk, monitor_port: str | None = None, monitor_baud: int = 115200):
         self.root = root
-        self.root.title("协议解析工具 V3.0")
+        self.root.title(f"串口协议解析工具 v{VERSION}")
         self.root.geometry("1100x720")
         self.root.minsize(900, 600)
+
+        # ---- 菜单栏：帮助 → 检查更新 / 关于 ----
+        self._build_menu_bar()
 
         # 置顶状态
         self.topmost_var = tk.BooleanVar(value=False)
@@ -330,6 +343,214 @@ class ProtocolParserApp:
             self._apply_monitor_args()
 
     # ---------- UI 构建 ----------
+
+    def _build_menu_bar(self) -> None:
+        """构建顶部菜单栏：当前只有「帮助」菜单，放检查更新 / 关于。"""
+        menubar = tk.Menu(self.root)
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="检查更新…", command=self._menu_check_update)
+        help_menu.add_separator()
+        help_menu.add_command(label=f"关于（当前 v{VERSION}）", command=self._menu_about)
+        menubar.add_cascade(label="帮助", menu=help_menu)
+        self.root.config(menu=menubar)
+
+    def _menu_about(self) -> None:
+        body = (
+            f"串口协议解析工具\n"
+            f"当前版本：v{VERSION}\n"
+            f"发布仓库：github.com/{UPDATER_GITHUB_REPO}\n\n"
+            f"—— 功能特性 ——\n"
+            "· 串口实时监控（HEX / ASCII）\n"
+            "· 导入 Word 协议文档，中文属性名和枚举解析\n"
+            "· 每个串口独立窗口进程，支持 6M / 自定义波特率\n"
+            "· 在线更新（帮助 → 检查更新）"
+        )
+        messagebox.showinfo(f"关于（v{VERSION}）", body, parent=self.root)
+
+    def _menu_check_update(self) -> None:
+        """手动菜单触发：检查更新 Toplevel（可后台线程下载，带进度条，可取消）。"""
+        win = tk.Toplevel(self.root)
+        win.title("检查更新")
+        win.geometry("520x300")
+        win.transient(self.root)
+        win.grab_set()
+        win.resizable(False, False)
+
+        ttk.Label(win, text=f"当前版本：v{VERSION}", font=("Microsoft YaHei", 10, "bold")).pack(
+            anchor="w", padx=14, pady=(14, 2)
+        )
+        latest_var = tk.StringVar(value="最新版本：检查中…")
+        ttk.Label(win, textvariable=latest_var).pack(anchor="w", padx=14, pady=(0, 6))
+
+        notes_txt = tk.Text(win, height=8, wrap="word", state="disabled")
+        notes_txt.pack(fill="both", expand=True, padx=14, pady=2)
+        _bind_text_widget_menu(notes_txt, readonly=True)
+
+        prog = ttk.Progressbar(win, orient="horizontal", mode="determinate")
+        prog.pack(fill="x", padx=14, pady=(6, 4))
+        prog_var = tk.StringVar(value="")
+        ttk.Label(win, textvariable=prog_var, anchor="w").pack(fill="x", padx=14)
+
+        btns = ttk.Frame(win)
+        btns.pack(fill="x", padx=14, pady=10)
+        check_btn = ttk.Button(btns, text="立即检查", command=lambda: self._dlg_check_now())
+        check_btn.pack(side="right")
+        update_btn = ttk.Button(btns, text="下载并更新", state="disabled")
+        update_btn.pack(side="right", padx=8)
+        close_btn = ttk.Button(btns, text="关闭", command=win.destroy)
+        close_btn.pack(side="right")
+
+        state: dict = {
+            "info": None,
+            "cancel": False,
+            "worker_thread": None,
+        }
+
+        def _set_status(s: str) -> None:
+            def _inner():
+                prog_var.set(s)
+
+            self.root.after(0, _inner)
+
+        def _set_notes(html: str) -> None:
+            def _inner():
+                notes_txt.config(state="normal")
+                notes_txt.delete("1.0", "end")
+                notes_txt.insert("1.0", html)
+                notes_txt.config(state="disabled")
+
+            self.root.after(0, _inner)
+
+        def _progress(dl: int, total: int) -> None:
+            if state["cancel"]:
+                # 无法中断 urllib 但至少不更新 UI
+                return
+            pct = int((dl / total) * 100) if total else 0
+            dl_mb = dl / (1024 * 1024)
+            total_mb = total / (1024 * 1024) if total else 0
+            def _inner():
+                prog.config(maximum=total if total else 100, value=dl if total else pct)
+                if total:
+                    prog_var.set(f"下载中：{pct:>3}%  ({dl_mb:5.1f} / {total_mb:5.1f} MB)")
+                else:
+                    prog_var.set(f"下载中…({dl_mb:5.1f} MB)")
+
+            self.root.after(0, _inner)
+
+        def _apply_update(path: str, sha_expected: str) -> None:
+            _set_status("正在校验文件…")
+            sha_actual = _updater_sha(path)
+            if sha_expected and sha_actual != sha_expected.lower():
+                messagebox.showerror(
+                    "更新失败",
+                    f"SHA256 校验不通过，已中止更新。\n期望: {sha_expected}\n实际: {sha_actual}",
+                    parent=win,
+                )
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+                _set_status("已取消（校验失败）")
+                update_btn.config(state="disabled")
+                return
+            ok = messagebox.askyesno(
+                "即将更新",
+                "下载完成，即将关闭当前程序并覆盖更新。\n确认立即更新吗？（更新后会自动重新启动）",
+                parent=win,
+            )
+            if not ok:
+                return
+            try:
+                _updater_apply(path)  # 内部会 os._exit(0)
+            except Exception as e:
+                messagebox.showerror(
+                    "更新失败",
+                    f"无法应用更新：{e}\n请手动关闭程序后，将新 EXE 覆盖到原位置。\n临时文件: {path}",
+                    parent=win,
+                )
+
+        def _download_worker(info: UpdateInfo) -> None:
+            try:
+                _set_status("开始下载新版本…")
+                # 临时下载目录：和旧 EXE 同目录，保证 update bat 同分区原子 move
+                if getattr(sys, "frozen", False):
+                    base_dir = Path(sys.executable).resolve().parent
+                else:
+                    base_dir = Path(__file__).resolve().parent.parent
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                dst = base_dir / f"Serial-port-data-parsing_update_{ts}.exe.tmp"
+                try:
+                    _updater_download(info.download_url, str(dst), progress_cb=_progress, timeout=3600.0)
+                except Exception as e:
+                    if state["cancel"]:
+                        _set_status("已取消下载")
+                    else:
+                        _set_status(f"下载失败：{e}")
+                        messagebox.showerror("下载失败", str(e), parent=win)
+                    return
+                _apply_update(str(dst), info.sha256_expected)
+            except Exception as e:
+                _set_status(f"更新失败：{e}")
+                messagebox.showerror("更新失败", str(e), parent=win)
+
+        def _start_download() -> None:
+            info: UpdateInfo | None = state["info"]
+            if not info or not info.has_new:
+                return
+            if state["worker_thread"] and state["worker_thread"].is_alive():
+                return
+            state["cancel"] = False
+            update_btn.config(state="disabled", text="下载中…")
+            t = threading.Thread(target=_download_worker, args=(info,), daemon=True)
+            state["worker_thread"] = t
+            t.start()
+
+        def _check_worker() -> None:
+            try:
+                _set_status("正在访问 GitHub Releases…")
+                info = _updater_check(VERSION, UPDATER_GITHUB_REPO, timeout=15.0)
+            except Exception as e:
+                info = UpdateInfo(has_new=False, current_version=VERSION)
+                self.root.after(0, lambda: messagebox.showerror("检查更新失败", str(e), parent=win))
+                _set_status("检查失败")
+                return
+            state["info"] = info
+
+            def _apply():
+                if info.has_new:
+                    latest_var.set(f"最新版本：{info.latest_version}  ✨ 发现新版本")
+                    notes = f"更新说明：\n{info.release_notes or '（暂无更新说明）'}\n\n"
+                    notes += f"下载地址：\n{info.download_url}\n"
+                    if info.sha256_expected:
+                        notes += f"\nSHA256: {info.sha256_expected}\n"
+                    _set_notes(notes)
+                    update_btn.config(state="normal", text="下载并更新")
+                    _set_status("点击「下载并更新」开始更新")
+                else:
+                    latest_var.set(f"最新版本：{info.latest_version or '（检查不到）'}")
+                    _set_notes("当前已是最新版本，无需更新。")
+                    update_btn.config(state="disabled")
+                    _set_status("当前已是最新版本")
+
+            self.root.after(0, _apply)
+
+        def _check_now() -> None:
+            if state["worker_thread"] and state["worker_thread"].is_alive():
+                return
+            latest_var.set("最新版本：检查中…")
+            _set_notes("")
+            t = threading.Thread(target=_check_worker, daemon=True)
+            state["worker_thread"] = t
+            t.start()
+
+        self._dlg_check_now = _check_now  # type: ignore[attr-defined]
+        update_btn.config(command=_start_download)
+
+        # 打开窗口立即触发一次「检查中…」（由用户手动触发，符合模式 A：不启动就不检查）
+        # 这里不自动检查，用户点「立即检查」才开始
+        latest_var.set("最新版本：请点击「立即检查」")
+        _set_status("尚未开始检查")
+        _set_notes("")
 
     def _build_ui(self) -> None:
         # 顶部工具栏：左右分区，中间弹性填充
@@ -724,7 +945,7 @@ class ProtocolParserApp:
             self.baudrate_var.set(str(int(self._monitor_baud)))
         except Exception:
             self.baudrate_var.set(str(self._monitor_baud))
-        self.root.title(f"串口监控 - {self._monitor_port} @ {self._monitor_baud}")
+        self.root.title(f"串口监控 v{VERSION} - {self._monitor_port} @ {self._monitor_baud}")
 
     # ---------- 串口实时 ----------
 

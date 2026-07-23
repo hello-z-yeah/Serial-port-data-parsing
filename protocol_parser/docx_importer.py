@@ -370,7 +370,10 @@ def _infer_format_from_text(text: str) -> str:
 
 ATTR_FIELD_NAMES = {
     "attrid": ["attrid", "attr id", "属性id", "属性id", "属性", "aid"],
-    "name": ["name", "名称", "属性名", "属性名称"],
+    # 英文/系统属性名：Name列（on / night-light-switch / mode / fan-level ...）
+    "name": ["name", "属性名"],
+    # 中文属性名称列（照明 / 人感夜灯 / 模式 / 吹风档位 ...）单独用 cn_name 保存，不覆盖 name
+    "cn_name": ["属性名称", "中文名称", "中文名", "名称"],
     "typeid": ["typeid", "type id", "类型id", "类型", "type"],
     "access": ["access", "权限", "访问", "读写"],
     "unit": ["unit", "单位"],
@@ -441,6 +444,7 @@ def _parse_attributes(parsed: ParsedDocument) -> dict:
 
         aid_col = col_map["attrid"]
         name_col = col_map.get("name")
+        cn_name_col = col_map.get("cn_name")
         type_col = col_map.get("typeid")
         access_col = col_map.get("access")
         unit_col = col_map.get("unit")
@@ -461,9 +465,20 @@ def _parse_attributes(parsed: ParsedDocument) -> dict:
             if key in attributes:
                 continue
 
-            attr: dict[str, Any] = {
-                "name": row[name_col] if name_col is not None and name_col < len(row) else "",
-            }
+            raw_name = row[name_col].strip() if (name_col is not None and name_col < len(row) and row[name_col]) else ""
+            raw_cn_name = row[cn_name_col].strip() if (cn_name_col is not None and cn_name_col < len(row) and row[cn_name_col]) else ""
+
+            # 容错：有些表格只提供一列「名称/属性名称」—— 要根据内容猜测到底是中文还是英文 Name
+            if raw_name and (not raw_cn_name):
+                # 没专门cn_name列，或name列与cn_name列索引相同→自动分拆：中文内容塞进 cn_name
+                if any("\u4e00" <= ch <= "\u9fff" for ch in raw_name):
+                    raw_cn_name, raw_name = raw_name, raw_cn_name
+            if (not raw_cn_name) and name_col is not None and cn_name_col is not None and name_col == cn_name_col:
+                # 两列映射到同一索引（如「名称」既匹配 name 又匹配 cn_name 关键字）→当只有一列时，有中文时当cn_name用
+                pass
+            attr: dict[str, Any] = {"name": raw_name}
+            if raw_cn_name:
+                attr["cn_name"] = raw_cn_name
 
             if type_col is not None and type_col < len(row):
                 tid = _parse_typeid(row[type_col])
@@ -612,19 +627,45 @@ def _parse_attributes_from_paragraphs(paragraphs: list[str]) -> dict:
 
 
 def _parse_enum_text(text: str) -> dict[str, str]:
-    """解析枚举文本，如 "0:关 1:开" / "0=关闭, 1=打开" / "1: 待机中 2: 制冰中 3: 清洗中"。"""
+    """解析枚举文本，兼容多种写法：
+       - "0:关 1:开"
+       - "0=关闭, 1=打开"
+       - "1: 待机中 ↵ 2: 制冰中 ↵ 3: 清洗中" （多行/中文冒号/顿号）
+       - "0-低档，1-高档" （短横线+全角逗号）
+    同时会过滤「最小值:30 / 最大值:42 / 步长:1」这种纯范围描述，不放到枚举里。
+    """
     if not text:
         return {}
+    # 先分行，再用分隔符切，避免一行里范围说明和枚举混在一起
     result: dict[str, str] = {}
-    parts = re.split(r"[;,，；\n]+", text)
-    for part in parts:
-        part = part.strip()
-        if not part:
+    # 过滤掉非枚举关键字前缀：最小值/最大值/步长/默认值/默认
+    _FILTER_PREFIXES = ("最小值", "最大值", "最小", "最大", "步长", "默认值", "默认", "min", "max", "step", "default", "单位", "精度")
+    # 先按所有常见分隔符拆
+    raw_lines = re.split(r"[\r\n]+", text)
+    pieces: list[str] = []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
             continue
-        matches = re.findall(r'(\d+)\s*[:=：]\s*(.*?)(?=\s+\d+\s*[:=：]|$)', part)
+        sub_parts = re.split(r"[;,，；、]+", line)
+        for sp in sub_parts:
+            sp = sp.strip()
+            if sp:
+                pieces.append(sp)
+    for part in pieces:
+        # 如果整段就是范围描述，跳过整段（但不能误伤含有「最小值:X」前导 + 枚举项跟在同一行后面的情况，因此只是过滤每个 piece 的前缀 match，不是整行过滤）
+        if any(re.match(rf"^\s*{re.escape(p)}[\s:：=].*$", part, re.IGNORECASE) for p in _FILTER_PREFIXES):
+            continue
+        # 匹配多种「数字 + 分隔符(冒号/等号/中文冒号/短横线) + 描述」
+        matches = re.findall(r'(\d+)\s*[:=：\-]\s*(.*?)(?=\s+\d+\s*[:=：\-]|$)', part)
         for k, v in matches:
-            v = v.strip()
-            if v and k not in result:
+            v = v.strip().strip('"\'「」『』（）()[]【】')
+            if not v:
+                continue
+            # 再过滤一次值前缀（以防 "最小值:30" 被正则后半截当 30:xxx 误抓）
+            if any(v.startswith(p) for p in _FILTER_PREFIXES):
+                continue
+            if k not in result:
                 result[k] = v
     return result
 

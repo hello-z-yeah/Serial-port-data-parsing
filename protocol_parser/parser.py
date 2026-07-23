@@ -782,28 +782,52 @@ def _parse_attr_list(data: bytes, cfg: dict, force_report: bool = True) -> list[
             break
 
         value_chunk = data[value_start:value_end]
-        value, text = _decode_attr_value(value_chunk, typeid, attr_meta, type_info)
+        value, raw_text = _decode_attr_value(value_chunk, typeid, attr_meta, type_info)
 
-        # 应用属性表的取值映射
+        # 属性显示名：优先中文 cn_name，没有用英文 name，再没有就 fallback 到 attrid
+        cn_name = attr_meta.get("cn_name") or ""
+        en_name = attr_meta.get("name", "")
+        display_name = (cn_name if cn_name else (en_name if en_name else f"attrid_0x{attrid:02X}"))
+
+        # 应用属性表的取值映射（枚举中文标签），并记录是否命中了枚举，方便拼 text
         enum_map = attr_meta.get("enum")
-        if enum_map:
-            text = enum_map.get(str(value), text)
-        # 应用单位
+        enum_hit = False
+        value_label = raw_text
+        if enum_map and isinstance(value, (int, float)):
+            k = str(int(value)) if isinstance(value, bool) or float(value).is_integer() else str(value)
+            if k in enum_map:
+                value_label = enum_map[k]
+                enum_hit = True
+
+        # 最终显示 text：
+        #   A. 如果有中文属性名 → 总是放在最前面，直接拼接 value_label（用户要的「属性=值」连读）
+        #      例：照明打开 / 模式吹风 / 吹风档位高档 / 设定温度30 / 摆风关闭
+        #   B. 没有中文属性名 → value_label 原样
+        if cn_name:
+            text = f"{cn_name}{value_label}"
+        else:
+            text = value_label
+
+        # 应用单位（只在非枚举或非直拼时附加；或即使直拼也保留常见度单位附加：摄氏度、% 等也可追加）
         unit = attr_meta.get("unit")
         if unit and isinstance(value, (int, float)):
-            text = f"{text} {unit}"
-        # 应用取值范围说明
+            if enum_hit and cn_name:
+                # 温度档：「设定温度30 ℃」→ 温度后带单位也直观；但如果是文本档（打开/关闭）就不附加
+                if unit and all(c in "℃°CF%RH%rh%克g公斤kg小时h分m秒s" for c in unit) and not (isinstance(value_label, str) and any("\u4e00" <= ch <= "\u9fff" for ch in value_label)):
+                    text = f"{text} {unit}"
+            else:
+                text = f"{text} {unit}"
+        # 应用取值范围说明（没命中枚举时附加，避免多余信息）
         range_text = attr_meta.get("range")
-        if range_text and not enum_map:
+        if range_text and not enum_hit:
             text = f"{text} ({range_text})"
 
         # 强制上报标志
         if force:
             text = f"[强制上报] {text}"
 
-        attr_name = attr_meta.get("name", f"attrid_0x{attrid:02X}")
         results.append(FieldResult(
-            name=attr_name,
+            name=display_name,
             type=type_info["name"] if type_info else f"typeid_{typeid}",
             value=value,
             text=text,
@@ -814,6 +838,11 @@ def _parse_attr_list(data: bytes, cfg: dict, force_report: bool = True) -> list[
                 "typeid": typeid,
                 "type_name": type_info["name"] if type_info else "?",
                 "attrid": f"0x{attrid:02X}",
+                "attr_en_name": en_name,
+                "attr_cn_name": cn_name,
+                "value_raw": raw_text,
+                "value_label": value_label,
+                "enum_hit": enum_hit,
                 "force_report": force,
             }],
         ))
@@ -828,12 +857,17 @@ def _parse_attr_unit(data: bytes, cfg: dict) -> list[FieldResult]:
     results: list[FieldResult] = []
     for i, b in enumerate(data):
         attr_meta = _lookup_attr(cfg, b)
-        name = attr_meta.get("name", f"attrid_0x{b:02X}")
+        cn_name = attr_meta.get("cn_name") or ""
+        en_name = attr_meta.get("name", "")
+        name = cn_name if cn_name else (en_name if en_name else f"attrid_0x{b:02X}")
+        label = name
+        if cn_name and en_name and cn_name != en_name:
+            label = f"{cn_name}（{en_name}）"
         results.append(FieldResult(
             name=f"属性{i+1}",
             type="attrid",
             value=b,
-            text=f"0x{b:02X} ({name})",
+            text=f"0x{b:02X} ({label})",
             offset=i,
             length=1,
             raw=bytes([b]),

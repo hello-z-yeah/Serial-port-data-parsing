@@ -23,6 +23,7 @@
   "attributes": {
     "0x00": {
       "name": "on",
+      "cn_name": "照明",
       "typeid": 0,
       "range": "[0,1]",
       "enum": {
@@ -32,6 +33,7 @@
     },
     "0x01": {
       "name": "night-light-switch",
+      "cn_name": "人感夜灯",
       "typeid": 0,
       "range": "[0,1]",
       "enum": {
@@ -41,6 +43,7 @@
     },
     "0x02": {
       "name": "status",
+      "cn_name": "工作状态",
       "typeid": 0,
       "range": "[0]",
       "enum": {
@@ -50,6 +53,7 @@
     },
     "0x03": {
       "name": "mode",
+      "cn_name": "模式",
       "typeid": 2,
       "range": "[0,6]",
       "enum": {
@@ -62,11 +66,13 @@
     },
     "0x04": {
       "name": "target-temperature",
+      "cn_name": "设定温度",
       "typeid": 2,
       "range": "[30,42]"
     },
     "0x05": {
       "name": "horizontal-swing",
+      "cn_name": "摆风",
       "typeid": 0,
       "range": "[0,1]",
       "enum": {
@@ -76,6 +82,7 @@
     },
     "0x06": {
       "name": "fan-level",
+      "cn_name": "吹风档位",
       "typeid": 2,
       "range": "[0,1]",
       "enum": {
@@ -85,6 +92,7 @@
     },
     "0x07": {
       "name": "ventilate-level",
+      "cn_name": "换气档位",
       "typeid": 2,
       "range": "[0,1]",
       "enum": {
@@ -94,6 +102,7 @@
     },
     "0x08": {
       "name": "remote-controllable",
+      "cn_name": "是否远程可控",
       "typeid": 0,
       "range": "[0,1]",
       "enum": {
