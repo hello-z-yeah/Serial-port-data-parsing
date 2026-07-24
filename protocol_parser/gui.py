@@ -55,10 +55,11 @@ from protocol_parser.updater import (  # noqa: E402
 )
 
 
-# ---------- 资源路径（兼容 PyInstaller 单文件模式） ----------
+# ---------- 资源/数据路径（兼容 PyInstaller 单文件模式） ----------
 
 def resource_path(relative: str) -> Path:
-    """获取资源路径，兼容开发模式和 PyInstaller 打包模式。"""
+    """获取资源路径（只读/内置资源）：优先 _MEIPASS 打包目录。
+    只用于 product/ 协议文件等打包进来的资源，**绝不要用来写文件**（_MEIPASS 是临时目录，重启就清空）。"""
     if hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS) / relative
     base = Path(__file__).resolve().parent
@@ -67,6 +68,45 @@ def resource_path(relative: str) -> Path:
     if candidate.exists():
         return candidate
     return base.parent / relative
+
+
+def user_data_path(relative: str = "") -> Path:
+    """获取**用户可写**数据目录：
+    * 打包模式：优先 exe 同级的 data\\；exe 写目录不可用（如 Program Files）时降级到用户「文档\\串口解析工具\\data」。
+    * 开发模式：项目根目录下的 data\\。
+    相对路径 relative 会拼在后面并自动创建目录。"""
+    try:
+        # 1) 打包模式：sys.executable = xxx.exe
+        if getattr(sys, "frozen", False) and hasattr(sys, "executable"):
+            exe_dir = Path(sys.executable).resolve().parent
+            try:
+                write_probe = exe_dir / ".write_probe"
+                write_probe.write_text("probe", encoding="utf-8")
+                write_probe.unlink(missing_ok=True)
+                root = exe_dir
+            except (OSError, PermissionError):
+                # 无权限写 exe 目录（如 C:\\Program Files\\）→ 降级：我的文档\串口解析工具
+                doc_dir = Path.home() / "Documents"
+                if not doc_dir.exists():
+                    doc_dir = Path.home()
+                root = doc_dir / "串口解析工具"
+            data_dir = root / "data"
+        else:
+            # 2) 开发模式：项目根 data
+            project_root = Path(__file__).resolve().parent.parent
+            data_dir = project_root / "data"
+        # 拼 relative 后缀
+        if relative:
+            data_dir = data_dir / relative
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return data_dir
+    except Exception:
+        # 终极兜底：%USERPROFILE%\\串口解析工具\\data
+        fb = Path.home() / "串口解析工具" / "data"
+        if relative:
+            fb = fb / relative
+        fb.mkdir(parents=True, exist_ok=True)
+        return fb
 
 
 def get_protocol_dir() -> Path:
@@ -187,16 +227,17 @@ class ThemeManager:
 
     PALETTES: dict[str, dict[str, str]] = {
         "light": {
-            "app_bg":          "#F3F4F6",  # 应用整体背景（Win11 Mica 近似）
-            "card_bg":         "#FFFFFF",  # LabelFrame / 卡片背景
-            "surface":         "#FFFFFF",  # Entry / Combobox / Text 背景
-            "border":          "#D1D5DB",  # 边框色
+            "app_bg":          "#F9FAFB",  # 应用整体背景（比卡片灰更明显，让"留白分隔"直接有层差）
+            "card_bg":         "#F3F4F6",  # LabelFrame / 卡片背景（纯白 + 一圈细边框 = 独立卡片）
+            "card_border":     "#E0E0E0",  # 卡片边框色（比通用 border 稍深，每张卡片有"一层"的视觉）
+            "surface":         "#F3F4F6",  # Entry / Combobox / Text 背景
+            "border":          "#E0E0E0",  # 控件边框色
             "primary":         "#0078D4",  # Win11 主色（蓝）
             "primary_hover":   "#106EBE",  # 主色 hover
             "success":         "#0F7B0F",  # 接收成功 / OK
             "error":           "#C42B1C",  # 错误 / 异常红
             "warn":            "#BC6A00",  # 告警 / 方向橙
-            "tx":              "#0A7A5A",  # [TX] 发送绿（原用深红，改为更现代的青蓝绿）
+            "tx":              "#0A7A5A",  # [TX] 发送绿
             "cmd":             "#1A56DB",  # 命令字蓝
             "field":           "#374151",  # 字段灰
             "raw":             "#6B7280",  # Raw 报文灰
@@ -207,13 +248,14 @@ class ThemeManager:
             "text":            "#111827",  # 主文本色
             "text_secondary":  "#525C6B",  # 次要说明文本
             "text_disabled":   "#9CA3AF",  # 禁用文本
-            "tooltip_bg":      "#1F2937",  # Tooltip 气泡背景（统一深色，对比强）
+            "tooltip_bg":      "#1F2937",  # Tooltip 气泡背景
             "tooltip_fg":      "#F9FAFB",  # Tooltip 文字
         },
         "dark": {
-            "app_bg":          "#1B1C1E",  # App 背景（Win11 深色近似）
-            "card_bg":         "#2A2B2E",  # LabelFrame / 卡片
-            "surface":         "#303136",  # Entry / Combobox / Text 背景
+            "app_bg":          "#141517",  # App 背景（深色差）
+            "card_bg":         "#23252A",  # LabelFrame / 卡片（比 app_bg 更亮一点）
+            "card_border":     "#383A41",  # 卡片边框（亮于背景，轮廓清晰）
+            "surface":         "#2E3035",  # Entry / Combobox / Text 背景
             "border":          "#3F4045",  # 边框
             "primary":         "#4CC2FF",  # Win11 深色主色（亮蓝）
             "primary_hover":   "#7FD2FF",  # 主色 hover
@@ -231,7 +273,7 @@ class ThemeManager:
             "text":            "#ECEDF0",  # 主文本
             "text_secondary":  "#B9BCC2",  # 次要说明文本
             "text_disabled":   "#7A7F85",  # 禁用文本
-            "tooltip_bg":      "#E6E8EB",  # Tooltip 气泡背景（统一浅色，对比强）
+            "tooltip_bg":      "#E6E8EB",  # Tooltip 气泡背景
             "tooltip_fg":      "#111827",  # Tooltip 文字
         },
     }
@@ -253,6 +295,7 @@ class ThemeManager:
         palette = self.PALETTES[self.mode]
         app_bg = palette["app_bg"]
         card_bg = palette["card_bg"]
+        card_border = palette.get("card_border", palette["border"])
         surface = palette["surface"]
         border = palette["border"]
         primary = palette["primary"]
@@ -270,31 +313,53 @@ class ThemeManager:
         # ttk 根样式：Label/Button/Frame/LabelFrame/Entry/Combobox/Radiobutton/Checkbutton/Notebook
         ttk_style.configure(".", background=app_bg, foreground=text, fieldbackground=surface, bordercolor=border, lightcolor=border, darkcolor=border)
 
-        # Frame / LabelFrame：卡片式
+        # Frame / LabelFrame：卡片 = 细边框 + 卡片区与留白(app_bg)分层
         ttk_style.configure("TFrame", background=app_bg)
         ttk_style.configure("Card.TFrame", background=card_bg, relief="flat")
-        ttk_style.configure("TLabelframe", background=card_bg, bordercolor=border, relief="solid", borderwidth=1)
-        ttk_style.configure("TLabelframe.Label", background=card_bg, foreground=text_2, font=("Microsoft YaHei UI", 9, "bold"))
+        # 真正的"卡片"LabelFrame：带一圈可见边框，保证每个卡片独立一层（绝不与 app_bg 或其它卡片糊成同图层）
+        ttk_style.configure("TLabelframe",
+                            background=card_bg,
+                            bordercolor=card_border,
+                            relief="solid",
+                            borderwidth=1)
+        ttk_style.configure("TLabelframe.Label",
+                            background=app_bg,        # 标签文字在"卡片上沿外"用 app_bg（视觉更层叠）；如果要更"融入卡片"改成 card_bg 也可
+                            foreground=text_2,
+                            font=("Microsoft YaHei UI", 9, "bold"))
         ttk_style.configure("TLabel", background=app_bg, foreground=text)
         ttk_style.configure("Card.TLabel", background=card_bg, foreground=text)
         ttk_style.configure("Hint.TLabel", background=card_bg, foreground=text_2)
         ttk_style.configure("Title.TLabel", background=card_bg, foreground=text, font=("Microsoft YaHei UI", 10, "bold"))
+        # 状态栏：同样卡片边框 + 和 app_bg 分层（底部一个独立横条卡片）
+        ttk_style.configure("StatusBar.TFrame",
+                            background=card_bg,
+                            bordercolor=card_border,
+                            relief="solid",
+                            borderwidth=1)
+        ttk_style.configure("StatusBar.TLabel", background=card_bg, foreground=text_2, font=("Microsoft YaHei UI", 9))
 
-        # Button：主按钮 + 普通按钮
-        ttk_style.configure("TButton", padding=(12, 6), relief="flat", background=surface, foreground=text, bordercolor=border, focusthickness=1)
+        # Button：主按钮 + 普通按钮（紧凑尺寸）
+        ttk_style.configure("TButton", padding=(6, 2), relief="flat", background=surface, foreground=text, bordercolor=border, focusthickness=1, font=("Microsoft YaHei UI", 8))
         ttk_style.map("TButton",
                       background=[("active", palette["primary"] if self.style == "win11" else surface),
                                   ("pressed", primary_hover),
                                   ("disabled", app_bg)],
                       foreground=[("active", "#FFFFFF" if self.style == "win11" else text),
                                   ("disabled", text_dis)])
-        # 大号「开始/停止监控」主按钮（粗体+圆角视觉感）
-        ttk_style.configure("Primary.TButton", padding=(16, 8), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
+        ttk_style.configure("Primary.TButton", padding=(8, 3), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 9, "bold"), borderwidth=0)
         ttk_style.map("Primary.TButton",
                       background=[("active", primary_hover), ("pressed", primary_hover), ("disabled", border)],
                       foreground=[("disabled", text_dis)])
-        ttk_style.configure("Danger.TButton", padding=(16, 8), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
+        ttk_style.configure("Danger.TButton", padding=(8, 3), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 9, "bold"), borderwidth=0)
         ttk_style.map("Danger.TButton",
+                      background=[("active", "#A5211C"), ("pressed", "#A5211C"), ("disabled", border)])
+        # 紧凑型切换按钮（置顶、保存原始数据等）
+        ttk_style.configure("CompactPrimary.TButton", padding=(6, 2), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 8, "bold"), borderwidth=0)
+        ttk_style.map("CompactPrimary.TButton",
+                      background=[("active", primary_hover), ("pressed", primary_hover), ("disabled", border)],
+                      foreground=[("disabled", text_dis)])
+        ttk_style.configure("CompactDanger.TButton", padding=(6, 2), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 8, "bold"), borderwidth=0)
+        ttk_style.map("CompactDanger.TButton",
                       background=[("active", "#A5211C"), ("pressed", "#A5211C"), ("disabled", border)])
 
         # Entry / Combobox / Spinbox
@@ -305,16 +370,28 @@ class ThemeManager:
                           foreground=[("readonly", text), ("disabled", text_dis)],
                           bordercolor=[("focus", primary), ("readonly", border)])
 
-        # Radiobutton / Checkbutton
-        ttk_style.configure("TRadiobutton", background=card_bg, foreground=text, focuscolor=primary)
-        ttk_style.configure("TCheckbutton", background=card_bg, foreground=text, focuscolor=primary)
-        ttk_style.map("TRadiobutton", background=[("active", card_bg)])
-        ttk_style.map("TCheckbutton", background=[("active", card_bg)])
+        # Radiobutton / Checkbutton（修复 clam 主题下选中指示器显示为 × 的问题）
+        # 方案：增大指示器直径并配置状态颜色，使勾选标记更清晰可见
+        for _cb_style in ("TRadiobutton", "TCheckbutton"):
+            ttk_style.configure(_cb_style, background=card_bg, foreground=text,
+                                focuscolor=primary, indicatordiameter=13,
+                                indicatorcolor=surface, indicatorforeground=text)
+            ttk_style.map(_cb_style,
+                          background=[("active", card_bg)],
+                          indicatorcolor=[("selected", primary), ("pressed", primary_hover), ("active", surface)],
+                          indicatorforeground=[("selected", "#000000"), ("pressed", "#000000")])
         # 顶栏专用（背景跟随 app_bg 而不是 card_bg）
         ttk_style.configure("Toolbar.TCheckbutton", background=app_bg, foreground=text)
         ttk_style.configure("Toolbar.TRadiobutton", background=app_bg, foreground=text)
         ttk_style.configure("Toolbar.TLabel", background=app_bg, foreground=text)
-        ttk_style.configure("Toolbar.TButton", padding=(8, 4))
+        ttk_style.configure("Toolbar.TButton", padding=(4, 2), font=("Microsoft YaHei UI", 8))
+
+        # PanedWindow：左右分栏之间的"分隔条"加宽，让左右大卡片之间更有层差感
+        try:
+            ttk_style.configure("TPanedwindow", background=app_bg, sashwidth=8, sashrelief="flat")
+        except tk.TclError:
+            # 某些主题或老版本 ttk 不接受 TPanedwindow 上的配置，忽略即可
+            ttk_style.configure("TPanedwindow", background=app_bg)
 
         # Notebook
         ttk_style.configure("TNotebook", background=app_bg, borderwidth=0)
@@ -440,98 +517,184 @@ class Tooltip:
         Tooltip._TOPLEVEL = None
 
 
-# ---------- 通用：可折叠抽屉 Drawer（右侧滑出） ----------
+# ---------- 大圆角按钮控件（替代 ttk.Button，支持动态文本/样式切换） ----------
 
 
-class Drawer:
-    """右侧可折叠抽屉（用于收纳「高级设置」低频配置）。"""
+class RoundedButton(tk.Canvas):
+    """大圆角按钮，支持动态 configure(text=..., style=...)，兼容 Tooltip。"""
 
-    def __init__(self, parent: tk.Misc, theme: ThemeManager, width: int = 420):
-        self.theme = theme
-        self.width = width
-        self.visible = False
-        # 遮罩层 + 抽屉层，放在 parent 上用 place 定位（不破坏原有 grid/pack）
-        self.overlay = tk.Frame(parent, bg="#000000")
-        try:
-            self.overlay.attributes("-alpha", 0.35)
-        except Exception:
-            self.overlay.configure(bg=self.theme.get("text_disabled"))
-        self.frame = tk.Frame(parent, bg=self.theme.get("card_bg"), highlightthickness=1,
-                              highlightbackground=self.theme.get("border"))
-        # 顶栏：抽屉标题 + 关闭按钮
-        self._header = tk.Frame(self.frame, bg=self.theme.get("card_bg"))
-        self._header.pack(fill="x", padx=12, pady=(10, 8))
-        tk.Label(self._header, text="高级设置 ⚙️", bg=self.theme.get("card_bg"),
-                 fg=self.theme.get("text"), font=("Microsoft YaHei UI", 11, "bold")).pack(side="left")
-        close_btn = tk.Button(self._header, text="×", command=self.hide, relief="flat",
-                              bg=self.theme.get("card_bg"), fg=self.theme.get("text_secondary"),
-                              activebackground=self.theme.get("border"),
-                              activeforeground=self.theme.get("text"),
-                              font=("Microsoft YaHei UI", 14), padx=8, pady=0, bd=0, cursor="hand2")
-        close_btn.pack(side="right")
-        # 内容区：用户通过 content_frame 自行 pack/grid
-        self.content_wrap = tk.Frame(self.frame, bg=self.theme.get("card_bg"))
-        self.content_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 6))
-        self._content_canvas = tk.Canvas(self.content_wrap, bg=self.theme.get("card_bg"),
-                                         highlightthickness=0, bd=0)
-        self._content_canvas.pack(side="left", fill="both", expand=True)
-        self._scrollbar = ttk.Scrollbar(self.content_wrap, orient="vertical", command=self._content_canvas.yview)
-        self._scrollbar.pack(side="right", fill="y")
-        self._content_canvas.configure(yscrollcommand=self._scrollbar.set)
-        self.content_frame = tk.Frame(self._content_canvas, bg=self.theme.get("card_bg"))
-        self._content_window = self._content_canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
-        self.content_frame.bind("<Configure>", lambda _e: (
-            self._content_canvas.configure(scrollregion=self._content_canvas.bbox("all")),
-            self._content_canvas.itemconfigure(self._content_window, width=self._content_canvas.winfo_width()),
-        ))
-        # 鼠标滚轮支持
-        def _on_wheel(e):
+    # 样式名 → (正常背景, hover背景, 文字颜色)
+    _STYLE_MAP: dict[str, tuple[str, str, str]] = {}
+
+    @classmethod
+    def init_styles(cls, theme: "ThemeManager") -> None:
+        """根据主题色初始化样式映射。需在 ThemeManager.apply() 之后调用。"""
+        primary = theme.get("primary")
+        primary_hover = theme.get("primary_hover")
+        error = theme.get("error")
+        surface = theme.get("surface")
+        text = theme.get("text")
+
+        cls._STYLE_MAP = {
+            "TButton":             (surface, primary,    text),
+            "Toolbar.TButton":     (surface, primary,    text),
+            "Primary.TButton":     (primary, primary_hover, "#FFFFFF"),
+            "Danger.TButton":      (error,   "#A5211C",    "#FFFFFF"),
+            "CompactPrimary.TButton": (primary, primary_hover, "#FFFFFF"),
+            "CompactDanger.TButton":  (error,   "#A5211C",    "#FFFFFF"),
+        }
+
+    @classmethod
+    def redraw_all(cls, root: tk.Misc) -> None:
+        """遍历控件树，强制所有 RoundedButton 实例重绘。"""
+        def _walk(w):
+            if isinstance(w, cls):
+                w._draw()
+            for child in w.winfo_children():
+                _walk(child)
+        _walk(root)
+
+    def __init__(self, parent, *, text: str = "", command=None,
+                 style: str = "TButton", width: int | None = None,
+                 font: tuple | str | None = None, state: str = "normal",
+                 **kwargs):
+        self._command = command
+        self._style_name = style
+        self._state = state
+        self._hovered = False
+        self._pressed = False
+        self._text = text
+        self._width_chars = width
+
+        if font is None:
+            font = ("Microsoft YaHei UI", 8)
+        elif isinstance(font, str):
+            font = (font, 8)
+        self._font_tuple = font
+        
+        bg_normal, _, fg = self._colors()
+        
+        # 计算 Canvas 像素尺寸
+        import tkinter.font as tkfont
+        f = tkfont.Font(font=self._font_tuple)
+        char_w = max(f.measure("0"), 5)
+        text_w = f.measure(text) if text else 0
+        # width 参数作为最小字符宽度，但始终保证能容纳实际文本
+        base_w = max((width * char_w) if width else 0, text_w)
+        pad_x = 14 if style.startswith("Compact") else 18
+        pad_y = 4 if style.startswith("Compact") else 5
+        self._pad_x = pad_x
+        self._pad_y = pad_y
+        cw = base_w + pad_x * 2
+        ch = f.metrics("linespace") + pad_y * 2
+        self._radius = min(ch // 2, 12)  # 圆角：高度的一半，最备12px
+
+        # 获取父控件背景色（兼容 ttk/tk 控件）
+        parent_bg = kwargs.get("bg")
+        if parent_bg is None:
             try:
-                self._content_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+                parent_bg = parent.cget("background")
+            except Exception:
+                parent_bg = "#F0F0F0"
+
+        super().__init__(
+            parent, width=cw, height=ch,
+            bg=parent_bg,
+            highlightthickness=0, bd=0, relief="flat",
+        )
+
+        self._bg_id = self.create_rectangle(0, 0, cw, ch, fill=bg_normal, outline="", tags=("bg",))
+        self._text_id = self.create_text(cw / 2, ch / 2, text=text, fill=fg,
+                                         font=self._font_tuple, tags=("text",))
+
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<ButtonPress-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
+
+    # ---- 内部方法 ----
+
+    def _colors(self) -> tuple[str, str, str]:
+        return self._STYLE_MAP.get(self._style_name, ("#E0E0E0", "#C0C0C0", "#000000"))
+
+    def _draw(self) -> None:
+        bg_normal, bg_hover, fg = self._colors()
+        if self._state == "disabled":
+            bg = "#D0D0D0"; fg = "#999999"
+        elif self._pressed or self._hovered:
+            bg = bg_hover
+        else:
+            bg = bg_normal
+
+        # 优先使用 Canvas 配置尺寸（winfo_width 在首次显示前返回 1，导致截断）
+        w = int(self.cget("width"))
+        h = int(self.cget("height"))
+        r = self._radius
+
+        self.coords(self._bg_id, 0, 0, w, h)
+        self.coords(self._text_id, w / 2, h / 2)
+        self.itemconfigure(self._bg_id, fill=bg, outline="")
+        self.itemconfigure(self._text_id, fill=fg, text=self._text, font=self._font_tuple)
+
+    def _on_enter(self, _e=None): self._hovered = True; self._draw()
+    def _on_leave(self, _e=None): self._hovered = False; self._pressed = False; self._draw()
+    def _on_press(self, _e=None): self._pressed = True; self._draw()
+
+    def _on_release(self, _e=None):
+        self._pressed = False
+        self._draw()
+        if self._state != "disabled" and self._command:
+            try:
+                self._command()
             except Exception:
                 pass
-        self._content_canvas.bind_all("<MouseWheel>", _on_wheel, add="+")
-        # 点击遮罩关闭
-        self.overlay.bind("<Button-1>", lambda _e: self.hide())
 
-    def show(self):
-        parent = self.frame.master
-        self.visible = True
-        try:
-            pw, ph = parent.winfo_width(), parent.winfo_height()
-            self.overlay.place(x=0, y=0, width=pw, height=ph)
-            self.frame.place(x=pw - self.width, y=0, width=self.width, height=ph)
-            self.frame.tkraise()
-        except Exception:
-            pass
+    # ---- 兼容 ttk.Button API ----
 
-    def hide(self):
-        self.visible = False
-        try:
-            self.overlay.place_forget()
-            self.frame.place_forget()
-        except Exception:
-            pass
+    def configure(self, cnf=None, **kw):
+        if cnf:
+            if isinstance(cnf, dict):
+                kw.update(cnf)
+            else:
+                return super().configure(cnf, **kw)
+        # 收集 Canvas 原生参数（如 width, height）传递给父类
+        native_kw = {}
+        for k in ("width", "height"):
+            if k in kw:
+                native_kw[k] = kw.pop(k)
+        if "text" in kw:
+            self._text = kw.pop("text")
+            # 文本变化时重新计算宽度，确保能容纳新文本
+            import tkinter.font as tkfont
+            f = tkfont.Font(font=self._font_tuple)
+            text_w = f.measure(self._text) if self._text else 0
+            min_w = (self._width_chars * max(f.measure("0"), 5)) if self._width_chars else 0
+            new_w = max(min_w, text_w) + self._pad_x * 2
+            cur_w = int(self.cget("width"))
+            if new_w > cur_w:
+                native_kw["width"] = new_w
+        if "style" in kw:
+            self._style_name = kw.pop("style")
+        if "state" in kw:
+            self._state = kw.pop("state")
+        if "command" in kw:
+            self._command = kw.pop("command")
+        self._draw()
+        # 将原生参数传递给 Canvas 父类
+        if native_kw:
+            return super().configure(**native_kw)
+        return super().configure()
 
-    def toggle(self):
-        if self.visible:
-            self.hide()
-        else:
-            self.show()
+    config = configure
 
-    def refresh_colors(self):
-        self.overlay.configure(bg=self.theme.get("text_disabled"))
-        self.frame.configure(bg=self.theme.get("card_bg"), highlightbackground=self.theme.get("border"))
-        self._header.configure(bg=self.theme.get("card_bg"))
-        for w in self._header.winfo_children():
-            if isinstance(w, tk.Label):
-                w.configure(bg=self.theme.get("card_bg"), fg=self.theme.get("text"))
-            elif isinstance(w, tk.Button):
-                w.configure(bg=self.theme.get("card_bg"), fg=self.theme.get("text_secondary"),
-                            activebackground=self.theme.get("border"))
-        self.content_wrap.configure(bg=self.theme.get("card_bg"))
-        self._content_canvas.configure(bg=self.theme.get("card_bg"))
-        self.content_frame.configure(bg=self.theme.get("card_bg"))
+    def cget(self, key):
+        if key == "text": return self._text
+        if key == "style": return self._style_name
+        if key == "state": return self._state
+        return super().cget(key)
+
+    def __getitem__(self, key): return self.cget(key)
+    def __setitem__(self, key, val): self.configure(**{key: val})
 
 
 # ---------- 通用：字体工具（仅保留等宽字体） ----------
@@ -745,13 +908,11 @@ class ProtocolParserApp:
     def __init__(self, root: tk.Tk, monitor_port: str | None = None, monitor_baud: int = 115200):
         self.root = root
         self.root.title(f"串口协议解析工具 v{VERSION}")
-        self.root.geometry("1100x720")
-        self.root.minsize(900, 600)
 
         # ============================================================
         #  主题/视觉：Light/Dark + Win11 风格（纯 Tk，不引入第三方依赖）
         # ============================================================
-        # 先尝试从旧快照 extras 里恢复偏好（即便没有 was_collecting 也能恢复字体/主题）
+        # 先尝试从旧快照 extras 里恢复偏好（即便没有 was_collecting 也能恢复字体/主题/窗口尺寸）
         _pref_snap = load_snapshot()
         _extras: dict = dict(getattr(_pref_snap, "extras", None) or {})
         self.theme = ThemeManager(
@@ -767,8 +928,68 @@ class ProtocolParserApp:
         except Exception:
             # 样式应用失败不影响主流程
             pass
+        # 初始化大圆角按钮样式映射
+        RoundedButton.init_styles(self.theme)
         # 根窗口背景色
         self.root.configure(bg=self.theme.get("app_bg"))
+
+        # ============================================================
+        #  窗口尺寸：统一约束 + 按上次会话恢复（保证 minsize 一定生效）
+        #    关键：必须先 set minsize 再 set geometry，否则在部分 WM 下 minsize 不生效
+        # ============================================================
+        _MIN_W, _MIN_H = 1020, 660       # 全功能展开时不裁剪的安全下限
+        try:
+            self.root.minsize(_MIN_W, _MIN_H)
+        except Exception:
+            pass
+
+        # 恢复上次的窗口尺寸/位置（如果合理才恢复；否则默认 1200x720 居中）
+        import re as _re
+        def _parse_geom(g: str) -> tuple[int, int, int, int] | None:
+            m = _re.match(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$", str(g or "").strip())
+            if not m:
+                return None
+            w, h, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+            if w < _MIN_W or h < _MIN_H:
+                return None
+            return w, h, x, y
+
+        _last_geom = _extras.get("window_geometry") if isinstance(_extras, dict) else None
+        _parsed = _parse_geom(str(_last_geom)) if _last_geom else None
+        if _parsed is None:
+            # 默认 1200x720，再按屏幕尺寸留边，避免顶到任务栏
+            try:
+                sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+            except Exception:
+                sw, sh = 1920, 1080
+            _DEF_W, _DEF_H = 1200, 720
+            # 如果屏幕本身比默认尺寸小，就按屏幕-80 但不小于 minsize
+            if sw < _DEF_W + 80 or sh < _DEF_H + 80:
+                _DEF_W = max(_MIN_W, sw - 80)
+                _DEF_H = max(_MIN_H, sh - 80)
+            self.root.geometry(f"{_DEF_W}x{_DEF_H}")
+        else:
+            w, h, x, y = _parsed
+            # 避免恢复到屏幕外（x/y 为负时通常在多屏下是合理的，但太离谱就回退默认）
+            try:
+                sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+            except Exception:
+                sw, sh = 1920, 1080
+            if x < -2000 or y < -1000 or x > sw - 200 or y > sh - 100:
+                self.root.geometry(f"{w}x{h}")
+            else:
+                self.root.geometry(f"{w}x{h}+{x}+{y}")
+
+        # 禁止恢复到比 minsize 还小：若保存的 geometry < minsize，geometry 会在 minsize 之前设置过导致失效
+        # 解决：再显式 set 一次 minsize，并触发 update_idletasks 让窗口管理器确认
+        try:
+            self.root.minsize(_MIN_W, _MIN_H)
+        except Exception:
+            pass
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
 
         # ============================================================
         #  字体偏好（仅等宽字体）+ 行间距
@@ -784,16 +1005,16 @@ class ProtocolParserApp:
         self.cmd_font = tkfont.Font(family=self.font_family_var.get(), size=self.font_size_var.get(), weight="bold")
         # 日志框 Tag 定义颜色（在创建 serial_text 之后会按 theme.get() 刷新）
 
-        # ---- 菜单栏（文件 / 帮助）：帮助菜单拆成"关于 + 检查更新"两部分 ----
-        self._build_menu_bar()
-
-        # 置顶状态
+        # 置顶状态（菜单栏会引用该变量，必须先初始化）
         self.topmost_var = tk.BooleanVar(value=bool(_extras.get("topmost", False)))
         if self.topmost_var.get():
             try:
                 self.root.attributes("-topmost", True)
             except Exception:
                 pass
+
+        # ---- 菜单栏：字体设置 / 关于 / 检查更新（三个独立项） ----
+        self._build_menu_bar()
 
         self.cfg: dict | None = None
         self.product_var = tk.StringVar()
@@ -814,17 +1035,37 @@ class ProtocolParserApp:
         # 数据格式：HEX格式单选（勾选=HEX，不勾选=ASCII）
         self.hex_format_var = tk.BooleanVar(value=True)
 
+        # 显示选项（原在高级抽屉，现移到主界面）
+        self.detail_var = tk.BooleanVar(value=False)
+        self.autoscroll_var = tk.BooleanVar(value=True)
+
+        # 串口配置面板折叠状态（默认折叠，减少主界面垂直占用）
+        self.serial_config_collapsed_var = tk.BooleanVar(
+            value=bool(_extras.get("serial_config_collapsed", True))
+        )
+
         self.log_path: Path | None = None
         self.log_file = None
         self.log_count = 0
         self.rx_frame_count = 0
         self.tx_frame_count = 0
 
-        # 原始数据保存
-        self.save_raw_enabled_var = tk.BooleanVar(value=bool(_extras.get("save_raw_enabled_default", True)))
-        import os
-        default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
-        self.save_raw_path_var = tk.StringVar(value=str(_extras.get("save_raw_path_default", default_path)))
+        # 原始数据保存：默认关闭 + 默认保存路径用 user_data_path（可写持久目录）
+        self.save_raw_enabled_var = tk.BooleanVar(
+            value=bool(_extras.get("save_raw_enabled_default", False))  # 默认 False（默认关闭）
+        )
+        # 默认路径：user_data_path() → 开发模式=项目根data；打包模式=exe同级data；无权限=文档\串口解析工具\data
+        default_path = user_data_path()
+        default_path = Path(str(_extras.get("save_raw_path_default", str(default_path))))
+        # 旧快照路径里如果含有 _MEIPASS 临时目录（C:\Users\xxx\AppData\Local\Temp\_MEI...），自动丢弃，改用 user_data_path
+        try:
+            if "_MEI" in str(default_path) or str(default_path).startswith(
+                str(Path(os.environ.get("TEMP", "")))
+            ) or "AppData\\Local\\Temp" in str(default_path).replace("/", "\\"):
+                default_path = user_data_path()
+        except Exception:
+            default_path = user_data_path()
+        self.save_raw_path_var = tk.StringVar(value=str(default_path))
         from datetime import datetime
         default_name = datetime.now().strftime("serial_data_%Y%m%d_%H%M%S")
         self.save_raw_filename_var = tk.StringVar(value=default_name)
@@ -850,19 +1091,11 @@ class ProtocolParserApp:
         # 显示缓冲区限制（防止内存溢出）
         self.max_display_lines = 50000
 
-        # Drawer（右侧高级设置抽屉）
-        self.drawer: Drawer | None = None
-
         # 主布局
         self._build_ui()
+        # 设置左右分栏初始比例（右侧约 30%）
+        self.root.after(100, self._restore_send_panel_width)
         self._load_protocols()
-
-        # 恢复 Drawer 折叠偏好（默认关闭）
-        if _extras.get("drawer_open", False) and self.drawer is not None:
-            try:
-                self.drawer.show()
-            except Exception:
-                pass
 
         # 定时刷新 UI 队列
         self._ui_queue: list[tuple[str, tuple]] = []
@@ -944,30 +1177,22 @@ class ProtocolParserApp:
     # ---------- UI 构建 ----------
 
     def _build_menu_bar(self) -> None:
-        """构建顶部菜单栏：
-        * 文件 → 字体与字号设置 / 窗口置顶 / 退出
-        * 帮助 → 检查更新 / 关于（拆成两项，不带分隔符的分组）
-        """
+        """构建顶部菜单栏：字体设置 / 关于 / 检查更新（三个独立项）。"""
         menubar = tk.Menu(self.root)
 
-        # ---- 文件 ----
-        file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="字体与字号设置…", command=self._safe(self._choose_font_settings),
-                              accelerator="Ctrl+鼠标滚轮")
-        file_menu.add_checkbutton(label="窗口始终置顶", variable=self.topmost_var,
-                                  onvalue=True, offvalue=False,
-                                  command=self._safe(self._toggle_topmost))
-        file_menu.add_separator()
-        file_menu.add_command(label="退出 (Alt+F4)", command=self._safe(self._on_app_close))
-        menubar.add_cascade(label="文件", menu=file_menu)
+        # ---- 字体设置（独立菜单项，点击打开字体设置对话框） ----
+        menubar.add_command(label="字体设置", command=self._safe(self._choose_font_settings))
 
-        # ---- 帮助：严格拆成「关于」+「检查更新」两部分 ----
-        help_menu = tk.Menu(menubar, tearoff=0)
-        help_menu.add_command(label=f"关于…", command=self._safe(self._menu_about))
-        help_menu.add_command(label="检查更新…", command=self._safe(self._menu_check_update))
-        menubar.add_cascade(label="帮助", menu=help_menu)
+        # ---- 关于（独立菜单项） ----
+        menubar.add_command(label="关于", command=self._safe(self._menu_about))
 
-        self.root.config(menu=menubar)
+        # ---- 检查更新（独立菜单项） ----
+        menubar.add_command(label="检查更新", command=self._safe(self._menu_check_update))
+
+        try:
+            self.root.config(menu=menubar)
+        except Exception:
+            pass
 
     def _menu_about(self) -> None:
         body = (
@@ -978,7 +1203,7 @@ class ProtocolParserApp:
             "· 串口实时监控（HEX / ASCII）\n"
             "· 导入 Word 协议文档，中文属性名和枚举解析\n"
             "· 每个串口独立窗口进程，支持 6M / 自定义波特率\n"
-            "· 在线更新（帮助 → 检查更新）"
+            "· 在线更新（菜单栏 → 检查更新）"
         )
         messagebox.showinfo(f"关于（v{VERSION}）", body, parent=self.root)
 
@@ -1008,11 +1233,11 @@ class ProtocolParserApp:
 
         btns = ttk.Frame(win)
         btns.pack(fill="x", padx=14, pady=10)
-        check_btn = ttk.Button(btns, text="立即检查", command=lambda: self._dlg_check_now())
+        check_btn = RoundedButton(btns, text="立即检查", command=lambda: self._dlg_check_now())
         check_btn.pack(side="right")
-        update_btn = ttk.Button(btns, text="下载并更新", state="disabled")
+        update_btn = RoundedButton(btns, text="下载并更新", state="disabled")
         update_btn.pack(side="right", padx=8)
-        close_btn = ttk.Button(btns, text="关闭", command=win.destroy)
+        close_btn = RoundedButton(btns, text="关闭", command=win.destroy)
         close_btn.pack(side="right")
 
         state: dict = {
@@ -1208,372 +1433,481 @@ class ProtocolParserApp:
 
     def _build_ui(self) -> None:
         # ============================================================
-        #  顶栏（最上面一栏 —— 传统布局高频/低频可见）
-        #    第一排：产品协议 | 串口(刷新) | 波特率 | 数据位 | 校验位 | 停止位 | HEX 格式 | 发送方 | [开始/停止监控] | 字体 字号 | A−/A+ | ⚙ 高级
-        #    特点：把过去"仅在 Drawer 里才看到"的帧格式/HEX/发送方也直接放到顶栏，老用户操作更顺手
+        #  根级统一响应式布局（grid）：
+        #    row 0  →  顶部工具栏（fixed）
+        #    row 1  →  主体 body（可伸缩，weight=1，PanedWindow 水平左右分栏）
+        #    row 2  →  底部状态栏（fixed）
+        #    col 0  →  weight=1（所有内容横向跟随窗口伸缩）
         # ============================================================
-        top = tk.Frame(self.root, bg=self.theme.get("app_bg"), padx=14, pady=10)
-        top.pack(fill="x")
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=0)
+        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(2, weight=0)
 
-        def _toolbar_label(text: str) -> tk.Label:
-            return tk.Label(top, text=text, bg=self.theme.get("app_bg"), fg=self.theme.get("text_secondary"),
-                            font=("Microsoft YaHei UI", 9))
+        # 限制窗口最小尺寸，防止缩太小时控件被截断（和 __init__ 保持一致，避免被后续逻辑覆盖）
+        try:
+            self.root.minsize(1020, 660)
+            self.root.update_idletasks()
+        except Exception:
+            pass
 
-        def _tool_button(text: str, cmd, style: str = "Toolbar.TButton", tip: str | None = None) -> ttk.Button:
-            b = ttk.Button(top, text=text, style=style, command=self._safe(cmd))
-            b.pack(side="left", padx=4)
+        # ============================================================
+        #  row=0: 顶部工具栏（一行三列响应式 —— 中间 spacer(weight=1) 缓冲，缩窗口绝不裁剪左右控件）
+        #    col 0  weight=0  →  产品协议 + 刷新/导入/查看
+        #    col 1  weight=1  →  伸缩 spacer（缩窗口时优先变窄到 0，保护左右不被裁）
+        #    col 2  weight=0  →  指令发送/添加串口/保存日志/清空/置顶
+        # ============================================================
+        top = ttk.Frame(self.root, padding=(8, 4, 8, 4))
+        top.grid(row=0, column=0, sticky="ew")
+        top.columnconfigure(0, weight=1)
+        top.rowconfigure(0, weight=0)
+
+        def _tool_button(parent: tk.Misc, text: str, cmd,
+                         style: str = "Toolbar.TButton", tip: str | None = None,
+                         padx: tuple[int, int] = (2, 2)) -> RoundedButton:
+            b = RoundedButton(parent, text=text, style=style, command=self._safe(cmd))
+            col = parent._next_col if hasattr(parent, "_next_col") else 0  # type: ignore[attr-defined]
+            b.grid(row=0, column=col, sticky="w", padx=padx, pady=(1, 1))
+            parent._next_col = col + 1  # type: ignore[attr-defined]
             if tip:
                 Tooltip(b, tip, self.theme)
             return b
 
-        # 1) 产品协议
-        _toolbar_label("产品协议").pack(side="left")
-        self.product_combo = ttk.Combobox(top, textvariable=self.product_var, width=22, state="readonly")
-        self.product_combo.pack(side="left", padx=(4, 12))
+        def _tool_place_reset(container: tk.Misc) -> None:
+            container._next_col = 0  # type: ignore[attr-defined]
+
+        top_row0 = ttk.Frame(top)
+        top_row0.grid(row=0, column=0, sticky="ew")
+        top_row0.columnconfigure(0, weight=0)   # 左区：固定尺寸，绝不裁剪
+        top_row0.columnconfigure(1, weight=1)   # 中间：伸缩缓冲区，压到 0 都不影响左右
+        top_row0.columnconfigure(2, weight=0)   # 右区：固定尺寸，绝不裁剪
+
+        # 左区
+        row0_left = ttk.Frame(top_row0)
+        row0_left.grid(row=0, column=0, sticky="w")
+        _tool_place_reset(row0_left)
+
+        ttk.Label(row0_left, text="产品协议：", style="Toolbar.TLabel").grid(
+            row=0, column=row0_left._next_col, sticky="w", pady=(2, 2))  # type: ignore[attr-defined]
+        row0_left._next_col += 1  # type: ignore[attr-defined]
+
+        self.product_combo = ttk.Combobox(row0_left, textvariable=self.product_var, width=18, state="readonly")
+        self.product_combo.grid(row=0, column=row0_left._next_col, sticky="w",  # type: ignore[attr-defined]
+                                padx=(4, 10), pady=(2, 2))
+        row0_left._next_col += 1  # type: ignore[attr-defined]
         self.product_combo.bind("<<ComboboxSelected>>", self._on_product_change)
         Tooltip(self.product_combo,
                 "切换当前要解析/发送的产品协议 JSON。\n放 JSON 到 product/ 目录后，点旁边刷新按钮即可出现。",
                 self.theme)
 
-        # 2) 串口 + 刷新
-        _toolbar_label("串口").pack(side="left")
-        self.port_combo = ttk.Combobox(top, textvariable=self.port_var, width=12, state="readonly")
-        self.port_combo.pack(side="left", padx=(4, 2))
-        Tooltip(self.port_combo, "选择要监控的串口号（如 COM3 / COM5）。", self.theme)
-        refresh_ports_btn = ttk.Button(top, text="↻", width=3, command=self._safe(self._refresh_ports), style="Toolbar.TButton")
-        refresh_ports_btn.pack(side="left", padx=(0, 12))
-        Tooltip(refresh_ports_btn, "重新扫描本机可用串口。", self.theme)
+        _tool_button(row0_left, "刷新", self._load_protocols,
+                     tip="重新扫描 product/ 目录下的协议 JSON。", padx=(0, 4))
+        _tool_button(row0_left, "导入Word协议", self._import_docx,
+                     tip="导入 Word 协议文档并解析为 JSON。", padx=(0, 4))
+        _tool_button(row0_left, "查看协议", self._show_protocol,
+                     tip="查看当前已加载的协议字段和指令列表。", padx=(0, 4))
 
-        # 3) 波特率
-        _toolbar_label("波特率").pack(side="left")
-        self.baudrate_combo = ttk.Combobox(
-            top, textvariable=self.baudrate_var, width=9, state="normal",
-            values=[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000, 3000000, 4000000, 5000000, 6000000],
-        )
-        self.baudrate_combo.pack(side="left", padx=(4, 12))
-        Tooltip(self.baudrate_combo, "选择或输入任意波特率（最高 6,000,000 = 6M）。", self.theme)
+        # 中间伸缩 spacer：窗口缩小时这一块先被压扁为 0，左右两侧的按钮/下拉永远不被裁剪隐藏
+        row0_spacer = ttk.Frame(top_row0, width=1)
+        row0_spacer.grid(row=0, column=1, sticky="ew")
 
-        # 4) 数据位
-        _toolbar_label("数据位").pack(side="left")
-        ttk.Combobox(top, textvariable=self.bytesize_var, values=[5, 6, 7, 8], width=5, state="readonly").pack(side="left", padx=(4, 12))
+        # 右区
+        row0_right = ttk.Frame(top_row0)
+        row0_right.grid(row=0, column=2, sticky="e")
+        _tool_place_reset(row0_right)
 
-        # 5) 校验位（这里没有 parity_var，暂时用 Drawer；如果需要可以新增 IntVar 后再同步）
-        # 6) 停止位
-        _toolbar_label("停止位").pack(side="left")
-        ttk.Combobox(top, textvariable=self.stopbits_var, values=[1, 1.5, 2], width=5, state="readonly").pack(side="left", padx=(4, 12))
+        self.send_panel_btn = RoundedButton(row0_right, text="隐藏指令", style="Toolbar.TButton",
+                                            command=self._safe(self._toggle_send_panel))
+        self.send_panel_btn.grid(row=0, column=row0_right._next_col, sticky="w",  # type: ignore[attr-defined]
+                                 padx=(0, 4), pady=(1, 1))
+        row0_right._next_col += 1  # type: ignore[attr-defined]
+        Tooltip(self.send_panel_btn, "显示或隐藏右侧「指令发送」面板。", self.theme)
 
-        # 7) HEX 格式 + 发送方
-        ttk.Checkbutton(top, text="HEX", variable=self.hex_format_var, style="TCheckbutton").pack(side="left", padx=(0, 8))
-        Tooltip(top.winfo_children()[-1],
-                "HEX 十六进制显示；不勾选则为 ASCII 文本模式。",
-                self.theme)
+        _tool_button(row0_right, "添加串口", self._add_serial_port,
+                     tip="新增一个独立串口监控窗口。", padx=(0, 4))
+        _tool_button(row0_right, "保存日志", self._choose_log,
+                     tip="选择结构化解析日志的保存路径。", padx=(0, 4))
+        _tool_button(row0_right, "清空", self._clear_output,
+                     tip="清空实时数据区和统计数据。", padx=(0, 4))
 
-        # 发送方（模组 / MCU）
-        ttk.Label(top, text="方向", foreground=self.theme.get("text_secondary"),
-                  background=self.theme.get("app_bg"),
-                  font=("Microsoft YaHei UI", 9)).pack(side="left")
-        sender_frame = tk.Frame(top, bg=self.theme.get("app_bg"))
-        sender_frame.pack(side="left", padx=(2, 12))
-        ttk.Radiobutton(sender_frame, text="模组", variable=self.serial_sender_var, value="模组发送").pack(side="left", padx=(0, 4))
-        ttk.Radiobutton(sender_frame, text="MCU", variable=self.serial_sender_var, value="MCU发送").pack(side="left")
+        # 置顶按钮（蓝色=未启用 / 红色=已启用）
+        try:
+            self.topmost_btn = RoundedButton(
+                row0_right, text="置顶", style="CompactPrimary.TButton",
+                command=self._safe(self._toggle_topmost_btn),
+            )
+            self.topmost_btn.grid(row=0, column=row0_right._next_col, sticky="w",  # type: ignore[attr-defined]
+                                  padx=(2, 0), pady=(1, 1))
+            row0_right._next_col += 1  # type: ignore[attr-defined]
+            Tooltip(self.topmost_btn, "窗口始终置顶 / 取消置顶。", self.theme)
+            self.topmost_chk = self.topmost_btn  # 兼容旧引用
+        except Exception:
+            self.topmost_btn = None
+            self.topmost_chk = None
 
-        # 8) 大号 开始/停止监控按钮（绿色Primary/红色Danger切换）
-        self.start_btn = ttk.Button(top, text="● 开始监控", style="Primary.TButton",
-                                    command=self._safe(self._toggle_serial))
-        self.start_btn.pack(side="left", padx=8)
-        Tooltip(self.start_btn,
-                "开始监控（绿灯）/ 停止监控（灰）。\n快捷键：F5 开始 / Shift+F5 停止。",
-                self.theme)
         try:
             self.root.bind("<F5>", lambda _e: (self._safe(self._start_serial)(), None)[1] if not self.is_collecting else None)
             self.root.bind("<Shift-F5>", lambda _e: (self._safe(self._stop_serial)(), None)[1] if self.is_collecting else None)
         except Exception:
             pass
 
-        # ------------------------------------------------------------
-        # 9) 顶栏"字体设置"入口：等宽字体 Combobox + 字号 Spinbox + A−/A+（快捷，占最上面一栏）
-        # ------------------------------------------------------------
-        # （把原本在 Drawer 内部 + 日志框右上角的控件，都统一放顶栏，用户一眼就能改）
-        _toolbar_label("字体").pack(side="left", padx=(20, 4))
-        self.toolbar_font_combo = ttk.Combobox(
-            top, textvariable=self.font_family_var, width=14, state="readonly",
-            values=self.available_monospace_fonts or ["Consolas"],
-        )
-        self.toolbar_font_combo.pack(side="left", padx=(0, 6))
-        Tooltip(self.toolbar_font_combo, "仅列出系统中的等宽字体（Hex 报文上下对齐不错位）。", self.theme)
+        # ============================================================
+        #  row=1: 中间主体（左侧：串口配置 + 实时数据 ∥ 指令发送）
+        # ============================================================
+        body = ttk.Frame(self.root, padding=(10, 0, 10, 6))
+        body.grid(row=1, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.body_frame = body  # 供面板显隐时触发重排
 
-        _toolbar_label("字号").pack(side="left")
-        self.toolbar_font_size_sb = ttk.Spinbox(top, from_=8, to=32, width=5, textvariable=self.font_size_var)
-        self.toolbar_font_size_sb.pack(side="left", padx=(4, 8))
-        Tooltip(self.toolbar_font_size_sb,
-                "字号（8~32pt）；也可以 Ctrl + 鼠标滚轮 在日志框内无级缩放。",
-                self.theme)
+        # 左侧面板整体：使用「app_bg TFrame」不使用 Card.TFrame —— 作为"留白底色"，
+        #   里面的 串口配置 / 实时数据 / 指令发送 三个 LabelFrame 各自作为独立"卡片区"
+        #   这样卡片与卡片之间就有 留白（app_bg）+ 边框（card_border）双重视觉层差。
+        self.serial_frame = ttk.Frame(body)  # 无 style → TFrame=app_bg，padding 统一留白
+        self.serial_frame.grid(row=0, column=0, sticky="nsew")
+        self.serial_frame.columnconfigure(0, weight=1)
+        self.serial_frame.rowconfigure(0, weight=0)   # 串口配置区（fixed）
+        self.serial_frame.rowconfigure(1, weight=1)   # 下方分栏区（expand）
+        # 垂直留白：串口配置（上）↔ 下方分栏（下）之间 4px 的 app_bg 色 gap，形成层
+        self.serial_frame.configure(padding=(0, 0, 0, 4))
 
-        # A− / A+ 放大缩小
-        ttk.Button(top, text="A−", width=3, style="Toolbar.TButton",
-                   command=self._safe(lambda: self._zoom_serial_font(-1))).pack(side="left", padx=1)
-        ttk.Button(top, text="A+", width=3, style="Toolbar.TButton",
-                   command=self._safe(lambda: self._zoom_serial_font(+1))).pack(side="left", padx=(1, 8))
+        self._build_serial_config_panel(self.serial_frame)
 
-        # ⚙ 高级（Drawer 入口 —— 保留，方便用的人再打开更多配置/主题切换）
-        self.drawer_btn = tk.Button(
-            top, text="⚙ 高级", relief="flat", cursor="hand2", bd=0,
-            bg=self.theme.get("app_bg"), fg=self.theme.get("text"),
-            activebackground=self.theme.get("border"), activeforeground=self.theme.get("text"),
-            font=("Microsoft YaHei UI", 10), padx=10, pady=4,
-            command=self._safe(self._toggle_drawer),
-        )
-        self.drawer_btn.pack(side="left", padx=4)
-        Tooltip(self.drawer_btn,
-                "打开/关闭「高级设置」抽屉。\n额外配置：主题( Light/Dark + Win11/Classic )、\n保存日志、保存原始数据、自动分割、行距、流控……",
-                self.theme)
+        # 下方水平分栏：实时数据（左） ∥ 指令发送（右）
+        # 注：ttk.PanedWindow 不支持经典Tk的 sashwidth / sashrelief 构造参数，
+        # 分隔条宽度统一在 apply_ttk_styles 里用 TPanedwindow 样式控制。
+        self.main_paned = ttk.PanedWindow(self.serial_frame, orient="horizontal")
+        self.main_paned.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
+
+        # 左侧：实时数据容器 —— 用 app_bg TFrame（留白层），里面 LabelFrame 才是真正卡片
+        self.realtime_container = ttk.Frame(self.main_paned)
+        self.realtime_container.columnconfigure(0, weight=1)
+        self.realtime_container.rowconfigure(0, weight=1)
+        # 容器四周留白（卡片边框外要留出一圈 app_bg 色空隙），这样和左边列、右边发送面板都有间距
+        self.realtime_container.configure(padding=(4, 4, 2, 0))
+        self._build_serial_panel(self.realtime_container)
+        self.main_paned.add(self.realtime_container, weight=3)
+
+        # 右侧：指令发送 —— 用 app_bg TFrame（留白层），里面的四个发送 LabelFrame 才是真正卡片
+        self.send_frame = ttk.Frame(self.main_paned)
+        self.send_frame.columnconfigure(0, weight=1)
+        self.send_frame.rowconfigure(0, weight=1)
+        # 四周留白：和左侧实时数据（2+4=6px gap）、和下/上边沿都有间距
+        self.send_frame.configure(padding=(2, 4, 4, 0))
+        self.send_panel_inner = ttk.Frame(self.send_frame)
+        self.send_panel_inner.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+        # 发送面板三行可伸缩区域
+        self.send_panel_inner.columnconfigure(0, weight=1)
+        self.send_panel_inner.rowconfigure(2, weight=1)   # 协议参数/字段 JSON
+        self.send_panel_inner.rowconfigure(3, weight=1)   # Raw 内容
+        self._build_send_panel(self.send_panel_inner)
+        self.main_paned.add(self.send_frame, weight=2)  # 左侧 3 右侧 2
+
+        # 为左右分栏设置最小宽度，避免缩小时发送面板被压得过窄
+        try:
+            self.main_paned.paneconfig(self.realtime_container, minsize=260)
+            self.main_paned.paneconfig(self.send_frame, minsize=200)
+        except Exception:
+            pass
+
+        # 兼容旧代码可能引用到的 tab 别名
+        self.serial_tab = self.serial_frame
+        self.send_tab = self.send_frame
+        self.send_frame_visible = True
+        self.send_frame_frac = 0.40  # 右侧默认占 40%
 
         # ============================================================
-        #  中间内容区：Notebook（串口实时 | 指令发送）
-        # ============================================================
-        body = tk.Frame(self.root, bg=self.theme.get("app_bg"))
-        body.pack(fill="both", expand=True, padx=10, pady=(0, 6))
-
-        self.notebook = ttk.Notebook(body)
-        self.notebook.pack(fill="both", expand=True)
-
-        # Tab 1：串口实时
-        self.serial_tab = ttk.Frame(self.notebook, padding=4, style="Card.TFrame")
-        self.serial_tab.columnconfigure(0, weight=1)
-        self.serial_tab.rowconfigure(0, weight=1)
-        self._build_serial_panel(self.serial_tab)
-        self.notebook.add(self.serial_tab, text="  串口实时  ")
-
-        # Tab 2：指令发送
-        self.send_tab = ttk.Frame(self.notebook, padding=8, style="Card.TFrame")
-        self.send_tab.columnconfigure(0, weight=1)
-        self.send_tab.rowconfigure(2, weight=1)
-        self._build_send_panel(self.send_tab)
-        self.notebook.add(self.send_tab, text="  指令发送  ")
-
-        # ============================================================
-        #  Drawer（右侧高级设置）：在 body 上 place
-        # ============================================================
-        self.drawer = Drawer(body, self.theme, width=440)
-        self._build_drawer_content(self.drawer.content_frame)
-
-        # ============================================================
-        #  底部状态栏
+        #  row=2: 底部状态栏（fixed）
         # ============================================================
         self.status_var = tk.StringVar(value="就绪")
         self.stats_var = tk.StringVar(value="RX 0  TX 0  错误 0  缓冲 0B")
-        status = tk.Frame(self.root, bg=self.theme.get("card_bg"), padx=10, pady=4,
-                          highlightthickness=1,
-                          highlightbackground=self.theme.get("border"))
-        status.pack(fill="x", side="bottom")
-        tk.Label(status, textvariable=self.status_var, anchor="w",
-                 bg=self.theme.get("card_bg"), fg=self.theme.get("text_secondary"),
-                 font=("Microsoft YaHei UI", 9)).pack(side="left", fill="x", expand=True)
-        tk.Label(status, textvariable=self.stats_var, anchor="e",
-                 bg=self.theme.get("card_bg"), fg=self.theme.get("text_secondary"),
-                 font=("Microsoft YaHei UI", 9)).pack(side="right")
-
-    # ------------------------------------------------------------
-    # Drawer（右侧高级设置）的内容区构造
-    # ------------------------------------------------------------
-    def _build_drawer_content(self, cf: tk.Misc) -> None:
-        theme = self.theme
-        card_bg = theme.get("card_bg")
-        text = theme.get("text")
-        text_2 = theme.get("text_secondary")
-
-        def _section(title: str, parent: tk.Misc = cf) -> tk.LabelFrame:
-            lf = ttk.LabelFrame(parent, text=f"  {title}  ", padding=10)
-            lf.pack(fill="x", padx=10, pady=(8, 4))
-            # ttk LabelFrame 内部子控件背景跟随 card_bg
-            try:
-                for _ in range(1):  # 作用域占位
-                    pass
-            except Exception:
-                pass
-            return lf
-
-        def _label(parent: tk.Misc, text_: str, secondary: bool = False) -> tk.Label:
-            fg = text_2 if secondary else text
-            return tk.Label(parent, text=text_, bg=card_bg, fg=fg, font=("Microsoft YaHei UI", 9))
-
-        # --------------------------------------------------------
-        # 1) 串口参数（高级）
-        # --------------------------------------------------------
-        s1 = _section("串口高级参数")
-        r = tk.Frame(s1, bg=card_bg)
-        r.pack(fill="x")
-        _label(r, "数据位").grid(row=0, column=0, sticky="w")
-        bs_cmb = ttk.Combobox(r, textvariable=self.bytesize_var, values=[5, 6, 7, 8], width=6, state="readonly")
-        bs_cmb.grid(row=0, column=1, padx=(6, 16), pady=4, sticky="w")
-        Tooltip(bs_cmb, "串口数据位（通常 8）。", theme)
-        _label(r, "停止位").grid(row=0, column=2, sticky="w")
-        sp_cmb = ttk.Combobox(r, textvariable=self.stopbits_var, values=[1, 1.5, 2], width=6, state="readonly")
-        sp_cmb.grid(row=0, column=3, padx=(6, 0), pady=4, sticky="w")
-        Tooltip(sp_cmb, "串口停止位（通常 1）。", theme)
-
-        r2 = tk.Frame(s1, bg=card_bg)
-        r2.pack(fill="x", pady=(6, 0))
-        _label(r2, "默认发送方：").grid(row=0, column=0, sticky="w")
-        self.sender_drawer_module = ttk.Radiobutton(r2, text="模组发送", variable=self.serial_sender_var, value="模组发送")
-        self.sender_drawer_module.grid(row=0, column=1, padx=(8, 10), sticky="w")
-        self.sender_drawer_mcu = ttk.Radiobutton(r2, text="MCU发送", variable=self.serial_sender_var, value="MCU发送")
-        self.sender_drawer_mcu.grid(row=0, column=2, sticky="w")
-        Tooltip(self.sender_drawer_module, "决定「串口实时」里解析时默认标记哪一方为请求方；\n不影响指令发送 Tab 里单独选择的方向。", theme)
-        self.sender_labels = [r2]
-
-        # --------------------------------------------------------
-        # 2) 显示选项
-        # --------------------------------------------------------
-        s2 = _section("显示选项")
-        self.detail_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(s2, text="详细模式（逐字段展开）", variable=self.detail_var).pack(anchor="w", pady=2)
-        self._hex_drawer_chk = ttk.Checkbutton(
-            s2, text="HEX 格式（不勾选 = ASCII 文本模式）", variable=self.hex_format_var,
-            command=self._safe(self._on_hex_format_change),
-        )
-        self._hex_drawer_chk.pack(anchor="w", pady=2)
-        Tooltip(self._hex_drawer_chk, "HEX：十六进制报文（默认）\nASCII：纯文本 AT / 调试字符串。", theme)
-        self.autoscroll_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(s2, text="自动滚动到最新一条", variable=self.autoscroll_var).pack(anchor="w", pady=2)
-
-        # --------------------------------------------------------
-        # 3) 日志 + 原始数据保存
-        # --------------------------------------------------------
-        s3 = _section("日志 / 原始数据保存")
-
-        l1 = tk.Frame(s3, bg=card_bg)
-        l1.pack(fill="x", pady=2)
-        _label(l1, "结构化解析日志：").grid(row=0, column=0, sticky="w")
-        ttk.Button(l1, text="选择路径并启用…", width=18, style="Toolbar.TButton",
-                   command=self._safe(self._choose_log)).grid(row=0, column=1, padx=6, sticky="w")
-        Tooltip(l1.winfo_children()[-1],
-                "开启后，每一条 RX/TX 解析结果都会按「时间戳 + [RX]/[TX] + 帧内容」格式追加写入 .log 文件。\n再次关闭按钮或重开程序后若文件仍存在，会自动追加而不是覆盖。",
-                theme)
-
-        l2 = tk.Frame(s3, bg=card_bg)
-        l2.pack(fill="x", pady=2)
-        ttk.Checkbutton(l2, text="启用原始数据保存", variable=self.save_raw_enabled_var,
-                        command=self._safe(self._on_save_raw_toggle)).grid(row=0, column=0, sticky="w")
-        Tooltip(l2.winfo_children()[-1], "将串口上收到/发送的每一笔原始 bytes 落盘。", theme)
-
-        l3 = tk.Frame(s3, bg=card_bg)
-        l3.pack(fill="x", pady=2)
-        _label(l3, "保存目录：").grid(row=0, column=0, sticky="w")
-        self.drawer_raw_path = ttk.Entry(l3, textvariable=self.save_raw_path_var, width=24, state="readonly")
-        self.drawer_raw_path.grid(row=0, column=1, padx=6, sticky="we")
-        l3.columnconfigure(1, weight=1)
-        ttk.Button(l3, text="选择…", width=6, style="Toolbar.TButton",
-                   command=self._safe(self._choose_save_raw_path)).grid(row=0, column=2, padx=4)
-        _bind_text_widget_menu(self.drawer_raw_path, readonly=True)
-
-        l4 = tk.Frame(s3, bg=card_bg)
-        l4.pack(fill="x", pady=2)
-        _label(l4, "文件名前缀：").grid(row=0, column=0, sticky="w")
-        self.drawer_raw_filename = ttk.Entry(l4, textvariable=self.save_raw_filename_var, width=20)
-        self.drawer_raw_filename.grid(row=0, column=1, padx=6, sticky="we")
-        _bind_text_widget_menu(self.drawer_raw_filename, readonly=False)
-        _label(l4, ".dat", secondary=True).grid(row=0, column=2, sticky="w", padx=(4, 0))
-
-        l5 = tk.Frame(s3, bg=card_bg)
-        l5.pack(fill="x", pady=(6, 0))
-        _label(l5, "自动分割阈值：").grid(row=0, column=0, sticky="w")
-        split_sp = ttk.Spinbox(l5, from_=5, to=2048, width=6, textvariable=self.raw_auto_split_mb_var)
-        split_sp.grid(row=0, column=1, padx=6, sticky="w")
-        Tooltip(split_sp, "单个文件超过多少 MB 就自动切到下一个（5~2048 MB）。\n默认 50 MB。", theme)
-        _label(l5, "MB / 文件", secondary=True).grid(row=0, column=2, sticky="w", padx=(4, 0))
-
-        # --------------------------------------------------------
-        # 4) 主题与字体
-        # --------------------------------------------------------
-        s4 = _section("主题 / 字体 / 外观")
-
-        t1 = tk.Frame(s4, bg=card_bg)
-        t1.pack(fill="x", pady=2)
-        _label(t1, "主题模式：").grid(row=0, column=0, sticky="w")
-        theme_mode = ttk.Combobox(t1, textvariable=self.theme_mode_var, width=10, state="readonly",
-                                  values=["light", "dark"])
-        theme_mode.grid(row=0, column=1, padx=6, sticky="w")
-        Tooltip(theme_mode, "light = 浅色 / dark = 深色（夜间抓包护眼）。", theme)
-        _label(t1, "风格：").grid(row=0, column=2, sticky="w", padx=(12, 0))
-        theme_style = ttk.Combobox(t1, textvariable=self.theme_style_var, width=10, state="readonly",
-                                   values=["win11", "classic"])
-        theme_style.grid(row=0, column=3, padx=6, sticky="w")
-        Tooltip(theme_style,
-                "win11 = 现代圆角+浅阴影（用 ttk clam 自定义近似实现）\nclassic = 系统原生灰色外观。",
-                theme)
-        ttk.Button(t1, text="立即应用", style="Toolbar.TButton",
-                   command=self._safe(self._on_apply_theme)).grid(row=0, column=4, padx=(10, 0), sticky="w")
-
-        t2 = tk.Frame(s4, bg=card_bg)
-        t2.pack(fill="x", pady=(8, 2))
-        _label(t2, "等宽字体：").grid(row=0, column=0, sticky="w")
-        self.drawer_font_family = ttk.Combobox(t2, textvariable=self.font_family_var, width=24,
-                                                values=self.available_monospace_fonts or ["Consolas"],
-                                                state="readonly")
-        self.drawer_font_family.grid(row=0, column=1, padx=6, sticky="we")
-        t2.columnconfigure(1, weight=1)
-        Tooltip(self.drawer_font_family, "仅显示系统内匹配到的等宽字体。\n推荐：Consolas / JetBrains Mono / Cascadia Code 等。", theme)
-
-        t3 = tk.Frame(s4, bg=card_bg)
-        t3.pack(fill="x", pady=2)
-        _label(t3, "字号：").grid(row=0, column=0, sticky="w")
-        fsize_sp = ttk.Spinbox(t3, from_=8, to=32, width=6, textvariable=self.font_size_var)
-        fsize_sp.grid(row=0, column=1, padx=6, sticky="w")
-        Tooltip(fsize_sp, "日志区字号（8~32）。也可以 Ctrl + 鼠标滚轮直接在日志区内无级缩放。", theme)
-        _label(t3, "行间距：").grid(row=0, column=2, sticky="w", padx=(12, 0))
-        lsp_sp = ttk.Spinbox(t3, from_=0, to=24, width=5, textvariable=self.line_spacing_px_var)
-        lsp_sp.grid(row=0, column=3, padx=6, sticky="w")
-        Tooltip(lsp_sp, "报文之间垂直留白（0~24 像素），值越大报文越稀疏，护眼。", theme)
-        ttk.Button(t3, text="字体与字号设置…", style="Toolbar.TButton",
-                   command=self._safe(self._choose_font_settings)).grid(row=0, column=4, padx=(10, 0), sticky="w")
+        status = ttk.Frame(self.root, style="StatusBar.TFrame", padding=(10, 4))
+        status.grid(row=2, column=0, sticky="ew")
+        status.columnconfigure(0, weight=1)
+        ttk.Label(status, textvariable=self.status_var, anchor="w", style="StatusBar.TLabel").grid(
+            row=0, column=0, sticky="we")
+        ttk.Label(status, textvariable=self.stats_var, anchor="e", style="StatusBar.TLabel").grid(row=0, column=1, sticky="e")
 
         # 字体/行距一改就即时应用 + 保存偏好
         self.font_family_var.trace_add("write", lambda *_a: self._apply_font_and_line_spacing(True))
         self.font_size_var.trace_add("write", lambda *_a: self._apply_font_and_line_spacing(True))
         self.line_spacing_px_var.trace_add("write", lambda *_a: self._apply_font_and_line_spacing(True))
 
-        # --------------------------------------------------------
-        # 5) 其他：协议操作 / 其他工具
-        # --------------------------------------------------------
-        s5 = _section("协议操作 / 其他工具")
-        r_prot = tk.Frame(s5, bg=card_bg)
-        r_prot.pack(fill="x", pady=2)
-        ttk.Button(r_prot, text="刷新协议列表", width=14, style="Toolbar.TButton",
-                   command=self._safe(self._load_protocols)).pack(side="left", padx=(0, 6))
-        ttk.Button(r_prot, text="导入 Word 协议…", width=16, style="Toolbar.TButton",
-                   command=self._safe(self._import_docx)).pack(side="left", padx=6)
-        ttk.Button(r_prot, text="查看当前协议", width=14, style="Toolbar.TButton",
-                   command=self._safe(self._show_protocol)).pack(side="left", padx=6)
+        # 置顶/保存原始数据 变量变化时自动更新按钮样式
+        try:
+            self.topmost_var.trace_add("write", lambda *_a: self._on_topmost_change())
+        except Exception:
+            pass
+        try:
+            self.save_raw_enabled_var.trace_add("write", lambda *_a: self._update_save_raw_btn_style())
+        except Exception:
+            pass
 
-        r_misc = tk.Frame(s5, bg=card_bg)
-        r_misc.pack(fill="x", pady=(6, 2))
-        ttk.Checkbutton(r_misc, text="窗口始终置顶", variable=self.topmost_var,
-                        style="TCheckbutton", command=self._safe(self._toggle_topmost)).pack(side="left", padx=(0, 10))
-        ttk.Button(r_misc, text="清空显示", width=12, style="Toolbar.TButton",
-                   command=self._safe(self._clear_output)).pack(side="left", padx=6)
-        ttk.Button(r_misc, text="添加串口窗口", width=14, style="Toolbar.TButton",
-                   command=self._safe(self._add_serial_port)).pack(side="left", padx=6)
+        # ============================================================
+        #  启动后 UI 与 variable 状态强同步（杜绝"第一次点击无效、第二次才生效"）
+        # ============================================================
+        # 1) 保存原始数据按钮：save_raw_enabled_var 默认从快照恢复可能为 True，
+        #    但 UI 初始写死是「开始存储数据」→ 两者完全矛盾导致"点一次视觉不变"。
+        #    这里构建完毕后立刻"根据 variable 重置 UI"，保持一致。
+        try:
+            self._update_save_raw_btn_style()
+        except Exception:
+            pass
 
-        # --------------------------------------------------------
-        # 6) 底部：立即保存偏好
-        # --------------------------------------------------------
-        footer = tk.Frame(cf, bg=card_bg)
-        footer.pack(fill="x", padx=10, pady=(12, 12))
-        tk.Label(footer, text="所有偏好：下次启动自动还原 ✓",
-                 bg=card_bg, fg=theme.get("text_secondary"),
-                 font=("Microsoft YaHei UI", 9)).pack(side="left")
-        ttk.Button(footer, text="立即保存偏好", command=self._safe(self._save_preferences)).pack(side="right")
+        # 2) 指令发送顶栏按钮：根据 send_frame_visible 初始态纠正按钮文字（防止未来改动时不一致）
+        try:
+            if getattr(self, "send_frame_visible", True):
+                self.send_panel_btn.config(text="隐藏指令")
+            else:
+                self.send_panel_btn.config(text="指令发送")
+        except Exception:
+            pass
+
+        # 3) 串口配置收起/展开按钮：_apply_serial_config_collapsed 已在 _build_serial_config_panel 末尾调用，
+        #    这里再兜底一次，避免 trace/快照恢复导致文字错位。
+        try:
+            self._apply_serial_config_collapsed()
+        except Exception:
+            pass
+
+        # 4) 顶栏快捷键绑定：用独立函数代替 lambda，避免"首次 F5/Shift+F5 绑定错误导致第一次按无效"
+        def _on_f5(_e=None):
+            if not self.is_collecting:
+                try:
+                    self._safe(self._start_serial)()
+                except Exception:
+                    pass
+            return "break"
+
+        def _on_shift_f5(_e=None):
+            if self.is_collecting:
+                try:
+                    self._safe(self._stop_serial)()
+                except Exception:
+                    pass
+            return "break"
+
+        try:
+            self.root.unbind("<F5>")
+        except Exception:
+            pass
+        try:
+            self.root.unbind("<Shift-F5>")
+        except Exception:
+            pass
+        try:
+            self.root.bind("<F5>", _on_f5)
+            self.root.bind("<Shift-F5>", _on_shift_f5)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------
+    # 串口配置面板（原「高级设置」中的显示/保存项合并到这里）
+    # ------------------------------------------------------------
+    def _build_serial_config_panel(self, parent: tk.Misc) -> None:
+        theme = self.theme
+
+        frame = ttk.LabelFrame(parent, text="串口配置", padding=(12, 10))
+        frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        # 串口配置面板整体按 grid 展开：每行 1 列，权重=0（fixed height，不参与挤压）
+        frame.columnconfigure(0, weight=1)
+
+        def _hint(parent: tk.Misc, text_: str) -> ttk.Label:
+            return ttk.Label(parent, text=text_, style="Hint.TLabel", font=("Microsoft YaHei UI", 9))
+
+        # ---- 第一行：串口 / 波特率 / 数据位 / 停止位 / 展开 / 开始监控 ----
+        row1_wrap = ttk.Frame(frame, style="Card.TFrame")
+        row1_wrap.grid(row=0, column=0, sticky="ew", pady=(0, 3))
+        row1 = ttk.Frame(row1_wrap, style="Card.TFrame")
+        row1.pack(fill="x", padx=2, pady=2)
+        row1.columnconfigure(100, weight=1)
+
+        ttk.Label(row1, text="串口：", style="Card.TLabel").grid(row=0, column=0, sticky="w")
+        self.port_combo = ttk.Combobox(row1, textvariable=self.port_var, width=28, state="readonly")
+        self.port_combo.grid(row=0, column=1, sticky="w", padx=(4, 2))
+        Tooltip(self.port_combo, "选择要监控的串口号（如 COM3 / COM5）。", theme)
+        refresh_ports_btn = RoundedButton(row1, text="刷新", width=6,
+                                          command=self._safe(self._refresh_ports), style="Toolbar.TButton")
+        refresh_ports_btn.grid(row=0, column=2, sticky="w", padx=(0, 8))
+        Tooltip(refresh_ports_btn, "重新扫描本机可用串口。", theme)
+
+        ttk.Label(row1, text="波特率：", style="Card.TLabel").grid(row=0, column=10, sticky="w")
+        self.baudrate_combo = ttk.Combobox(
+            row1, textvariable=self.baudrate_var, width=11, state="normal",
+            values=[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
+                    1000000, 1500000, 2000000, 3000000, 4000000, 5000000, 6000000],
+        )
+        self.baudrate_combo.grid(row=0, column=11, sticky="w", padx=(4, 2))
+        Tooltip(self.baudrate_combo, "选择或输入任意波特率（最高 6,000,000 = 6M）。", theme)
+
+        ttk.Label(row1, text="数据位：", style="Card.TLabel").grid(row=0, column=20, sticky="w", padx=(8, 0))
+        ttk.Combobox(row1, textvariable=self.bytesize_var, values=[5, 6, 7, 8], width=5,
+                     state="readonly").grid(row=0, column=21, sticky="w", padx=(4, 8))
+
+        ttk.Label(row1, text="停止位：", style="Card.TLabel").grid(row=0, column=30, sticky="w")
+        ttk.Combobox(row1, textvariable=self.stopbits_var, values=[1, 1.5, 2], width=5,
+                     state="readonly").grid(row=0, column=31, sticky="w", padx=(4, 8))
+
+        # 折叠/展开按钮（放在第一行最右侧，开始监控按钮左侧，节省一行空间）
+        self.serial_config_toggle_btn = RoundedButton(
+            row1, text="收起 ▲", width=7, style="Toolbar.TButton",
+            command=self._safe(self._toggle_serial_config_panel),
+        )
+        self.serial_config_toggle_btn.grid(row=0, column=199, sticky="e", padx=(6, 2))
+        Tooltip(
+            self.serial_config_toggle_btn,
+            "收起/展开串口配置高级选项（详细模式、发送方、HEX、自动滚动、保存原始数据）。",
+            theme,
+        )
+
+        # 开始监控按钮：占据 row1 最右侧 (weight=1) 的可伸缩空白后放，避免被挤压
+        self.start_btn = RoundedButton(row1, text="● 开始监控", style="Primary.TButton",
+                                       command=self._safe(self._toggle_serial))
+        self.start_btn.grid(row=0, column=200, sticky="e", padx=(0, 4))
+        Tooltip(self.start_btn,
+                "开始监控（绿灯）/ 停止监控（灰）。\n快捷键：F5 开始 / Shift+F5 停止。",
+                theme)
+
+        # ---- 第二行：详细模式 / 发送方 [← spacer(weight=1) →] HEX / 自动滚动 ----
+        row2_wrap = ttk.Frame(frame, style="Card.TFrame")
+        row2_wrap.grid(row=1, column=0, sticky="ew", pady=(2, 3))
+        self._serial_config_detail_row = row2_wrap
+        row2 = ttk.Frame(row2_wrap, style="Card.TFrame")
+        row2.pack(fill="x", padx=2, pady=2)
+        # 明确三列：左(控件) + 中(spacer 缓冲) + 右(控件)，窄窗口只压中间不裁控件
+        row2.columnconfigure(0, weight=0)  # 左区：详细模式 + 发送方
+        row2.columnconfigure(1, weight=1)  # 中区：伸缩 spacer（缓冲区，可压到 0）
+        row2.columnconfigure(2, weight=0)  # 右区：HEX + 自动滚动
+
+        # 左区
+        row2_left = ttk.Frame(row2, style="Card.TFrame")
+        row2_left.grid(row=0, column=0, sticky="w")
+
+        ttk.Checkbutton(row2_left, text="详细模式", variable=self.detail_var,
+                        style="TCheckbutton").pack(side="left", padx=(0, 24))
+        Tooltip(row2_left.winfo_children()[-1],
+                "勾选后串口实时日志会把每个协议字段逐行展开显示。", theme)
+
+        ttk.Label(row2_left, text="发送方：", style="Card.TLabel").pack(side="left")
+        sender_frame = ttk.Frame(row2_left, style="Card.TFrame")
+        sender_frame.pack(side="left", padx=(4, 0))
+        self.sender_module_rb = ttk.Radiobutton(
+            sender_frame, text="模组发送", variable=self.serial_sender_var,
+            value="模组发送", style="TRadiobutton"
+        )
+        self.sender_module_rb.pack(side="left", padx=(0, 10))
+        self.sender_mcu_rb = ttk.Radiobutton(
+            sender_frame, text="MCU发送", variable=self.serial_sender_var,
+            value="MCU发送", style="TRadiobutton"
+        )
+        self.sender_mcu_rb.pack(side="left")
+
+        # 中间 spacer（伸缩缓冲）
+        row2_spacer = ttk.Frame(row2, width=1, style="Card.TFrame")
+        row2_spacer.grid(row=0, column=1, sticky="ew")
+
+        # 右区
+        row2_right = ttk.Frame(row2, style="Card.TFrame")
+        row2_right.grid(row=0, column=2, sticky="e")
+
+        self.hex_chk = ttk.Checkbutton(
+            row2_right, text="HEX 格式", variable=self.hex_format_var,
+            command=self._safe(self._on_hex_format_change), style="TCheckbutton"
+        )
+        self.hex_chk.pack(side="left", padx=(0, 24))
+        Tooltip(self.hex_chk, "HEX 十六进制显示；不勾选则为 ASCII 文本模式。", theme)
+
+        ttk.Checkbutton(row2_right, text="自动滚动", variable=self.autoscroll_var,
+                        style="TCheckbutton").pack(side="left")
+        Tooltip(row2_right.winfo_children()[-1],
+                "有新报文时自动滚动到底部；关闭后可方便回看历史。", theme)
+
+        # ---- 第三/第四行：保存原始数据（拆为两行，避免窄窗口时路径/文件名被裁剪隐藏） ----
+        #  row3a：☑保存原始数据   路径：[Entry 伸缩 weight=1]  [选择]
+        #  row3b：（缩进对齐）    文件名：[Entry]  （超过50MB自动分割, .dat）
+        row3a_wrap = ttk.Frame(frame, style="Card.TFrame")
+        row3a_wrap.grid(row=2, column=0, sticky="ew", pady=(2, 2))
+        self._serial_config_raw_row_a = row3a_wrap
+        row3a = ttk.Frame(row3a_wrap, style="Card.TFrame")
+        row3a.pack(fill="x", padx=2, pady=4)
+        # col 2 给路径 Entry 作为唯一伸缩列，窄窗口只压缩路径、不裁按钮/标签
+        row3a.columnconfigure(2, weight=1)
+
+        # 保存原始数据按钮（蓝色=未启用 / 红色=已启用）
+        self.save_raw_btn = RoundedButton(
+            row3a, text="开始存储数据", style="CompactPrimary.TButton",
+            command=self._safe(self._toggle_save_raw_btn),
+        )
+        self.save_raw_btn.grid(row=0, column=0, sticky="w", padx=(0, 20))
+
+        ttk.Label(row3a, text="路径：", style="Card.TLabel").grid(row=0, column=1, sticky="w")
+        raw_path = ttk.Entry(row3a, textvariable=self.save_raw_path_var, state="readonly")
+        raw_path.grid(row=0, column=2, sticky="we", padx=(4, 8))
+        RoundedButton(row3a, text="选择", width=6, style="Toolbar.TButton",
+                      command=self._safe(self._choose_save_raw_path)).grid(row=0, column=3, sticky="w", padx=(0, 4))
+
+        row3b_wrap = ttk.Frame(frame, style="Card.TFrame")
+        row3b_wrap.grid(row=3, column=0, sticky="ew", pady=(0, 2))
+        self._serial_config_raw_row_b = row3b_wrap
+        row3b = ttk.Frame(row3b_wrap, style="Card.TFrame")
+        row3b.pack(fill="x", padx=2, pady=(0, 4))
+        # 保持与上面 "保存原始数据 checkbox" 的文字对齐：前面放一个等宽空白（宽度≈checkbox）
+        row3b.columnconfigure(0, minsize=112)   # 与「☑保存原始数据 + 20px pad」对齐
+
+        ttk.Label(row3b, text="", style="Card.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(row3b, text="文件名：", style="Card.TLabel").grid(row=0, column=1, sticky="w")
+        raw_name = ttk.Entry(row3b, textvariable=self.save_raw_filename_var, width=26)
+        raw_name.grid(row=0, column=2, sticky="w", padx=(4, 10))
+        _hint(row3b, "(.dat 格式，超过 50MB 自动分割)").grid(row=0, column=3, sticky="w")
+
+        # 根据持久化/默认折叠状态应用显示
+        self._apply_serial_config_collapsed()
+
+    def _toggle_serial_config_panel(self) -> None:
+        """切换串口配置面板的折叠/展开状态。"""
+        self.serial_config_collapsed_var.set(not self.serial_config_collapsed_var.get())
+        self._apply_serial_config_collapsed()
+        try:
+            self._save_preferences()
+        except Exception:
+            pass
+
+    def _apply_serial_config_collapsed(self) -> None:
+        """根据 serial_config_collapsed_var 显示/隐藏高级配置行。"""
+        try:
+            collapsed = bool(self.serial_config_collapsed_var.get())
+        except Exception:
+            collapsed = True
+
+        try:
+            if collapsed:
+                self._serial_config_detail_row.grid_remove()
+                self._serial_config_raw_row_a.grid_remove()
+                self._serial_config_raw_row_b.grid_remove()
+                self.serial_config_toggle_btn.config(text="展开 ▼")
+            else:
+                self._serial_config_detail_row.grid()
+                self._serial_config_raw_row_a.grid()
+                self._serial_config_raw_row_b.grid()
+                self.serial_config_toggle_btn.config(text="收起 ▲")
+        except Exception:
+            # 构建阶段可能尚未完成，忽略
+            pass
 
     def _build_serial_panel(self, parent: tk.Misc) -> None:
-        """构建串口实时主面板（新方案：主区域就是日志框 + 字体控件，低频配置全进 Drawer）。"""
+        """构建实时数据面板（日志框 + 字体控件），放入「实时数据」分组中。"""
         theme = self.theme
         card_bg = theme.get("card_bg")
 
-        # 日志输出区（占满整个 Tab）
-        out_frame = tk.Frame(parent, bg=card_bg,
-                             highlightthickness=1,
-                             highlightbackground=theme.get("border"))
+        # 实时数据分组
+        realtime_frame = ttk.LabelFrame(parent, text="实时数据", padding=6)
+        realtime_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        realtime_frame.columnconfigure(0, weight=1)
+        realtime_frame.rowconfigure(0, weight=1)
+
+        # 日志输出区（占满整个分组）
+        out_frame = tk.Frame(realtime_frame, bg=card_bg,
+                             highlightthickness=0)
         out_frame.grid(row=0, column=0, sticky="nsew")
         out_frame.columnconfigure(0, weight=1)
         out_frame.rowconfigure(0, weight=1)
@@ -1606,42 +1940,11 @@ class ProtocolParserApp:
         self.serial_text.configure(yscrollcommand=scroll.set)
 
         # ============================================================
-        # 日志框右上角微型控件：A- / 字号显示 / A+
-        # ============================================================
-        zoom_wrap = tk.Frame(out_frame, bg=theme.get("surface"))
-        # place：靠右上角，距离边缘 6px
-        zoom_wrap.place(relx=1.0, rely=0.0, anchor="ne", x=-8, y=8)
-
-        def _mini_btn(text: str, cmd, tip: str) -> tk.Button:
-            b = tk.Button(
-                zoom_wrap, text=text, relief="flat", bd=0, cursor="hand2",
-                bg=theme.get("border"), fg=theme.get("text"), padx=8, pady=2,
-                activebackground=theme.get("primary"), activeforeground="#FFFFFF",
-                font=("Microsoft YaHei UI", 9, "bold"),
-                command=cmd,
-            )
-            Tooltip(b, tip, theme)
-            return b
-
-        self._zoom_out_btn = _mini_btn("A−", self._safe(lambda: self._zoom_serial_font(-1)),
-                                        "缩小字号（也可以 Ctrl + 鼠标滚轮 向下）")
-        self._zoom_out_btn.pack(side="left", padx=(0, 4))
-        self._font_size_label = tk.Label(
-            zoom_wrap, text=f"{self.font_size_var.get()}pt", padx=6, pady=2,
-            bg=theme.get("surface"), fg=theme.get("text_secondary"),
-            font=("Microsoft YaHei UI", 9),
-        )
-        self._font_size_label.pack(side="left", padx=(0, 4))
-        self._zoom_in_btn = _mini_btn("A+", self._safe(lambda: self._zoom_serial_font(+1)),
-                                       "放大字号（也可以 Ctrl + 鼠标滚轮 向上）")
-        self._zoom_in_btn.pack(side="left")
-
-        # ============================================================
         # 定义显示用的 Tag（颜色统一从 theme 取，便于切换主题时刷新）
         # ============================================================
         self._apply_theme_tags()
 
-        # 初始状态：根据 HEX 格式勾选状态决定是否显示发送方（发送方现在在 Drawer 里，这里只保留逻辑同步）
+        # 初始状态：根据 HEX 格式勾选状态设置发送方选择是否可用
         self._on_hex_format_change()
 
         # Radiobutton 和 Checkbutton 改值时同步给 collector
@@ -1689,8 +1992,6 @@ class ProtocolParserApp:
         menu.add_command(label="清空显示缓冲", command=_clear)
         menu.add_separator()
         menu.add_command(label="字体与字号设置…", command=self._safe(self._choose_font_settings))
-        menu.add_command(label="放大 (Ctrl+滚轮↑)", command=self._safe(lambda: self._zoom_serial_font(+1)))
-        menu.add_command(label="缩小 (Ctrl+滚轮↓)", command=self._safe(lambda: self._zoom_serial_font(-1)))
 
         def _popup(event):
             try:
@@ -1803,8 +2104,8 @@ class ProtocolParserApp:
             self._save_preferences()
             dlg.destroy()
 
-        ttk.Button(btn_row, text="确定", style="Primary.TButton", command=_on_ok).pack(side="right", padx=(6, 0))
-        ttk.Button(btn_row, text="取消", command=_on_cancel).pack(side="right")
+        RoundedButton(btn_row, text="确定", style="Primary.TButton", command=_on_ok).pack(side="right", padx=(6, 0))
+        RoundedButton(btn_row, text="取消", command=_on_cancel).pack(side="right")
 
         # 居中
         dlg.update_idletasks()
@@ -1828,7 +2129,7 @@ class ProtocolParserApp:
 
         # 模式选择
         mode_row = ttk.LabelFrame(parent, text="发送模式", padding=8)
-        mode_row.grid(row=1, column=0, sticky="we", pady=(0, 6))
+        mode_row.grid(row=1, column=0, sticky="we", pady=(0, 8))
         mode_row.columnconfigure(0, weight=1)
         for i, (label, value) in enumerate([
             ("协议模式（自动组帧+CRC）", "protocol"),
@@ -1840,7 +2141,7 @@ class ProtocolParserApp:
 
         # 协议模式内容
         self.protocol_frame = ttk.LabelFrame(parent, text="协议参数", padding=8)
-        self.protocol_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        self.protocol_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))
         self.protocol_frame.columnconfigure(1, weight=1)
         self.protocol_frame.columnconfigure(3, weight=1)
         ttk.Label(self.protocol_frame, text="命令字 (CmdID):").grid(row=0, column=0, sticky="w", pady=3)
@@ -1865,7 +2166,7 @@ class ProtocolParserApp:
 
         # Raw 内容（共用 1 个帧，通过 mode 显示不同的 placeholder）
         self.raw_frame = ttk.LabelFrame(parent, text="Raw 内容（切换模式后此处改变语义）", padding=8)
-        self.raw_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 6))
+        self.raw_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 8))
         self.raw_frame.columnconfigure(0, weight=1)
         self.raw_hint = ttk.Label(self.raw_frame, text="HEX 模式：1A 2B 3C 或 1A2B3C", foreground="#555")
         self.raw_hint.grid(row=0, column=0, sticky="w")
@@ -1883,13 +2184,13 @@ class ProtocolParserApp:
         cb = ttk.Checkbutton(act, text="启用循环", variable=self.tx_cycle_var)
         cb.grid(row=0, column=2, sticky="w", padx=(0, 10))
 
-        self.send_once_btn = ttk.Button(act, text="▶ 发送一次", command=self._safe(self._on_send_once))
+        self.send_once_btn = RoundedButton(act, text="▶ 发送一次", command=self._safe(self._on_send_once))
         self.send_once_btn.grid(row=0, column=3, sticky="w", padx=2)
-        self.tx_cycle_btn = ttk.Button(act, text="▶ 开始循环", command=self._safe(self._on_toggle_cycle_send))
+        self.tx_cycle_btn = RoundedButton(act, text="▶ 开始循环", command=self._safe(self._on_toggle_cycle_send))
         self.tx_cycle_btn.grid(row=0, column=4, sticky="w", padx=2)
-        self.copy_hex_btn = ttk.Button(act, text="复制当前帧 HEX", command=self._safe(self._on_copy_hex))
+        self.copy_hex_btn = RoundedButton(act, text="复制当前帧 HEX", command=self._safe(self._on_copy_hex))
         self.copy_hex_btn.grid(row=0, column=5, sticky="w", padx=2)
-        self.clear_send_btn = ttk.Button(act, text="清空输入", command=self._safe(self._on_clear_send))
+        self.clear_send_btn = RoundedButton(act, text="清空输入", command=self._safe(self._on_clear_send))
         self.clear_send_btn.grid(row=0, column=6, sticky="w", padx=2)
 
         self._on_send_mode_change()
@@ -2205,13 +2506,11 @@ class ProtocolParserApp:
         text.configure(yscrollcommand=scroll.set)
 
     def _on_hex_format_change(self) -> None:
-        """HEX/ASCII 切换：新 UI 下不再有"显示/隐藏发送方"的操作（发送方改在 Drawer 里一直显示），
-        只保留 ASCII 模式下强制 direction=None 的逻辑，和未来串口启动时保持一致。
-        """
+        """HEX/ASCII 切换：ASCII 模式下禁用发送方选择，HEX 模式下恢复可用。"""
         hex_checked = bool(self.hex_format_var.get())
         try:
             state_txt = "normal" if hex_checked else "disabled"
-            for item in (self.sender_drawer_module, self.sender_drawer_mcu):
+            for item in (self.sender_module_rb, self.sender_mcu_rb):
                 try:
                     item.configure(state=state_txt)
                 except Exception:
@@ -2225,28 +2524,76 @@ class ProtocolParserApp:
         self.serial_text.delete("1.0", "end")
         self.serial_text.configure(state="disabled")
 
-    def _toggle_topmost(self) -> None:
-        """切换窗口置顶状态。"""
-        self.root.attributes("-topmost", self.topmost_var.get())
-        status = "已置顶" if self.topmost_var.get() else "已取消置顶"
-        self._set_status(status)
+    def _on_topmost_change(self) -> None:
+        """窗口置顶状态变化时同步到窗口属性并更新按钮样式。"""
+        new_state = bool(self.topmost_var.get())
+        self.root.attributes("-topmost", new_state)
+        if hasattr(self, "topmost_btn") and self.topmost_btn is not None:
+            if new_state:
+                self.topmost_btn.configure(text="已置顶", style="CompactDanger.TButton")
+            else:
+                self.topmost_btn.configure(text="置顶", style="CompactPrimary.TButton")
+        self._set_status("已置顶" if new_state else "已取消置顶")
 
-    # ------------------------------------------------------------
-    # 新增：抽屉/主题/字体/偏好 相关方法
-    # ------------------------------------------------------------
-    def _toggle_drawer(self) -> None:
+    def _toggle_topmost_btn(self) -> None:
+        """点击置顶按钮时切换状态。"""
+        self.topmost_var.set(not self.topmost_var.get())
+        # trace_add 会自动触发 _on_topmost_change()
+
+    def _toggle_send_panel(self) -> None:
+        """显示/隐藏右侧指令发送面板（发送面板动态联动，触发父容器几何重绘 Reflow）。
+        切换逻辑：
+        * 隐藏：PanedWindow.forget(send_frame) → 垂直/水平方向重新分配空间；
+        * 显示：PanedWindow.add(send_frame, weight=2) → 再 sashpos 恢复比例；
+        * 每次切换后：update_idletasks() 强制触发父容器 Reflow，绝对不 place/overlap 其它元素。
+        """
         try:
-            if self.drawer is None:
-                return
-            self.drawer.toggle()
-            # 顺便保存当前折叠状态
-            try:
-                self._save_preferences()
-            except Exception:
-                pass
+            if self.send_frame_visible:
+                # ---- 收起（隐藏）发送面板 ----
+                # 记录当前右侧所占比例（在 forget 之前）
+                try:
+                    w = max(1, self.main_paned.winfo_width())
+                    try:
+                        self.send_frame_frac = 1.0 - self.main_paned.sashpos(0) / w
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                self.main_paned.forget(self.send_frame)
+                self.send_frame_visible = False
+                self.send_panel_btn.config(text="指令发送")
+                self._set_status("已隐藏指令发送面板（垂直空间自动重分配给日志区）")
+                # 强制重排：PanedWindow.forget 本身会触发几何重排；再 update_idletasks 一次确保 Reflow
+                self.main_paned.update_idletasks()
+                self.body_frame.update_idletasks() if getattr(self, "body_frame", None) else None
+                self.root.update_idletasks()
+            else:
+                # ---- 展开（显示）发送面板 ----
+                self.main_paned.add(self.send_frame, weight=2)
+                self.send_frame_visible = True
+                self.send_panel_btn.config(text="隐藏指令")
+                self._set_status("已显示指令发送面板")
+                # 强制父容器几何重排 Reflow：避免"先展开再挤压"的跳动
+                self.main_paned.update_idletasks()
+                self.body_frame.update_idletasks() if getattr(self, "body_frame", None) else None
+                self.root.update_idletasks()
+                # 恢复之前记录的比例（Reflow 完成后再调 sashpos）
+                self.root.after(20, self._restore_send_panel_width)
         except Exception as e:  # noqa: BLE001
-            self._report_error("切换高级设置失败", e)
+            self._report_error("切换指令发送面板失败", e)
 
+    def _restore_send_panel_width(self) -> None:
+        """恢复指令发送面板之前的宽度比例。"""
+        try:
+            w = self.main_paned.winfo_width()
+            if w > 0 and 0.1 <= self.send_frame_frac <= 0.9:
+                self.main_paned.sashpos(0, int(w * (1 - self.send_frame_frac)))
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------
+    # 主题/字体/偏好 相关方法
+    # ------------------------------------------------------------
     def _apply_theme_tags(self) -> None:
         """刷新 serial_text 的 tag 颜色/字体。颜色统一从 ThemeManager 取。"""
         if not hasattr(self, "serial_text") or self.serial_text is None:
@@ -2292,14 +2639,7 @@ class ProtocolParserApp:
             spacing3 = 0
         # 4) 同步 tag 颜色/字体（包含 cmd_font）
         self._apply_theme_tags()
-        # 5) 顶栏 / 右上角两处字号显示（都放到【最上面一栏】后，顶栏字号 Spinbox 会联动，这里保证 Text 也同步）
-        size_pt = int(self.font_size_var.get())
-        try:
-            if hasattr(self, "_font_size_label") and self._font_size_label is not None:
-                self._font_size_label.configure(text=f"{size_pt}pt")
-        except Exception:
-            pass
-        # 6) 指令发送 Tab 里的两个代码 Text 也跟着改（fields_text / raw_text）—— 保证 HEX 对齐不错位
+        # 5) 指令发送 Tab 里的两个代码 Text 也跟着改（fields_text / raw_text）—— 保证 HEX 对齐不错位
         try:
             for _w in (getattr(self, "fields_text", None), getattr(self, "raw_text", None)):
                 if _w is None:
@@ -2329,16 +2669,12 @@ class ProtocolParserApp:
                 self.theme.apply_ttk_styles(self.ttk_style)
             except Exception as e:  # noqa: BLE001
                 self._report_error("应用 ttk 样式失败", e)
+            RoundedButton.init_styles(self.theme)
+            RoundedButton.redraw_all(self.root)
         t = self.theme
-        # 2) 根窗口 / 顶栏 / Notebook 体 / 状态栏 / Drawer 颜色
+        # 2) 根窗口 / 顶栏 / Notebook 体 / 状态栏 颜色
         try:
             self.root.configure(bg=t.get("app_bg"))
-        except Exception:
-            pass
-        try:
-            if self.drawer is not None:
-                self.drawer.theme = self.theme
-                self.drawer.refresh_colors()
         except Exception:
             pass
         # 3) serial_text / 字体zoom_wrap 重绘颜色
@@ -2352,37 +2688,8 @@ class ProtocolParserApp:
             )
         except Exception:
             pass
-        try:
-            if hasattr(self, "drawer_btn"):
-                self.drawer_btn.configure(bg=t.get("app_bg"), fg=t.get("text"),
-                                          activebackground=t.get("border"), activeforeground=t.get("text"))
-        except Exception:
-            pass
-        # 4) 顶部工具栏所有 Label/Frame（这些是 tk.Label，不是 ttk.Label，需要手动改）
-        try:
-            for child in getattr(self, "_top_toolbar_children", []):
-                try:
-                    if isinstance(child, tk.Label):
-                        child.configure(bg=t.get("app_bg"), fg=t.get("text_secondary"))
-                    elif isinstance(child, tk.Frame):
-                        child.configure(bg=t.get("app_bg"))
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        # 5) tag 颜色/字体 + zoom 控件颜色
+        # 4) tag 颜色/字体
         self._apply_font_and_line_spacing(save=False)
-        try:
-            for attr in ("_zoom_in_btn", "_zoom_out_btn"):
-                btn = getattr(self, attr, None)
-                if btn is None:
-                    continue
-                btn.configure(bg=t.get("border"), fg=t.get("text"),
-                              activebackground=t.get("primary"), activeforeground="#FFFFFF")
-            if getattr(self, "_font_size_label", None) is not None:
-                self._font_size_label.configure(bg=t.get("surface"), fg=t.get("text_secondary"))
-        except Exception:
-            pass
         # 6) 保存偏好
         try:
             self._save_preferences()
@@ -2398,20 +2705,29 @@ class ProtocolParserApp:
             self.save_raw_max_size = 50 * 1024 * 1024
 
     def _save_preferences(self) -> None:
-        """把视觉/字体/抽屉/高级设置偏好写进 snapshot.extras（不改动串口会话字段）。"""
+        """把视觉/字体/抽屉/高级设置偏好 + 当前窗口尺寸/位置 写进 snapshot.extras。"""
         snap = load_snapshot() or SessionSnapshot()
         try:
             extras = dict(snap.extras) if isinstance(snap.extras, dict) else {}
         except Exception:
             extras = {}
+
+        # 记录当前窗口几何：关闭时保存，下次启动恢复（保证 minsize 生效 + 不必每次都手动拉大小）
+        try:
+            geom = self.root.geometry() if self.root else ""
+            if geom:
+                extras["window_geometry"] = str(geom)
+        except Exception:
+            pass
+
         extras.update({
             "theme_mode": self.theme.mode,
             "theme_style": self.theme.style,
             "font_family": self.font_family_var.get(),
             "font_size": int(self.font_size_var.get()),
             "line_spacing_px": int(self.line_spacing_px_var.get()),
-            "drawer_open": bool(self.drawer.visible) if self.drawer is not None else False,
             "topmost": bool(self.topmost_var.get()),
+            "serial_config_collapsed": bool(self.serial_config_collapsed_var.get()),
             "save_raw_enabled_default": bool(self.save_raw_enabled_var.get()),
             "save_raw_path_default": self.save_raw_path_var.get(),
             "raw_auto_split_mb": int(self.raw_auto_split_mb_var.get()),
@@ -2428,7 +2744,7 @@ class ProtocolParserApp:
 
     def _on_app_close(self) -> None:
         """WM_DELETE_WINDOW 统一关闭流程：
-        ① 保存视觉偏好（theme/font/drawer/topmost/raw 默认）→ extras
+        ① 保存视觉偏好（theme/font/topmost/raw 默认）→ extras
         ② 保存当前串口会话快照（was_collecting/协议/串口/波特率/发送状态）→ 下次恢复用
         ③ 停周期发送 → 停串口 → close_log_file(写结束标记) → close_save_raw_file
         ④ root.destroy()
@@ -2454,11 +2770,19 @@ class ProtocolParserApp:
                     extras.setdefault("font_family", self.font_family_var.get())
                     extras.setdefault("font_size", int(self.font_size_var.get()))
                     extras.setdefault("line_spacing_px", int(self.line_spacing_px_var.get()))
-                    extras.setdefault("drawer_open", bool(self.drawer.visible) if self.drawer is not None else False)
                     extras.setdefault("topmost", bool(self.topmost_var.get()))
+                    extras.setdefault("serial_config_collapsed", bool(self.serial_config_collapsed_var.get()))
                     extras.setdefault("save_raw_enabled_default", bool(self.save_raw_enabled_var.get()))
                     extras.setdefault("save_raw_path_default", str(self.save_raw_path_var.get()))
                     extras.setdefault("raw_auto_split_mb", int(self.raw_auto_split_mb_var.get()))
+                    # 窗口几何：优先用 _save_preferences 里已经记下的，如果那时没记上就这里兜底补一次
+                    try:
+                        if "window_geometry" not in extras and self.root:
+                            geom = self.root.geometry()
+                            if geom:
+                                extras["window_geometry"] = str(geom)
+                    except Exception:
+                        pass
                     snap.extras = extras
                 except Exception:
                     pass
@@ -2572,8 +2896,8 @@ class ProtocolParserApp:
             dlg.destroy()
             self._set_status(f"已打开串口监控进程: {port}")
 
-        ttk.Button(btn_frm, text="确定", command=on_ok).pack(side="left", padx=8)
-        ttk.Button(btn_frm, text="取消", command=dlg.destroy).pack(side="left", padx=8)
+        RoundedButton(btn_frm, text="确定", command=on_ok).pack(side="left", padx=8)
+        RoundedButton(btn_frm, text="取消", command=dlg.destroy).pack(side="left", padx=8)
 
     def _spawn_monitor(self, port: str, baudrate: int) -> None:
         """启动独立进程运行相同程序，传 --monitor port baud。"""
@@ -2787,11 +3111,7 @@ class ProtocolParserApp:
 
         # 5) 自动开始接收（重点：串口被拔 → _start_serial 已自己 _report_error，不会崩；这里再兜一层）
         if recovered_need_collect and snap.port:
-            # 跳到"串口实时"tab
-            try:
-                self.notebook.select(self.serial_tab)
-            except Exception:
-                pass
+            # 串口实时面板始终可见，无需切换标签页
             serial_launch_attempted = True
             try:
                 self._start_serial()
@@ -2995,7 +3315,7 @@ class ProtocolParserApp:
 
         self.is_collecting = True
         try:
-            self.start_btn.configure(text="●  停止监控", style="Danger.TButton")
+            self.start_btn.configure(text="✓ 停止监控", style="Danger.TButton")
         except Exception:
             self.start_btn.configure(text="停止监控")
         mode_label = "ASCII" if is_ascii else "HEX"
@@ -3059,6 +3379,7 @@ class ProtocolParserApp:
                 path = filedialog.askdirectory(title="选择保存路径")
                 if not path:
                     self.save_raw_enabled_var.set(False)
+                    self._update_save_raw_btn_style()
                     return
                 self.save_raw_path_var.set(path)
             if self.is_collecting:
@@ -3067,6 +3388,21 @@ class ProtocolParserApp:
         else:
             self._close_save_raw_file()
             self._set_status("原始数据保存已关闭")
+        self._update_save_raw_btn_style()
+
+    def _update_save_raw_btn_style(self) -> None:
+        """根据 save_raw_enabled_var 更新按钮样式。"""
+        if hasattr(self, "save_raw_btn") and self.save_raw_btn is not None:
+            if self.save_raw_enabled_var.get():
+                self.save_raw_btn.configure(text="停止存储数据", style="CompactDanger.TButton")
+            else:
+                self.save_raw_btn.configure(text="开始存储数据", style="CompactPrimary.TButton")
+
+    def _toggle_save_raw_btn(self) -> None:
+        """点击保存原始数据按钮时切换状态。"""
+        self.save_raw_enabled_var.set(not self.save_raw_enabled_var.get())
+        self._on_save_raw_toggle()
+        # trace_add 会自动触发 _update_save_raw_btn_style()
 
     def _open_save_raw_file(self) -> None:
         """打开原始数据保存文件。"""
@@ -3184,7 +3520,7 @@ class ProtocolParserApp:
             pass
         self.save_raw_count = 0
         try:
-            self.start_btn.configure(text="○  开始监控", style="Primary.TButton")
+            self.start_btn.configure(text="○ 开始监控", style="Primary.TButton")
         except Exception:
             self.start_btn.configure(text="开始监控")
         self._set_status("已停止")
