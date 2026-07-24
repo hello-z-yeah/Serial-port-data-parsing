@@ -664,15 +664,18 @@ class RoundedButton(tk.Canvas):
                 native_kw[k] = kw.pop(k)
         if "text" in kw:
             self._text = kw.pop("text")
-            # 文本变化时重新计算宽度，确保能容纳新文本
             import tkinter.font as tkfont
             f = tkfont.Font(font=self._font_tuple)
             text_w = f.measure(self._text) if self._text else 0
-            min_w = (self._width_chars * max(f.measure("0"), 5)) if self._width_chars else 0
-            new_w = max(min_w, text_w) + self._pad_x * 2
-            cur_w = int(self.cget("width"))
-            if new_w > cur_w:
-                native_kw["width"] = new_w
+            if self._width_chars:
+                char_w = max(f.measure("0"), 5)
+                fixed_w = self._width_chars * char_w + self._pad_x * 2
+                native_kw["width"] = fixed_w
+            else:
+                new_w = text_w + self._pad_x * 2
+                cur_w = int(self.cget("width"))
+                if new_w != cur_w:
+                    native_kw["width"] = new_w
         if "style" in kw:
             self._style_name = kw.pop("style")
         if "state" in kw:
@@ -1093,8 +1096,9 @@ class ProtocolParserApp:
 
         # 主布局
         self._build_ui()
-        # 设置左右分栏初始比例（右侧约 30%）
-        self.root.after(100, self._restore_send_panel_width)
+        # 设置左右分栏初始比例（右侧约 30%）——仅当面板默认显示时才在启动后恢复宽度
+        if self.send_frame_visible:
+            self.root.after(100, self._restore_send_panel_width)
         self._load_protocols()
 
         # 定时刷新 UI 队列
@@ -1516,12 +1520,12 @@ class ProtocolParserApp:
         row0_right.grid(row=0, column=2, sticky="e")
         _tool_place_reset(row0_right)
 
-        self.send_panel_btn = RoundedButton(row0_right, text="隐藏指令", style="Toolbar.TButton",
+        self.send_panel_btn = RoundedButton(row0_right, text="打开指令发送界面", style="Toolbar.TButton",
                                             command=self._safe(self._toggle_send_panel))
         self.send_panel_btn.grid(row=0, column=row0_right._next_col, sticky="w",  # type: ignore[attr-defined]
                                  padx=(0, 4), pady=(1, 1))
         row0_right._next_col += 1  # type: ignore[attr-defined]
-        Tooltip(self.send_panel_btn, "显示或隐藏右侧「指令发送」面板。", self.theme)
+        Tooltip(self.send_panel_btn, "打开或关闭右侧「指令发送」面板。", self.theme)
 
         _tool_button(row0_right, "添加串口", self._add_serial_port,
                      tip="新增一个独立串口监控窗口。", padx=(0, 4))
@@ -1535,6 +1539,7 @@ class ProtocolParserApp:
             self.topmost_btn = RoundedButton(
                 row0_right, text="置顶", style="CompactPrimary.TButton",
                 command=self._safe(self._toggle_topmost_btn),
+                width=4,
             )
             self.topmost_btn.grid(row=0, column=row0_right._next_col, sticky="w",  # type: ignore[attr-defined]
                                   padx=(2, 0), pady=(1, 1))
@@ -1603,18 +1608,25 @@ class ProtocolParserApp:
         self._build_send_panel(self.send_panel_inner)
         self.main_paned.add(self.send_frame, weight=2)  # 左侧 3 右侧 2
 
-        # 为左右分栏设置最小宽度，避免缩小时发送面板被压得过窄
-        try:
-            self.main_paned.paneconfig(self.realtime_container, minsize=260)
-            self.main_paned.paneconfig(self.send_frame, minsize=200)
-        except Exception:
-            pass
-
         # 兼容旧代码可能引用到的 tab 别名
         self.serial_tab = self.serial_frame
         self.send_tab = self.send_frame
-        self.send_frame_visible = True
+        # ⚠️ 先设置默认可见性，后续 minsize/weight 判断才会生效
+        self.send_frame_visible = False
         self.send_frame_frac = 0.40  # 右侧默认占 40%
+
+        # 为左右分栏设置最小宽度，避免缩小时发送面板被压得过窄
+        # 默认关闭时先把 send_frame 的 minsize 与 weight 都置 0，
+        # 否则 minsize=200 会导致即使 sashpos 推到最右也有 200px 的发送面板挤在视野内，
+        # 出现"默认打开+大小不对+点一次开关再关闭才能消除"的 bug
+        try:
+            self.main_paned.paneconfig(self.realtime_container, minsize=260)
+            if self.send_frame_visible:
+                self.main_paned.paneconfig(self.send_frame, minsize=200)
+            else:
+                self.main_paned.paneconfig(self.send_frame, minsize=0, weight=0)
+        except Exception:
+            pass
 
         # ============================================================
         #  row=2: 底部状态栏（fixed）
@@ -1657,9 +1669,35 @@ class ProtocolParserApp:
         # 2) 指令发送顶栏按钮：根据 send_frame_visible 初始态纠正按钮文字（防止未来改动时不一致）
         try:
             if getattr(self, "send_frame_visible", True):
-                self.send_panel_btn.config(text="隐藏指令")
+                self.send_panel_btn.config(text="关闭指令发送界面", style="Danger.TButton")
             else:
-                self.send_panel_btn.config(text="指令发送")
+                self.send_panel_btn.config(text="打开指令发送界面", style="Toolbar.TButton")
+        except Exception:
+            pass
+
+        # 2.5) 指令发送面板默认关闭：
+        #   - 立刻把 weight/minsize 设 0（即使此时 winfo_width 还不准，先把最小宽度这道闸门关上）
+        #   - after(200) 再执行一次 sashpos 推到最右（此时窗口几何稳定，winfo_width 是真实值）
+        #   双重保险避免"默认打开+大小错乱，点一次开关才恢复"的 bug
+        try:
+            if not self.send_frame_visible:
+                self.main_paned.paneconfig(self.send_frame, weight=0, minsize=0)
+        except Exception:
+            pass
+        def _deferred_hide_send_panel():
+            try:
+                if hasattr(self, "send_frame_visible") and not self.send_frame_visible:
+                    if hasattr(self, "main_paned"):
+                        _pw = max(1, self.main_paned.winfo_width())
+                        self.main_paned.sashpos(0, _pw)
+            except Exception:
+                pass
+        try:
+            self.root.after(200, self._safe(_deferred_hide_send_panel))
+        except Exception:
+            pass
+        try:
+            self.root.update_idletasks()
         except Exception:
             pass
 
@@ -2541,16 +2579,20 @@ class ProtocolParserApp:
         # trace_add 会自动触发 _on_topmost_change()
 
     def _toggle_send_panel(self) -> None:
-        """显示/隐藏右侧指令发送面板（发送面板动态联动，触发父容器几何重绘 Reflow）。
-        切换逻辑：
-        * 隐藏：PanedWindow.forget(send_frame) → 垂直/水平方向重新分配空间；
-        * 显示：PanedWindow.add(send_frame, weight=2) → 再 sashpos 恢复比例；
-        * 每次切换后：update_idletasks() 强制触发父容器 Reflow，绝对不 place/overlap 其它元素。
+        """显示/隐藏右侧指令发送面板。
+
+        ⚠️ 防闪烁终极方案（彻底避免"先弹宽框再回弹"）：
+        不再使用 PanedWindow.forget/add，因为 add 会先按 weight=3/2 平均分配宽度，
+        再由 sashpos 矫正，这两次布局计算之间的帧会被人眼捕捉到 → 视觉"弹一下"。
+
+        正确做法：send_frame 永远留在 PanedWindow 里（pane 结构不变），仅通过
+        「sashpos 推拉分隔条」+「weight/minsize 动态调整」来实现显示/隐藏。
+        整个过程只有一次 sashpos，只有一次最终重绘。
         """
         try:
             if self.send_frame_visible:
-                # ---- 收起（隐藏）发送面板 ----
-                # 记录当前右侧所占比例（在 forget 之前）
+                # ---- 收起（隐藏）发送面板：把分隔条推到最右边 ----
+                # 先记录当前右侧所占比例（在推到右边之前）
                 try:
                     w = max(1, self.main_paned.winfo_width())
                     try:
@@ -2559,26 +2601,47 @@ class ProtocolParserApp:
                         pass
                 except Exception:
                     pass
-                self.main_paned.forget(self.send_frame)
+                # 把 send_frame 的 weight 置 0、minsize 置 0，避免它继续占空间
+                try:
+                    self.main_paned.paneconfig(self.send_frame, weight=0, minsize=0)
+                except Exception:
+                    pass
+                # 把分隔条一路推到 PanedWindow 最右侧（= send_frame 宽度 0）
+                try:
+                    w = max(1, self.main_paned.winfo_width())
+                    self.main_paned.sashpos(0, w)
+                except Exception:
+                    pass
                 self.send_frame_visible = False
-                self.send_panel_btn.config(text="指令发送")
-                self._set_status("已隐藏指令发送面板（垂直空间自动重分配给日志区）")
-                # 强制重排：PanedWindow.forget 本身会触发几何重排；再 update_idletasks 一次确保 Reflow
-                self.main_paned.update_idletasks()
-                self.body_frame.update_idletasks() if getattr(self, "body_frame", None) else None
+                self.send_panel_btn.config(text="打开指令发送界面", style="Toolbar.TButton")
+                self._set_status("已隐藏指令发送面板")
                 self.root.update_idletasks()
             else:
-                # ---- 展开（显示）发送面板 ----
-                self.main_paned.add(self.send_frame, weight=2)
+                # ---- 展开（显示）发送面板：把分隔条从最右边拉回目标位置 ----
+                # 恢复 send_frame 的 weight 和 minsize（必须先于 sashpos 设置，
+                # 否则 minsize=0 时 sashpos 无法让右侧撑开）
+                try:
+                    self.main_paned.paneconfig(self.realtime_container, minsize=260)
+                    self.main_paned.paneconfig(self.send_frame, weight=2, minsize=200)
+                except Exception:
+                    pass
+                # 一次性把 sash 拉到目标位置（pane 结构没变，只有这一次重定位）
+                paned_w = max(1, self.main_paned.winfo_width())
+                target_sash = None
+                if 0.1 <= self.send_frame_frac <= 0.9:
+                    target_right_px = max(200, int(paned_w * self.send_frame_frac))
+                    target_sash = paned_w - target_right_px
+                if target_sash is not None:
+                    try:
+                        self.main_paned.sashpos(0, target_sash)
+                    except Exception:
+                        pass
+                # 更新按钮文字/样式（不触发布局）
                 self.send_frame_visible = True
-                self.send_panel_btn.config(text="隐藏指令")
+                self.send_panel_btn.config(text="关闭指令发送界面", style="Danger.TButton")
                 self._set_status("已显示指令发送面板")
-                # 强制父容器几何重排 Reflow：避免"先展开再挤压"的跳动
-                self.main_paned.update_idletasks()
-                self.body_frame.update_idletasks() if getattr(self, "body_frame", None) else None
+                # 统一只重绘一次
                 self.root.update_idletasks()
-                # 恢复之前记录的比例（Reflow 完成后再调 sashpos）
-                self.root.after(20, self._restore_send_panel_width)
         except Exception as e:  # noqa: BLE001
             self._report_error("切换指令发送面板失败", e)
 
@@ -2947,10 +3010,16 @@ class ProtocolParserApp:
         4) 若 `was_collecting=True` → 尝试自动 start serial；串口不存在/被拔了只弹友好提示，绝不崩。
         5) 所有恢复步骤，即使 ① 协议/串口任何一步出错 → 立刻 clear_snapshot() 防止下次启动再进入恢复流程循环尝试。
 
-        约定：失败友好提示不阻塞主循环，所有异常（非 ProtocolError 也 _report_error。
+        ⚠️ 关键守卫：只有快照里 `is_update_session=True` 时才执行恢复 + 弹窗；
+        否则只是上一次正常关闭持久化的偏好（extras 字段已在最上方 __init__ 中读取完毕），
+        直接 return，绝不弹「会话已恢复」提示，也不删除快照（偏好下次还要用）。
         """
         snap = load_snapshot()
         if not snap:
+            return
+        if not bool(getattr(snap, "is_update_session", False)):
+            # 非更新场景：快照仅用于读取 extras（偏好），已在 __init__ 顶部完成，
+            # 这里直接跳过恢复流程，不弹窗、不清快照（下次启动还需要 extras）。
             return
 
         product_tip: list[str] = []
@@ -3148,7 +3217,8 @@ class ProtocolParserApp:
                 except Exception as e:  # noqa: BLE001
                     self._report_error("恢复周期发送失败", e)
 
-        # 收尾：清掉快照（无论成功失败都清）
+        # 收尾：只有更新快照才清理（防止下次启动再误触发恢复流程）
+        # 正常关闭快照（is_update_session=False）走不到这里，直接在顶部 return 掉了
         clear_snapshot()
 
         tip_parts: list[str] = []
@@ -4060,6 +4130,7 @@ class ProtocolParserApp:
             tx_raw=tx_raw,
             tx_cycle_enabled=tx_cycle_enabled,
             tx_interval_ms=tx_interval_ms,
+            is_update_session=True,
         )
         save_snapshot(snap)
         return snap

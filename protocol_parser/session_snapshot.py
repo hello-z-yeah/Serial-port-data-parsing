@@ -69,6 +69,15 @@ class SessionSnapshot:
     tx_cycle_enabled: bool = False         # 是否正在循环
     tx_interval_ms: int = 1000             # 循环间隔 ms
 
+    # 是否来自"在线更新"流程。
+    # 正常关闭程序时，_on_app_close 也会把当前会话/偏好写进同一个快照文件（以便重启恢复偏好），
+    # 但那种情况 is_update_session 保持默认 False。只有 _prepare_session_snapshot_for_update()
+    # 在"下载并安装更新 → 安全停串口 → 保存快照 → 退出替换exe"的链路里才会显式设为 True。
+    # 启动时 _maybe_restore_session_after_update 会检查这个标记：
+    #   False → 只是上一次正常关闭保存的偏好，不执行协议/串口恢复，也不弹窗。
+    #   True  → 真的是更新后的恢复，才走完整的恢复流程并弹「会话已恢复」提示。
+    is_update_session: bool = False
+
     # 版本标签（方便未来迁移）
     version: int = 1
 

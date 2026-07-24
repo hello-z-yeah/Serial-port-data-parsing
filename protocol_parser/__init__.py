@@ -38,7 +38,7 @@ from .monitor import ResultLogger, run_paste_mode, run_serial_mode, list_serial_
 from .cli import find_protocol_file
 
 # 版本号（三位语义化）。发新版只改这里：主版本.次版本.修订号
-VERSION: str = "1.0.1"
+VERSION: str = "1.0.2"
 # 发布用 GitHub 仓库（owner/repo）
 UPDATER_GITHUB_REPO: str = "hello-z-yeah/Serial-port-data-parsing"
 
