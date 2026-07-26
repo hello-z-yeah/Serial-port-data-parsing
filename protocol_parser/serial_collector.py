@@ -314,8 +314,28 @@ class SerialCollector:
                         self.on_raw(raw, now)
                     continue
 
+                # 无协议（cfg 没有 frame 配置）：直接把原始字节回传给 GUI 显示，
+                # 不走帧同步，避免 FrameSynchronizer 用默认 0xA5A5 帧头误消费字节
+                frame_cfg = self.cfg.get("frame", {}) if self.cfg else {}
+                if not frame_cfg:
+                    if self.on_raw:
+                        try:
+                            self.on_raw(raw, now)
+                        except Exception as e:
+                            if self.on_error:
+                                self.on_error(f"原始数据回调异常（已跳过）: {e}")
+                    continue
+
                 # HEX 模式：帧同步 + 协议解析
                 frames = self.sync.feed(raw)
+                # 没切出任何帧（如接收的是纯 ASCII 文本，无协议帧头）：
+                # 把这段原始字节回传给 GUI，按 HEX 格式显示，避免界面空白误以为没数据
+                if not frames and self.on_raw:
+                    try:
+                        self.on_raw(raw, now)
+                    except Exception as e:
+                        if self.on_error:
+                            self.on_error(f"原始数据回调异常（已跳过）: {e}")
                 for frame in frames:
                     try:
                         result = parse_frame(frame.raw, self.cfg, direction=self.direction)

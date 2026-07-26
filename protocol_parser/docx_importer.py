@@ -687,8 +687,8 @@ def import_from_docx(path: str | Path, product_name: str | None = None) -> dict:
     warnings: list[str] = []
     parsed = _read_docx(path)
 
-    total_tables = len(parsed.tables)
-    total_paragraphs = len(parsed.paragraphs)
+    total_tables = len(parsed.raw_tables)
+    total_paragraphs = len(parsed.raw_paragraphs)
     # 文档内容为空（没读到任何段落/表格）→ 直接告警，避免用户以为导入成功实际什么都没解析
     if total_paragraphs == 0 and total_tables == 0:
         warnings.append("Word 文档未读取到任何段落或表格，请检查 docx 文件是否有效、是否加密、是否为 .doc 老格式。")

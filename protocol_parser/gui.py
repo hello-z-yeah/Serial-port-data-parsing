@@ -325,7 +325,7 @@ class ThemeManager:
         ttk_style.configure("TLabelframe.Label",
                             background=app_bg,        # 标签文字在"卡片上沿外"用 app_bg（视觉更层叠）；如果要更"融入卡片"改成 card_bg 也可
                             foreground=text_2,
-                            font=("Microsoft YaHei UI", 9, "bold"))
+                            font=("Microsoft YaHei UI", 10, "bold"))
         ttk_style.configure("TLabel", background=app_bg, foreground=text)
         ttk_style.configure("Card.TLabel", background=card_bg, foreground=text)
         ttk_style.configure("Hint.TLabel", background=card_bg, foreground=text_2)
@@ -336,29 +336,29 @@ class ThemeManager:
                             bordercolor=card_border,
                             relief="solid",
                             borderwidth=1)
-        ttk_style.configure("StatusBar.TLabel", background=card_bg, foreground=text_2, font=("Microsoft YaHei UI", 9))
+        ttk_style.configure("StatusBar.TLabel", background=card_bg, foreground=text_2, font=("Microsoft YaHei UI", 10))
 
         # Button：主按钮 + 普通按钮（紧凑尺寸）
-        ttk_style.configure("TButton", padding=(6, 2), relief="flat", background=surface, foreground=text, bordercolor=border, focusthickness=1, font=("Microsoft YaHei UI", 8))
+        ttk_style.configure("TButton", padding=(6, 2), relief="flat", background=surface, foreground=text, bordercolor=border, focusthickness=1, font=("Microsoft YaHei UI", 10))
         ttk_style.map("TButton",
                       background=[("active", palette["primary"] if self.style == "win11" else surface),
                                   ("pressed", primary_hover),
                                   ("disabled", app_bg)],
                       foreground=[("active", "#FFFFFF" if self.style == "win11" else text),
                                   ("disabled", text_dis)])
-        ttk_style.configure("Primary.TButton", padding=(8, 3), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 9, "bold"), borderwidth=0)
+        ttk_style.configure("Primary.TButton", padding=(8, 3), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
         ttk_style.map("Primary.TButton",
                       background=[("active", primary_hover), ("pressed", primary_hover), ("disabled", border)],
                       foreground=[("disabled", text_dis)])
-        ttk_style.configure("Danger.TButton", padding=(8, 3), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 9, "bold"), borderwidth=0)
+        ttk_style.configure("Danger.TButton", padding=(8, 3), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
         ttk_style.map("Danger.TButton",
                       background=[("active", "#A5211C"), ("pressed", "#A5211C"), ("disabled", border)])
         # 紧凑型切换按钮（置顶、保存原始数据等）
-        ttk_style.configure("CompactPrimary.TButton", padding=(6, 2), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 8, "bold"), borderwidth=0)
+        ttk_style.configure("CompactPrimary.TButton", padding=(6, 2), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
         ttk_style.map("CompactPrimary.TButton",
                       background=[("active", primary_hover), ("pressed", primary_hover), ("disabled", border)],
                       foreground=[("disabled", text_dis)])
-        ttk_style.configure("CompactDanger.TButton", padding=(6, 2), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 8, "bold"), borderwidth=0)
+        ttk_style.configure("CompactDanger.TButton", padding=(6, 2), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
         ttk_style.map("CompactDanger.TButton",
                       background=[("active", "#A5211C"), ("pressed", "#A5211C"), ("disabled", border)])
 
@@ -384,7 +384,7 @@ class ThemeManager:
         ttk_style.configure("Toolbar.TCheckbutton", background=app_bg, foreground=text)
         ttk_style.configure("Toolbar.TRadiobutton", background=app_bg, foreground=text)
         ttk_style.configure("Toolbar.TLabel", background=app_bg, foreground=text)
-        ttk_style.configure("Toolbar.TButton", padding=(4, 2), font=("Microsoft YaHei UI", 8))
+        ttk_style.configure("Toolbar.TButton", padding=(4, 2), font=("Microsoft YaHei UI", 10))
 
         # PanedWindow：左右分栏之间的"分隔条"加宽，让左右大卡片之间更有层差感
         try:
@@ -395,7 +395,7 @@ class ThemeManager:
 
         # Notebook
         ttk_style.configure("TNotebook", background=app_bg, borderwidth=0)
-        ttk_style.configure("TNotebook.Tab", padding=(14, 6), background=app_bg, foreground=text_2, font=("Microsoft YaHei UI", 9))
+        ttk_style.configure("TNotebook.Tab", padding=(14, 6), background=app_bg, foreground=text_2, font=("Microsoft YaHei UI", 10))
         ttk_style.map("TNotebook.Tab",
                       background=[("selected", card_bg), ("active", card_bg)],
                       foreground=[("selected", primary if self.style == "win11" else text), ("active", text)])
@@ -700,58 +700,6 @@ class RoundedButton(tk.Canvas):
     def __setitem__(self, key, val): self.configure(**{key: val})
 
 
-# ---------- 通用：字体工具（仅保留等宽字体） ----------
-
-
-def _filter_monospace_fonts(families: list[str]) -> list[str]:
-    """从系统字体列表里挑出「适合 HEX/ASCII 报文」的等宽字体。
-
-    Tk 无法直接查询某个字体是否 fixed-pitch，这里采用白名单关键字匹配（中英文 Windows/macOS
-    常见等宽字体全覆盖，排序越靠前越推荐）。
-    """
-    priority_keywords = [
-        "JetBrains Mono",
-        "Fira Code",
-        "Cascadia Code",
-        "Cascadia Mono",
-        "Source Code Pro",
-        "Consolas",
-        "Menlo",
-        "Monaco",
-        "Roboto Mono",
-        "IBM Plex Mono",
-        "DejaVu Sans Mono",
-        "Liberation Mono",
-        "Courier New",
-        "宋体",  # 中文宋体也是等宽，中文对齐友好
-        "等线",
-    ]
-    hit_ordered: list[str] = []
-    seen: set[str] = set()
-    # 第一阶段：按优先级关键字扫
-    for kw in priority_keywords:
-        for f in families:
-            if f in seen:
-                continue
-            if kw.lower() in f.lower() or f == kw:
-                hit_ordered.append(f)
-                seen.add(f)
-    # 第二阶段：兜底：所有名字含 Mono / Monospace / Code / 等宽 / mono 的字体
-    fallback_keys = ("mono", "monospace", "code", "等宽")
-    for f in families:
-        if f in seen:
-            continue
-        low = f.lower()
-        if any(k in low for k in fallback_keys[:3]) or any(k in f for k in fallback_keys[3:]):
-            hit_ordered.append(f)
-            seen.add(f)
-    # 第三阶段：没有匹配的系统上，至少保留 Courier New（所有 Windows 默认都有）
-    if "Courier New" in families and "Courier New" not in seen:
-        hit_ordered.append("Courier New")
-        seen.add("Courier New")
-    return hit_ordered
-
-
 # ---------- 通用：Text/Entry 右键菜单 + 快捷键 ----------
 
 def _bind_text_widget_menu(widget, readonly: bool = False) -> None:
@@ -995,17 +943,12 @@ class ProtocolParserApp:
             pass
 
         # ============================================================
-        #  字体偏好（仅等宽字体）+ 行间距
+        #  字号偏好（Ctrl+滚轮缩放）
         # ============================================================
-        _all_mono = _filter_monospace_fonts(tkfont.families())
-        self.available_monospace_fonts = _all_mono
-        _default_family = "Consolas" if "Consolas" in _all_mono else (_all_mono[0] if _all_mono else "Courier New")
-        self.font_family_var = tk.StringVar(value=str(_extras.get("font_family", _default_family)))
         self.font_size_var = tk.IntVar(value=int(_extras.get("font_size", 10)))
-        self.line_spacing_px_var = tk.IntVar(value=int(_extras.get("line_spacing_px", 2)))
-        # 构建可变等宽字体（Ctrl+滚轮 / A+ / A- 都会直接改这个 Font 对象）
-        self.serial_font = tkfont.Font(family=self.font_family_var.get(), size=self.font_size_var.get())
-        self.cmd_font = tkfont.Font(family=self.font_family_var.get(), size=self.font_size_var.get(), weight="bold")
+        # 构建可变等宽字体（Ctrl+滚轮缩放字号）
+        self.serial_font = tkfont.Font(family="Consolas", size=self.font_size_var.get())
+        self.cmd_font = tkfont.Font(family="Consolas", size=self.font_size_var.get(), weight="bold")
         # 日志框 Tag 定义颜色（在创建 serial_text 之后会按 theme.get() 刷新）
 
         # 置顶状态（菜单栏会引用该变量，必须先初始化）
@@ -1016,7 +959,7 @@ class ProtocolParserApp:
             except Exception:
                 pass
 
-        # ---- 菜单栏：字体设置 / 关于 / 检查更新（三个独立项） ----
+        # ---- 菜单栏：关于 / 检查更新 ----
         self._build_menu_bar()
 
         self.cfg: dict | None = None
@@ -1112,12 +1055,6 @@ class ProtocolParserApp:
         if self._monitor_port:
             self._apply_monitor_args()
 
-        # 最后：如果存在更新会话快照 → 恢复（恢复失败友好提示，不崩）
-        try:
-            self._maybe_restore_session_after_update()
-        except Exception as e:  # noqa: BLE001
-            self._report_error("恢复更新会话失败", e)
-
     # ---------- 错误上报：friendly 弹窗 + error.log，绝不裸抛堆栈 ----------
 
     def _report_error(
@@ -1181,11 +1118,8 @@ class ProtocolParserApp:
     # ---------- UI 构建 ----------
 
     def _build_menu_bar(self) -> None:
-        """构建顶部菜单栏：字体设置 / 关于 / 检查更新（三个独立项）。"""
+        """构建顶部菜单栏：关于 / 检查更新。"""
         menubar = tk.Menu(self.root)
-
-        # ---- 字体设置（独立菜单项，点击打开字体设置对话框） ----
-        menubar.add_command(label="字体设置", command=self._safe(self._choose_font_settings))
 
         # ---- 关于（独立菜单项） ----
         menubar.add_command(label="关于", command=self._safe(self._menu_about))
@@ -1312,21 +1246,14 @@ class ProtocolParserApp:
             if not ok:
                 return
 
-            # 更新前：安全停止串口、flush 日志/原始数据、写会话快照
-            snapshot_path: str | None = None
+            # 更新前：先保存偏好
             try:
-                snap = self._prepare_session_snapshot_for_update()
-                snapshot_path = str(default_session_path())
-                _set_status(
-                    "已准备更新"
-                    + (f"（重启后会恢复 {snap.port or '未使用串口'}）" if snap.was_collecting else "（未恢复串口）")
-                )
-            except Exception as e:
-                self._report_error("更新失败（保存会话）", e, parent=win)
-                return
+                self._save_preferences()
+            except Exception:
+                pass
 
             try:
-                _updater_apply(path, snapshot_path=snapshot_path)  # 内部会 os._exit(0)
+                _updater_apply(path, snapshot_path=None)  # 内部会 os._exit(0)
             except Exception as e:
                 friendly, _ = classify_protocol_error(e)
                 log_path = _log_error_to_disk(e)
@@ -1640,10 +1567,8 @@ class ProtocolParserApp:
             row=0, column=0, sticky="we")
         ttk.Label(status, textvariable=self.stats_var, anchor="e", style="StatusBar.TLabel").grid(row=0, column=1, sticky="e")
 
-        # 字体/行距一改就即时应用 + 保存偏好
-        self.font_family_var.trace_add("write", lambda *_a: self._apply_font_and_line_spacing(True))
+        # 字号变化时即时应用 + 保存偏好
         self.font_size_var.trace_add("write", lambda *_a: self._apply_font_and_line_spacing(True))
-        self.line_spacing_px_var.trace_add("write", lambda *_a: self._apply_font_and_line_spacing(True))
 
         # 置顶/保存原始数据 变量变化时自动更新按钮样式
         try:
@@ -1763,7 +1688,9 @@ class ProtocolParserApp:
         ttk.Label(row1, text="串口：", style="Card.TLabel").grid(row=0, column=0, sticky="w")
         self.port_combo = ttk.Combobox(row1, textvariable=self.port_var, width=28, state="readonly")
         self.port_combo.grid(row=0, column=1, sticky="w", padx=(4, 2))
-        Tooltip(self.port_combo, "选择要监控的串口号（如 COM3 / COM5）。", theme)
+        Tooltip(self.port_combo, "选择要监控的串口号（如 COM3 / COM5）。监控中切换会自动重连到新串口。", theme)
+        # 监控中切换串口：自动停止当前串口并连接新选中的串口
+        self.port_combo.bind("<<ComboboxSelected>>", self._safe(self._on_port_change_while_collecting), add="+")
         refresh_ports_btn = RoundedButton(row1, text="刷新", width=6,
                                           command=self._safe(self._refresh_ports), style="Toolbar.TButton")
         refresh_ports_btn.grid(row=0, column=2, sticky="w", padx=(0, 8))
@@ -1965,13 +1892,11 @@ class ProtocolParserApp:
             padx=10,
             pady=6,
             spacing1=0,
-            spacing3=self.line_spacing_px_var.get(),  # 行间距（每段后垂直留白）
+            spacing3=2,
             bd=0,
             highlightthickness=0,
         )
         self.serial_text.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
-        # 增强版右键菜单（原来的复制/清空… + 新增【字体与字号设置】）
-        self._bind_text_widget_menu_enhanced(self.serial_text, readonly=True)
 
         scroll = ttk.Scrollbar(out_frame, orient="vertical", command=self.serial_text.yview)
         scroll.grid(row=0, column=1, sticky="ns", padx=(0, 0), pady=0)
@@ -1989,62 +1914,14 @@ class ProtocolParserApp:
         self.serial_sender_var.trace_add("write", self._on_serial_sender_change)
         self.hex_format_var.trace_add("write", self._on_hex_format_sync_collector)
 
+        # 通用右键菜单
+        _bind_text_widget_menu(self.serial_text, readonly=True)
+
         # Ctrl + 鼠标滚轮：日志框内无级缩放
         self.serial_text.bind("<Control-MouseWheel>", self._safe(self._on_ctrl_mousewheel_text), add="+")
 
     # ------------------------------------------------------------
-    # 增强版 Text 右键菜单（加【字体与字号设置】）
-    # ------------------------------------------------------------
-    def _bind_text_widget_menu_enhanced(self, widget, readonly: bool = False) -> None:
-        # 先绑定原有通用右键菜单+快捷键
-        _bind_text_widget_menu(widget, readonly=readonly)
-        # 给 readonly 日志框再加一个【字体与字号设置】菜单项：通过覆写 Button-3 菜单实现（最简单）：直接重新弹增强版 menu
-        is_text = widget.winfo_class() == "Text"
-        if not (readonly and is_text):
-            return
-
-        def _copy():
-            try:
-                if widget.tag_ranges("sel"):
-                    widget.event_generate("<<Copy>>")
-                else:
-                    c = widget.get("1.0", "end-1c")
-                    widget.clipboard_clear()
-                    widget.clipboard_append(c)
-            except Exception:
-                pass
-
-        def _clear():
-            try:
-                widget.configure(state="normal")
-                widget.delete("1.0", "end")
-                widget.configure(state="disabled")
-            except Exception:
-                pass
-
-        menu = tk.Menu(widget, tearoff=0)
-        menu.add_command(label="复制 (Ctrl+C)", command=_copy, accelerator="Ctrl+C")
-        menu.add_separator()
-        menu.add_command(label="全选 (Ctrl+A)",
-                         command=lambda: (widget.tag_add("sel", "1.0", "end-1c"), None)[1])
-        menu.add_command(label="清空显示缓冲", command=_clear)
-        menu.add_separator()
-        menu.add_command(label="字体与字号设置…", command=self._safe(self._choose_font_settings))
-
-        def _popup(event):
-            try:
-                menu.tk_popup(event.x_root, event.y_root)
-            finally:
-                menu.grab_release()
-
-        try:
-            widget.bind("<Button-3>", _popup)  # Windows 右键
-            widget.bind("<Button-2>", _popup)  # Mac/Linux 中键
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------
-    # 字体：无级缩放 + 设置对话框
+    # 字体：无级缩放
     # ------------------------------------------------------------
     def _on_ctrl_mousewheel_text(self, event):
         delta = getattr(event, "delta", 0)
@@ -2058,102 +1935,6 @@ class ProtocolParserApp:
         if new_size == int(self.font_size_var.get()):
             return
         self.font_size_var.set(new_size)
-        # 注：变量 trace_add 会自动触发 _apply_font_and_line_spacing
-
-    def _choose_font_settings(self) -> None:
-        """【字体与字号设置】对话框：等宽字体列表 + 字号 + 行距 + 实时预览。"""
-        try:
-            self.root.attributes("-topmost", False)
-        except Exception:
-            pass
-        dlg = tk.Toplevel(self.root)
-        dlg.title("字体与字号设置")
-        dlg.configure(bg=self.theme.get("card_bg"))
-        dlg.transient(self.root)
-        dlg.grab_set()
-        dlg.resizable(False, False)
-        pad = 14
-        card_bg = self.theme.get("card_bg")
-
-        # 预览前先暂存当前值，点"取消"可回滚
-        _bak_family = self.font_family_var.get()
-        _bak_size = int(self.font_size_var.get())
-        _bak_line = int(self.line_spacing_px_var.get())
-
-        ttk.Label(dlg, text="等宽字体：").grid(row=0, column=0, sticky="e", padx=(pad, 6), pady=(pad, 6))
-        fam = ttk.Combobox(dlg, textvariable=self.font_family_var, width=28,
-                            values=self.available_monospace_fonts or ["Consolas"], state="readonly")
-        fam.grid(row=0, column=1, columnspan=2, sticky="we", padx=(0, pad), pady=(pad, 6))
-        dlg.columnconfigure(1, weight=1)
-
-        ttk.Label(dlg, text="字号：").grid(row=1, column=0, sticky="e", padx=(pad, 6), pady=6)
-        sz = ttk.Spinbox(dlg, from_=8, to=32, width=6, textvariable=self.font_size_var)
-        sz.grid(row=1, column=1, sticky="w", padx=(0, pad), pady=6)
-
-        ttk.Label(dlg, text="行间距 (px)：").grid(row=2, column=0, sticky="e", padx=(pad, 6), pady=6)
-        ls = ttk.Spinbox(dlg, from_=0, to=24, width=6, textvariable=self.line_spacing_px_var)
-        ls.grid(row=2, column=1, sticky="w", padx=(0, pad), pady=6)
-
-        # 实时预览：用当前 serial_text 真实内容（实时跟着变）
-        ttk.Label(dlg, text="预览（实时生效）：").grid(row=3, column=0, columnspan=3, sticky="w",
-                                                        padx=(pad, pad), pady=(12, 4))
-        preview = tk.Text(dlg, height=8, width=52, relief="solid", bd=1, state="normal",
-                          bg=self.theme.get("surface"), fg=self.theme.get("text"))
-        preview.grid(row=4, column=0, columnspan=3, padx=pad, pady=(0, 6), sticky="we")
-        preview.configure(font=self.serial_font, spacing3=self.line_spacing_px_var.get())
-        _sample = (
-            "[TX] 03 20 00 03 11 22 33 7A  ← 发送帧（绿色）\n"
-            "[RX] Modem→MCU Cmd=0x24(查询属性)  ✓\n"
-            "  • 0x12 高度              = 1024 mm\n"
-            "  • 0x31 工作模式          = 自动模式\n"
-            "RAW(12): A5 A5 03 24 00 0C 12 02 04 00 31 01 02 CC\n"
-            "[ERR] 校验失败 预期=CC 实际=FF  ← 异常（红色）"
-        )
-        preview.insert("1.0", _sample)
-        preview.configure(state="disabled")
-
-        # 每次字体/行距变化，同步更新预览 + 真实日志框
-        def _sync(_event=None):
-            self._apply_font_and_line_spacing(save=False)
-            try:
-                preview.configure(font=(self.font_family_var.get(), int(self.font_size_var.get())),
-                                  spacing3=int(self.line_spacing_px_var.get()))
-            except Exception:
-                pass
-
-        for v in (self.font_family_var, self.font_size_var, self.line_spacing_px_var):
-            try:
-                v.trace_add("write", lambda *_a: _sync())
-            except Exception:
-                pass
-
-        # 底部按钮
-        btn_row = tk.Frame(dlg, bg=card_bg)
-        btn_row.grid(row=5, column=0, columnspan=3, sticky="we", padx=pad, pady=(12, pad))
-
-        def _on_cancel():
-            self.font_family_var.set(_bak_family)
-            self.font_size_var.set(_bak_size)
-            self.line_spacing_px_var.set(_bak_line)
-            self._apply_font_and_line_spacing(save=False)
-            dlg.destroy()
-
-        def _on_ok():
-            self._save_preferences()
-            dlg.destroy()
-
-        RoundedButton(btn_row, text="确定", style="Primary.TButton", command=_on_ok).pack(side="right", padx=(6, 0))
-        RoundedButton(btn_row, text="取消", command=_on_cancel).pack(side="right")
-
-        # 居中
-        dlg.update_idletasks()
-        w = dlg.winfo_width()
-        h = dlg.winfo_height()
-        sw = dlg.winfo_screenwidth()
-        sh = dlg.winfo_screenheight()
-        dlg.geometry(f"+{(sw - w) // 2}+{(sh - h) // 3}")
-        dlg.wait_window()
-
 
     def _build_send_panel(self, parent: tk.Misc) -> None:
         """构建"指令发送"Tab。"""
@@ -2675,34 +2456,23 @@ class ProtocolParserApp:
         self.serial_text.tag_configure("raw_data", foreground=t.get("raw_data"), font=self.serial_font)
 
     def _apply_font_and_line_spacing(self, save: bool = True) -> None:
-        """改字体/字号/行距时：
-        1) 重建 serial_font / cmd_font 并配置到 serial_text；
-        2) 所有 tag 的 font 重新设置（等宽字体保证对齐，仅改大小不变颜色）；
-        3) Text spacing3（行间距）= line_spacing_px；
-        4) 顶栏字体字号控件 + 右上角 A-/A+/pt label 同步显示。
+        """改字号时（Ctrl+滚轮）：
+        1) 更新 serial_font / cmd_font 的 size；
+        2) 应用到 serial_text 与所有 tag；
+        3) 指令发送 Tab 里的两个代码 Text 也同步改；
+        4) 隐藏态下防止 send_frame 被意外撑开。
         """
-        # 1) 更新可变 Font
         try:
-            family = self.font_family_var.get() or "Consolas"
             size = max(8, min(32, int(self.font_size_var.get())))
-            self.serial_font.configure(family=family, size=size)
-            self.cmd_font.configure(family=family, size=size, weight="bold")
+            self.serial_font.configure(size=size)
+            self.cmd_font.configure(size=size, weight="bold")
         except Exception:
             pass
-        # 2) 应用到 serial_text Text 控件
         try:
             self.serial_text.configure(font=self.serial_font)
         except Exception:
             pass
-        # 3) 行距：spacing3
-        try:
-            spacing3 = max(0, min(40, int(self.line_spacing_px_var.get())))
-            self.serial_text.configure(spacing3=spacing3)
-        except Exception:
-            spacing3 = 0
-        # 4) 同步 tag 颜色/字体（包含 cmd_font）
         self._apply_theme_tags()
-        # 5) 指令发送 Tab 里的两个代码 Text 也跟着改（fields_text / raw_text）—— 保证 HEX 对齐不错位
         try:
             for _w in (getattr(self, "fields_text", None), getattr(self, "raw_text", None)):
                 if _w is None:
@@ -2710,6 +2480,16 @@ class ProtocolParserApp:
                 _w.configure(font=self.serial_font)
         except Exception:
             pass
+        if not getattr(self, "send_frame_visible", False) and hasattr(self, "main_paned"):
+            try:
+                self.main_paned.paneconfig(self.send_frame, weight=0, minsize=0)
+            except Exception:
+                pass
+            try:
+                _pw = max(1, self.main_paned.winfo_width())
+                self.main_paned.sashpos(0, _pw)
+            except Exception:
+                pass
         if save:
             try:
                 self._save_preferences()
@@ -2786,9 +2566,7 @@ class ProtocolParserApp:
         extras.update({
             "theme_mode": self.theme.mode,
             "theme_style": self.theme.style,
-            "font_family": self.font_family_var.get(),
             "font_size": int(self.font_size_var.get()),
-            "line_spacing_px": int(self.line_spacing_px_var.get()),
             "topmost": bool(self.topmost_var.get()),
             "serial_config_collapsed": bool(self.serial_config_collapsed_var.get()),
             "save_raw_enabled_default": bool(self.save_raw_enabled_var.get()),
@@ -2808,60 +2586,15 @@ class ProtocolParserApp:
     def _on_app_close(self) -> None:
         """WM_DELETE_WINDOW 统一关闭流程：
         ① 保存视觉偏好（theme/font/topmost/raw 默认）→ extras
-        ② 保存当前串口会话快照（was_collecting/协议/串口/波特率/发送状态）→ 下次恢复用
-        ③ 停周期发送 → 停串口 → close_log_file(写结束标记) → close_save_raw_file
-        ④ root.destroy()
+        ② 停周期发送 → 停串口 → close_log_file(写结束标记) → close_save_raw_file
+        ③ root.destroy()
         """
         # ① 偏好
         try:
             self._save_preferences()
         except Exception:
             pass
-        # ② 会话快照：复用 _prepare_session_snapshot_for_update()，但 was_collecting=False（手动关窗口=手动停止，下次不自动恢复）
-        try:
-            try:
-                snap = self._prepare_session_snapshot_for_update()
-                snap.was_collecting = False
-            except Exception:
-                snap = None
-            if snap is not None:
-                # 把当前 extras 偏好也合并进 snap（双重保证：_save_preferences 已经写过，但防止 snapshot 被 clear 覆盖时丢掉）
-                try:
-                    extras = dict(snap.extras) if isinstance(snap.extras, dict) else {}
-                    extras.setdefault("theme_mode", self.theme.mode)
-                    extras.setdefault("theme_style", self.theme.style)
-                    extras.setdefault("font_family", self.font_family_var.get())
-                    extras.setdefault("font_size", int(self.font_size_var.get()))
-                    extras.setdefault("line_spacing_px", int(self.line_spacing_px_var.get()))
-                    extras.setdefault("topmost", bool(self.topmost_var.get()))
-                    extras.setdefault("serial_config_collapsed", bool(self.serial_config_collapsed_var.get()))
-                    extras.setdefault("save_raw_enabled_default", bool(self.save_raw_enabled_var.get()))
-                    extras.setdefault("save_raw_path_default", str(self.save_raw_path_var.get()))
-                    extras.setdefault("raw_auto_split_mb", int(self.raw_auto_split_mb_var.get()))
-                    # 窗口几何：优先用 _save_preferences 里已经记下的，如果那时没记上就这里兜底补一次
-                    try:
-                        if "window_geometry" not in extras and self.root:
-                            geom = self.root.geometry()
-                            if geom:
-                                extras["window_geometry"] = str(geom)
-                    except Exception:
-                        pass
-                    snap.extras = extras
-                except Exception:
-                    pass
-                try:
-                    save_snapshot(snap)
-                except Exception as e:  # noqa: BLE001
-                    try:
-                        _log_error_to_disk(e)
-                    except Exception:
-                        pass
-        except Exception as e:  # noqa: BLE001
-            try:
-                _log_error_to_disk(e)
-            except Exception:
-                pass
-        # ③ 资源释放：先停串口（含周期发送）
+        # ② 资源释放：先停串口（含周期发送）
         try:
             if self.is_collecting:
                 self._stop_serial()
@@ -2999,255 +2732,6 @@ class ProtocolParserApp:
             self.baudrate_var.set(str(self._monitor_baud))
         self.root.title(f"串口监控 v{VERSION} - {self._monitor_port} @ {self._monitor_baud}")
 
-    # ---------- 更新后：自动恢复会话快照 ----------
-
-    def _maybe_restore_session_after_update(self) -> None:
-        """启动后如果 `_update_session.json` 存在，按优先级恢复：
-
-        1) 协议（产品/协议来源：__builtin_v3__ 或文件路径，若源丢了就保留当前默认）
-        2) 串口/波特率/帧格式/HEX·ASCII/方向/详细模式
-        3) 日志/原始数据保存开关 & 路径（文件还在就接上）
-        4) 若 `was_collecting=True` → 尝试自动 start serial；串口不存在/被拔了只弹友好提示，绝不崩。
-        5) 所有恢复步骤，即使 ① 协议/串口任何一步出错 → 立刻 clear_snapshot() 防止下次启动再进入恢复流程循环尝试。
-
-        ⚠️ 关键守卫：只有快照里 `is_update_session=True` 时才执行恢复 + 弹窗；
-        否则只是上一次正常关闭持久化的偏好（extras 字段已在最上方 __init__ 中读取完毕），
-        直接 return，绝不弹「会话已恢复」提示，也不删除快照（偏好下次还要用）。
-        """
-        snap = load_snapshot()
-        if not snap:
-            return
-        if not bool(getattr(snap, "is_update_session", False)):
-            # 非更新场景：快照仅用于读取 extras（偏好），已在 __init__ 顶部完成，
-            # 这里直接跳过恢复流程，不弹窗、不清快照（下次启动还需要 extras）。
-            return
-
-        product_tip: list[str] = []
-        recovered_need_collect = bool(snap.was_collecting)
-        port_matched_combobox = False
-        serial_launch_attempted = False
-        serial_launch_succeeded = False
-        serial_error_friendly: str | None = None
-        serial_error_debug: Exception | None = None
-
-        # 1) 恢复协议（如果源还存在）
-        try:
-            if snap.product_name and snap.product_source:
-                # 如果 source 存在就尝试加载
-                if snap.product_source == "__builtin_v3__":
-                    # 内置 V3 一定在
-                    try:
-                        self.product_var.set(snap.product_name)
-                        self._load_product_cfg(snap.product_name)
-                        product_tip.append(f"恢复协议: {snap.product_name}")
-                    except Exception as e:  # noqa: BLE001
-                        self._report_error("恢复更新会话（协议）", e)
-                else:
-                    import os as _os
-                    if _os.path.isfile(snap.product_source):
-                        # 源文件还在，但 product_combo 可能没有，把它塞进 product_sources 并加进下拉
-                        existing = self._product_sources if hasattr(self, "_product_sources") else {}
-                        if snap.product_name not in existing:
-                            try:
-                                values = list(self.product_combo["values"]) if self.product_combo.get() else []
-                                values.append(snap.product_name)
-                                self.product_combo["values"] = values
-                                self._product_sources[snap.product_name] = snap.product_source
-                            except Exception:
-                                pass
-                        try:
-                            self.product_var.set(snap.product_name)
-                            self._load_product_cfg(snap.product_name)
-                            product_tip.append(f"恢复协议: {snap.product_name}")
-                        except Exception as e:  # noqa: BLE001
-                            self._report_error("恢复更新会话（协议）", e)
-                    else:
-                        # 文件被用户删掉了，跳过
-                        pass
-        except Exception as e:  # noqa: BLE001
-            self._report_error("恢复更新会话（协议）", e)
-
-        # 2) 恢复串口/波特率/帧格式 UI
-        try:
-            if snap.port:
-                self._refresh_ports()
-                display_values = list(self.port_combo["values"])
-                matched = -1
-                for i, disp in enumerate(display_values):
-                    if disp == snap.port or disp.startswith(snap.port + " ") or disp.startswith(snap.port + "-"):
-                        matched = i
-                        break
-                if matched >= 0:
-                    self.port_combo.current(matched)
-                    port_matched_combobox = True
-                    product_tip.append(f"串口: {snap.port}")
-                else:
-                    # 下拉没匹配到也把字符串填到var里（下次打开端口选单若选上）
-                    try:
-                        self.port_var.set(snap.port)
-                    except Exception:
-                        pass
-                    if recovered_need_collect:
-                        # 标记下等会儿 start_serial 会失败；这里提前提示
-                        product_tip.append(f"串口 {snap.port} 暂不可用")
-            try:
-                self.baudrate_var.set(str(int(snap.baudrate)))
-            except Exception:
-                self.baudrate_var.set(str(snap.baudrate))
-            try:
-                self.bytesize_var.set(str(int(snap.bytesize)))
-            except Exception:
-                pass
-            try:
-                stopbits_val = {1.0: "1", 1.5: "1.5", 2.0: "2"}.get(float(snap.stopbits), "1")
-                self.stopbits_var.set(stopbits_val)
-            except Exception:
-                pass
-        except Exception as e:  # noqa: BLE001
-            self._report_error("恢复更新会话（串口设置）", e)
-
-        # 3) 数据格式/方向/详细模式
-        try:
-            self.hex_format_var.set(bool(snap.is_hex_format))
-            self._on_hex_format_change()
-            if snap.direction == "request":
-                self.serial_sender_var.set("模组发送")
-            elif snap.direction == "response":
-                self.serial_sender_var.set("MCU发送")
-            else:
-                pass
-            try:
-                self.detail_var.set(bool(snap.detail_mode))
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        # 4) 日志路径 & 原始数据开关 + 路径（若文件还存在则接上，保留原文件名继续加）
-        try:
-            if snap.log_path:
-                import os as _os
-                log_p = Path(snap.log_path)
-                # 保证目录存在；如果文件已经存在就"追加"模式打开，不存在先不打开，等用户再点"开始记录"
-                try:
-                    log_p.parent.mkdir(parents=True, exist_ok=True)
-                except Exception:
-                    pass
-                if _os.path.isfile(str(log_p)):
-                    try:
-                        self.log_path = log_p
-                        self.log_file = open(str(log_p), "a", encoding="utf-8")
-                        from datetime import datetime
-                        self.log_file.write(f"\n===== 更新重启后继续记录 {datetime.now().isoformat(timespec='seconds')} =====\n")
-                        self.log_file.flush()
-                        product_tip.append("继续写入日志")
-                    except Exception:
-                        self.log_file = None
-                        self.log_path = None
-        except Exception:
-            pass
-        try:
-            if getattr(self, "save_raw_enabled_var", None) is not None:
-                self.save_raw_enabled_var.set(bool(snap.save_raw_enabled))
-            if getattr(self, "save_raw_path_var", None) is not None and snap.save_raw_path:
-                self.save_raw_path_var.set(snap.save_raw_path)
-            if getattr(self, "save_raw_filename_var", None) is not None and snap.save_raw_filename:
-                self.save_raw_filename_var.set(snap.save_raw_filename)
-        except Exception:
-            pass
-
-        # 4.5) 发送面板 + 周期发送配置恢复
-        tx_cycle_should_run = False
-        try:
-            if getattr(self, "send_mode_var", None) is not None and snap.tx_send_mode:
-                self.send_mode_var.set(snap.tx_send_mode)
-            if getattr(self, "tx_cmd_code_var", None) is not None and snap.tx_cmd_code is not None:
-                self.tx_cmd_code_var.set(snap.tx_cmd_code)
-            if getattr(self, "tx_direction_var", None) is not None and snap.tx_direction is not None:
-                self.tx_direction_var.set(snap.tx_direction or "模组发送")
-            if getattr(self, "tx_fields_var", None) is not None and snap.tx_fields_json is not None:
-                self.tx_fields_var.set(snap.tx_fields_json)
-            if getattr(self, "tx_raw_var", None) is not None and snap.tx_raw is not None:
-                self.tx_raw_var.set(snap.tx_raw)
-            if getattr(self, "tx_interval_ms_var", None) is not None and snap.tx_interval_ms:
-                self.tx_interval_ms_var.set(int(snap.tx_interval_ms))
-            # 只有之前 is_collecting 且 tx_cycle_enabled=True 才尝试恢复运行状态
-            # （因为发送依赖 open 串口，若 5) 成功打开串口，最后这里再起循环）
-            tx_cycle_should_run = bool(snap.tx_cycle_enabled)
-            product_tip.append("发送面板配置")
-        except Exception:
-            tx_cycle_should_run = False
-
-        # 5) 自动开始接收（重点：串口被拔 → _start_serial 已自己 _report_error，不会崩；这里再兜一层）
-        if recovered_need_collect and snap.port:
-            # 串口实时面板始终可见，无需切换标签页
-            serial_launch_attempted = True
-            try:
-                self._start_serial()
-                serial_launch_succeeded = bool(self.is_collecting)
-            except Exception as e:  # noqa: BLE001
-                # _start_serial 自己也 _report_error；这里把 friendly 记住，防止它吞掉异常
-                serial_error_debug = e
-                try:
-                    from protocol_parser.parser import classify_protocol_error
-                    serial_error_friendly, _ = classify_protocol_error(e)
-                except Exception:
-                    serial_error_friendly = None
-                self._report_error("自动恢复串口接收失败", e)
-            if not serial_launch_succeeded:
-                if not port_matched_combobox and serial_error_friendly is None:
-                    # 串口根本不在列表里；用我们自己的提示（因为此时 _start_serial 里面走的是 showwarning "请选择串口"，不是_串口读取错误）
-                    serial_error_friendly = f"检测不到 {snap.port}，可能是更新过程中串口线被拔出或被其它程序占用。"
-                # _start_serial 里 _report_error 已经弹过；这里状态栏再补一句文字
-                try:
-                    self._set_status(f"{snap.port} 无法恢复（请确认串口线是否已重新接入）")
-                except Exception:
-                    pass
-            # 5.5) 如果串口成功打开 & 之前在周期发送：恢复 Tk after 定时器
-            if serial_launch_succeeded and tx_cycle_should_run:
-                try:
-                    self.tx_cycle_var.set(True)
-                    try:
-                        if self.tx_cycle_btn:
-                            self.tx_cycle_btn.configure(text="⏹ 停止循环")
-                    except Exception:
-                        pass
-                    self._schedule_tx_cycle()
-                    product_tip.append("恢复周期发送")
-                except Exception as e:  # noqa: BLE001
-                    self._report_error("恢复周期发送失败", e)
-
-        # 收尾：只有更新快照才清理（防止下次启动再误触发恢复流程）
-        # 正常关闭快照（is_update_session=False）走不到这里，直接在顶部 return 掉了
-        clear_snapshot()
-
-        tip_parts: list[str] = []
-        if product_tip:
-            tip_parts.append("、".join(product_tip))
-
-        # 串口重连失败 → 合并进"会话已恢复"弹窗，而不是单独又弹一个（避免双弹窗）
-        if serial_launch_attempted and not serial_launch_succeeded:
-            msg = serial_error_friendly or f"未能重新建立 {snap.port} 的串口连接。"
-            tip_parts.append(f"串口未恢复：{msg}")
-
-        if tip_parts:
-            tip = "更新后已自动恢复会话：\n" + "\n".join("• " + p for p in tip_parts)
-            if serial_launch_attempted and not serial_launch_succeeded:
-                tip += (
-                    f"\n\n串口线可能在更新期间被拔出，请重新插入 {snap.port}，"
-                    "然后点击主窗口「开始监控」即可恢复接收。"
-                )
-        else:
-            tip = "更新后已自动恢复会话。"
-
-        try:
-            messagebox.showinfo("会话已恢复", tip, parent=self.root)
-        except Exception:
-            try:
-                self._set_status(tip.replace("\n", " | "))
-            except Exception:
-                pass
-
 
     # ---------- 串口实时 ----------
 
@@ -3273,11 +2757,33 @@ class ProtocolParserApp:
         else:
             self._start_serial()
 
-    def _start_serial(self) -> None:
-        """启动串口监控。"""
-        if not self.cfg:
-            messagebox.showwarning("提示", "请先选择产品协议")
+    def _on_port_change_while_collecting(self, _event=None) -> None:
+        """监控中切换串口下拉项：自动停止当前串口并连接到新选中的串口。"""
+        if not self.is_collecting:
             return
+        new_port_display = self.port_var.get()
+        if not new_port_display:
+            return
+        # 先停止当前串口（清掉线程和句柄，避免新串口连接被旧线程阻塞）
+        try:
+            self._stop_serial()
+        except Exception:
+            pass
+        # 重新连接到新选中的串口
+        try:
+            self._start_serial()
+        except Exception as e:  # noqa: BLE001
+            self._report_error("切换串口失败", e)
+
+    def _start_serial(self) -> None:
+        """启动串口监控。
+
+        未加载任何协议时也允许启动：作为通用串口助手使用，原始数据按 HEX/ASCII 显示。
+        已加载协议时：HEX 模式按协议帧解析，匹配不到帧头的字节同样回退为原始数据显示。
+        """
+        # 未加载协议：用空 cfg 让 collector 不崩，FrameSynchronizer 检测到无 frame 配置时会直接走 on_raw
+        cfg = self.cfg if self.cfg else {}
+        no_protocol = not self.cfg
         port_display = self.port_var.get()
         if not port_display:
             messagebox.showwarning("提示", "请选择串口")
@@ -3365,7 +2871,7 @@ class ProtocolParserApp:
 
         try:
             self.collector = SerialCollector(
-                cfg=self.cfg,
+                cfg=cfg,
                 port=port,
                 baudrate=baudrate,
                 bytesize=bytesize,
@@ -3389,12 +2895,14 @@ class ProtocolParserApp:
         except Exception:
             self.start_btn.configure(text="停止监控")
         mode_label = "ASCII" if is_ascii else "HEX"
+        # 无协议时状态栏追加提示，告知用户当前为通用串口模式（原始数据直显）
+        proto_tag = " (无协议·通用模式)" if no_protocol else ""
 
         if self.save_raw_enabled_var.get():
             self._open_save_raw_file()
-            self._set_status(f"监控中: {port} @ {baudrate} ({mode_label}) - 保存原始数据")
+            self._set_status(f"监控中: {port} @ {baudrate} ({mode_label}){proto_tag} - 保存原始数据")
         else:
-            self._set_status(f"监控中: {port} @ {baudrate} ({mode_label})")
+            self._set_status(f"监控中: {port} @ {baudrate} ({mode_label}){proto_tag}")
 
     def _on_serial_sender_change(self, *args) -> None:
         """切换发送方（Radiobutton变化会直接改variable，这里主动同步给collector）。"""
@@ -3867,18 +3375,31 @@ class ProtocolParserApp:
         self._stop_serial()
 
     def _display_raw_data(self, data: bytes, ts: float) -> None:
-        """显示 ASCII 原始数据。"""
+        """显示原始数据：ASCII 模式按文本显示；HEX 模式按十六进制字符串显示。"""
         self.serial_text.configure(state="normal")
         self._trim_display()
         ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
-        text = data.decode("utf-8", errors="replace")
-        lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        for line in lines:
-            if line == "":
-                continue
-            printable = "".join(ch if (32 <= ord(ch) < 127 or ch in ("\t",)) else "." for ch in line)
-            self.serial_text.insert("end", f"[{ts_str}] ", "ts")
-            self.serial_text.insert("end", f"{printable}\n", "field")
+        is_hex_mode = bool(self.hex_format_var.get())
+        if is_hex_mode:
+            # HEX 模式：把原始字节转成 "41 42 43" 形式，按行宽 16 字节折行显示
+            hex_str = " ".join(f"{b:02X}" for b in data)
+            # 按 16 字节（48 字符 + 15 空格 = 47 字符）折行
+            tokens = hex_str.split(" ")
+            chunk_size = 16
+            for i in range(0, len(tokens), chunk_size):
+                chunk = " ".join(tokens[i:i + chunk_size])
+                self.serial_text.insert("end", f"[{ts_str}] ", "ts")
+                self.serial_text.insert("end", f"{chunk}\n", "raw")
+        else:
+            # ASCII 模式：直接按文本显示（不可打印字符替换为 .）
+            text = data.decode("utf-8", errors="replace")
+            lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            for line in lines:
+                if line == "":
+                    continue
+                printable = "".join(ch if (32 <= ord(ch) < 127 or ch in ("\t",)) else "." for ch in line)
+                self.serial_text.insert("end", f"[{ts_str}] ", "ts")
+                self.serial_text.insert("end", f"{printable}\n", "field")
         if self.autoscroll_var.get():
             self.serial_text.see("end")
         self.serial_text.configure(state="disabled")
@@ -3955,185 +3476,6 @@ class ProtocolParserApp:
         """设置状态栏。"""
         self.status_var.set(msg)
         self.root.update_idletasks()
-
-    # ---------- 更新前：安全停止 + flush 磁盘 + 保存会话快照 ----------
-
-    def _prepare_session_snapshot_for_update(self) -> SessionSnapshot:
-        """点击"安装更新"时，先调用本函数：
-
-        1) 若串口正在接收 → 安全停止（join 线程 + close 句柄，保证串口/日志不再被占用）
-        2) flush 缓冲区中还没写入磁盘的日志 / 原始数据 / 强制 fsync
-        3) 构造 SessionSnapshot，包含：
-           - was_collecting（告诉新程序要自动重新开始）
-           - 串口号、波特率、帧格式
-           - 协议产品名 + 来源（__builtin_v3__ 或绝对路径）
-           - 数据格式（HEX/ASCII）、方向、详细模式
-           - 正在写的日志路径 + 原始数据保存路径/文件名
-        4) save_snapshot() 写盘；返回对象，prepare_update_and_quit 会校验文件存在。
-        """
-        was_collecting = bool(self.collector and self.collector.running)
-
-        # 1) 停止串口 + flush 回调队列（这样 on_frame/on_raw/on_error 不再写 log/save_raw）
-        if self.collector is not None:
-            try:
-                self.collector.stop()
-            except Exception:
-                pass
-            self.collector = None
-
-        # 2) flush log & 原始数据，保证 bat 替换/重启时文件句柄释放干净
-        if self.log_file is not None:
-            try:
-                try:
-                    self.log_file.flush()
-                except Exception:
-                    pass
-                try:
-                    import os as _os
-                    _os.fsync(self.log_file.fileno())
-                except Exception:
-                    pass
-                self.log_file.close()
-            except Exception:
-                pass
-            # 不把 log_file = None 掉；重启后新程序会按快照 log_path 重新 open。
-            # 为避免 on_close 再双 close，这里置 None。
-            self.log_file = None
-
-        if self.save_raw_file is not None:
-            try:
-                try:
-                    self.save_raw_file.flush()
-                except Exception:
-                    pass
-                try:
-                    import os as _os
-                    _os.fsync(self.save_raw_file.fileno())
-                except Exception:
-                    pass
-                self.save_raw_file.close()
-            except Exception:
-                pass
-            self.save_raw_file = None
-            self._save_raw_active = False
-
-        # 3) 构造快照
-        port = ""
-        try:
-            port = self.port_var.get().strip()
-        except Exception:
-            port = ""
-        baudrate = 115200
-        try:
-            baudrate = int(self.baudrate_var.get().strip() or 115200)
-        except Exception:
-            baudrate = 115200
-        bytesize = 8
-        stopbits = 1.0
-        try:
-            # bytesize_var = IntVar（可能是 int），兼容新/老两种类型
-            _bs_raw = self.bytesize_var.get()
-            if isinstance(_bs_raw, int):
-                bs = _bs_raw
-            else:
-                _bs_s = str(_bs_raw).strip()
-                bs = int(_bs_s) if _bs_s else 8
-            bytesize = bs if bs in (5, 6, 7, 8) else 8
-        except Exception:
-            bytesize = 8
-        try:
-            # stopbits_var = IntVar 或 StringVar（1/2/1.5），统一转字符串判断
-            _sb_raw = self.stopbits_var.get()
-            sb_raw = str(_sb_raw).strip() if not isinstance(_sb_raw, float) else str(_sb_raw)
-            sb_norm = sb_raw.replace(" ", "")
-            if "1.5" in sb_norm or sb_raw == "1.5":
-                stopbits = 1.5
-            elif sb_norm == "2" or sb_raw == "2":
-                stopbits = 2.0
-            else:
-                stopbits = 1.0
-        except Exception:
-            stopbits = 1.0
-
-        product_name = ""
-        product_source = ""
-        try:
-            product_name = self.product_var.get().strip()
-            product_source = self._product_sources.get(product_name, "") if hasattr(self, "_product_sources") else ""
-        except Exception:
-            product_name = ""
-            product_source = ""
-
-        try:
-            is_hex_format = bool(self.hex_format_var.get())
-        except Exception:
-            is_hex_format = True
-        direction = ""
-        try:
-            # 兼容：新代码用 serial_sender_var，老代码快照里 direction 字段从 serial_sender_var 取
-            if hasattr(self, "serial_sender_var"):
-                d = self.serial_sender_var.get()
-            else:
-                d = self.direction_var.get()
-            direction = str(d).strip()
-        except Exception:
-            direction = ""
-        detail_mode = False
-        try:
-            detail_mode = bool(self.detail_var.get())
-        except Exception:
-            detail_mode = False
-
-        log_path_str = str(self.log_path) if isinstance(self.log_path, Path) else (self.log_path or "")  # type: ignore[redundant-cast]
-        log_path_str = str(log_path_str) if log_path_str else ""
-        save_raw_enabled = bool(self.save_raw_enabled_var.get()) if getattr(self, "save_raw_enabled_var", None) else False
-        save_raw_path = str(self.save_raw_path_var.get()) if getattr(self, "save_raw_path_var", None) else ""
-        save_raw_filename = str(self.save_raw_filename_var.get()) if getattr(self, "save_raw_filename_var", None) else ""
-
-        send_mode = "protocol"
-        tx_cmd_code = ""
-        tx_direction = ""
-        tx_fields_json = ""
-        tx_raw = ""
-        tx_cycle_enabled = False
-        tx_interval_ms = 1000
-        try:
-            send_mode = self.send_mode_var.get()
-            tx_cmd_code = self.tx_cmd_code_var.get()
-            tx_direction = self.tx_direction_var.get()
-            tx_fields_json = self.tx_fields_var.get()
-            tx_raw = self.tx_raw_var.get()
-            tx_cycle_enabled = bool(self.tx_cycle_var.get())
-            tx_interval_ms = int(self.tx_interval_ms_var.get() or 1000)
-        except Exception:
-            pass
-
-        snap = SessionSnapshot(
-            was_collecting=was_collecting,
-            port=port,
-            baudrate=baudrate,
-            bytesize=bytesize,
-            stopbits=stopbits,
-            product_name=product_name,
-            product_source=product_source,
-            is_hex_format=is_hex_format,
-            direction=direction,
-            detail_mode=detail_mode,
-            log_path=log_path_str,
-            save_raw_enabled=save_raw_enabled,
-            save_raw_path=save_raw_path,
-            save_raw_filename=save_raw_filename,
-            tx_send_mode=send_mode,
-            tx_cmd_code=tx_cmd_code,
-            tx_direction=tx_direction,
-            tx_fields_json=tx_fields_json,
-            tx_raw=tx_raw,
-            tx_cycle_enabled=tx_cycle_enabled,
-            tx_interval_ms=tx_interval_ms,
-            is_update_session=True,
-        )
-        save_snapshot(snap)
-        return snap
 
     def on_close(self) -> None:
         """关闭主窗口。
