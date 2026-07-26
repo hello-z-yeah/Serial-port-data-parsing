@@ -17,6 +17,14 @@ import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
+from protocol_parser.theme import ThemeManager
+from protocol_parser.widgets import Tooltip, RoundedButton, _bind_text_widget_menu
+from protocol_parser.paths import (
+    resource_path,
+    user_data_path,
+    get_protocol_dir,
+    write_crash_log,
+)
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -55,59 +63,6 @@ from protocol_parser.updater import (  # noqa: E402
 )
 
 
-# ---------- 资源/数据路径（兼容 PyInstaller 单文件模式） ----------
-
-def resource_path(relative: str) -> Path:
-    """获取资源路径（只读/内置资源）：优先 _MEIPASS 打包目录。
-    只用于 product/ 协议文件等打包进来的资源，**绝不要用来写文件**（_MEIPASS 是临时目录，重启就清空）。"""
-    if hasattr(sys, "_MEIPASS"):
-        return Path(sys._MEIPASS) / relative
-    base = Path(__file__).resolve().parent
-    # 开发模式下，product 在上一级目录
-    candidate = base / relative
-    if candidate.exists():
-        return candidate
-    return base.parent / relative
-
-
-def user_data_path(relative: str = "") -> Path:
-    """获取**用户可写**数据目录：
-    * 打包模式：优先 exe 同级的 data\\；exe 写目录不可用（如 Program Files）时降级到用户「文档\\串口解析工具\\data」。
-    * 开发模式：项目根目录下的 data\\。
-    相对路径 relative 会拼在后面并自动创建目录。"""
-    try:
-        # 1) 打包模式：sys.executable = xxx.exe
-        if getattr(sys, "frozen", False) and hasattr(sys, "executable"):
-            exe_dir = Path(sys.executable).resolve().parent
-            try:
-                write_probe = exe_dir / ".write_probe"
-                write_probe.write_text("probe", encoding="utf-8")
-                write_probe.unlink(missing_ok=True)
-                root = exe_dir
-            except (OSError, PermissionError):
-                # 无权限写 exe 目录（如 C:\\Program Files\\）→ 降级：我的文档\串口解析工具
-                doc_dir = Path.home() / "Documents"
-                if not doc_dir.exists():
-                    doc_dir = Path.home()
-                root = doc_dir / "串口解析工具"
-            data_dir = root / "data"
-        else:
-            # 2) 开发模式：项目根 data
-            project_root = Path(__file__).resolve().parent.parent
-            data_dir = project_root / "data"
-        # 拼 relative 后缀
-        if relative:
-            data_dir = data_dir / relative
-        data_dir.mkdir(parents=True, exist_ok=True)
-        return data_dir
-    except Exception:
-        # 终极兜底：%USERPROFILE%\\串口解析工具\\data
-        fb = Path.home() / "串口解析工具" / "data"
-        if relative:
-            fb = fb / relative
-        fb.mkdir(parents=True, exist_ok=True)
-        return fb
-
 
 def get_protocol_dir() -> Path:
     """获取协议配置目录。
@@ -130,47 +85,6 @@ def get_protocol_dir() -> Path:
 
 # ---------- 崩溃日志（启动期闪退辅助）：写 exe 同级目录 crash_*.log ----------
 
-
-def _crash_log_dir() -> Path:
-    """崩溃日志落盘目录：
-    * 打包 EXE → exe 同级目录；
-    * 开发模式 → 项目根目录（protocol_parser 父级）。
-    """
-    try:
-        if getattr(sys, "frozen", False):
-            return Path(sys.executable).resolve().parent
-        return Path(__file__).resolve().parent.parent
-    except Exception:
-        return Path.cwd()
-
-
-def _write_crash_log_gui(exc: BaseException) -> Path | None:
-    """启动期 / 运行期崩溃 → 写 exe 同级目录 crash_时间戳.log，
-    即便 mainloop 和 messagebox 都起不来，用户也能在 exe 旁边找到堆栈。
-    """
-    import traceback as _tb
-
-    try:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = _crash_log_dir() / f"crash_{ts}.log"
-        tb_s = _tb.format_exc()
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(f"Time:       {datetime.now().isoformat(timespec='seconds')}\n")
-            f.write(f"Frozen:     {getattr(sys, 'frozen', False)}\n")
-            f.write(f"Executable: {sys.executable}\n")
-            f.write(f"MEIPASS:    {getattr(sys, '_MEIPASS', '')}\n")
-            f.write(f"CWD:        {os.getcwd()}\n")
-            f.write(f"Argv:       {sys.argv}\n")
-            f.write("\n========== Exception ==========\n")
-            f.write(f"{type(exc).__module__}.{type(exc).__name__}: {exc}\n")
-            f.write("\n========== Traceback ==========\n")
-            f.write(tb_s)
-            f.write("\n========== sys.path ==========\n")
-            for p in sys.path:
-                f.write(p + "\n")
-        return path
-    except Exception:
-        return None
 
 
 def load_builtin_protocol() -> dict:
@@ -211,648 +125,6 @@ def get_builtin_v3(refresh: bool = False) -> dict:
     if refresh or _builtin_v3 is None:
         _builtin_v3 = load_builtin_protocol()
     return _builtin_v3
-
-
-# ---------- 通用：主题管理（Light/Dark + Win11/Classic 风格） ----------
-
-
-class ThemeManager:
-    """纯 Tk 主题系统（不引入第三方依赖）。
-
-    主题 = 配色 + ttk 样式：
-      - light / dark：两套配色（背景/卡片/主色/次级色/文本色/禁用色）
-      - classic / win11：classic 使用系统默认 ttk 外观；
-        win11 使用 ttk clam 自定义，卡片/控件有更柔和的圆角/间距/微阴影（纯 Frame 模拟）。
-    """
-
-    PALETTES: dict[str, dict[str, str]] = {
-        "light": {
-            "app_bg":          "#F9FAFB",  # 应用整体背景（比卡片灰更明显，让"留白分隔"直接有层差）
-            "card_bg":         "#F3F4F6",  # LabelFrame / 卡片背景（纯白 + 一圈细边框 = 独立卡片）
-            "card_border":     "#E0E0E0",  # 卡片边框色（比通用 border 稍深，每张卡片有"一层"的视觉）
-            "surface":         "#F3F4F6",  # Entry / Combobox / Text 背景
-            "border":          "#E0E0E0",  # 控件边框色
-            "primary":         "#0078D4",  # Win11 主色（蓝）
-            "primary_hover":   "#106EBE",  # 主色 hover
-            "success":         "#0F7B0F",  # 接收成功 / OK
-            "error":           "#C42B1C",  # 错误 / 异常红
-            "warn":            "#BC6A00",  # 告警 / 方向橙
-            "tx":              "#0A7A5A",  # [TX] 发送绿
-            "cmd":             "#1A56DB",  # 命令字蓝
-            "field":           "#374151",  # 字段灰
-            "raw":             "#6B7280",  # Raw 报文灰
-            "ts":              "#8A9099",  # 时间戳灰
-            "pid":             "#8E24AA",  # PID 紫
-            "model":           "#0D7A73",  # Model 青
-            "raw_data":        "#0E6E7A",  # raw_data
-            "text":            "#111827",  # 主文本色
-            "text_secondary":  "#525C6B",  # 次要说明文本
-            "text_disabled":   "#9CA3AF",  # 禁用文本
-            "tooltip_bg":      "#1F2937",  # Tooltip 气泡背景
-            "tooltip_fg":      "#F9FAFB",  # Tooltip 文字
-        },
-        "dark": {
-            "app_bg":          "#141517",  # App 背景（深色差）
-            "card_bg":         "#23252A",  # LabelFrame / 卡片（比 app_bg 更亮一点）
-            "card_border":     "#383A41",  # 卡片边框（亮于背景，轮廓清晰）
-            "surface":         "#2E3035",  # Entry / Combobox / Text 背景
-            "border":          "#3F4045",  # 边框
-            "primary":         "#4CC2FF",  # Win11 深色主色（亮蓝）
-            "primary_hover":   "#7FD2FF",  # 主色 hover
-            "success":         "#54C361",  # 接收成功 / OK
-            "error":           "#F06E68",  # 错误 / 异常红
-            "warn":            "#F6C177",  # 告警 / 方向橙
-            "tx":              "#39D5A4",  # 发送 [TX] 绿
-            "cmd":             "#6CB5FF",  # 命令字蓝
-            "field":           "#D1D5DB",  # 字段灰
-            "raw":             "#9BA1A6",  # Raw 报文灰
-            "ts":              "#7A7F85",  # 时间戳灰
-            "pid":             "#E0A4F7",  # PID 紫
-            "model":           "#5AD6CF",  # Model 青
-            "raw_data":        "#76D0DB",  # raw_data
-            "text":            "#ECEDF0",  # 主文本
-            "text_secondary":  "#B9BCC2",  # 次要说明文本
-            "text_disabled":   "#7A7F85",  # 禁用文本
-            "tooltip_bg":      "#E6E8EB",  # Tooltip 气泡背景
-            "tooltip_fg":      "#111827",  # Tooltip 文字
-        },
-    }
-
-    def __init__(self, mode: str = "light", style: str = "win11"):
-        self.mode = mode if mode in self.PALETTES else "light"
-        self.style = style if style in ("win11", "classic") else "win11"
-
-    # ------------------------------------------------------------------
-    # 取色
-    # ------------------------------------------------------------------
-    def get(self, name: str) -> str:
-        return self.PALETTES[self.mode].get(name, "#000000")
-
-    # ------------------------------------------------------------------
-    # 应用到 ttk 全局样式
-    # ------------------------------------------------------------------
-    def apply_ttk_styles(self, ttk_style: ttk.Style) -> None:
-        palette = self.PALETTES[self.mode]
-        app_bg = palette["app_bg"]
-        card_bg = palette["card_bg"]
-        card_border = palette.get("card_border", palette["border"])
-        surface = palette["surface"]
-        border = palette["border"]
-        primary = palette["primary"]
-        primary_hover = palette["primary_hover"]
-        text = palette["text"]
-        text_2 = palette["text_secondary"]
-        text_dis = palette["text_disabled"]
-
-        if self.style == "win11":
-            try:
-                ttk_style.theme_use("clam")
-            except tk.TclError:
-                pass
-
-        # ttk 根样式：Label/Button/Frame/LabelFrame/Entry/Combobox/Radiobutton/Checkbutton/Notebook
-        ttk_style.configure(".", background=app_bg, foreground=text, fieldbackground=surface, bordercolor=border, lightcolor=border, darkcolor=border)
-
-        # Frame / LabelFrame：卡片 = 细边框 + 卡片区与留白(app_bg)分层
-        ttk_style.configure("TFrame", background=app_bg)
-        ttk_style.configure("Card.TFrame", background=card_bg, relief="flat")
-        # 真正的"卡片"LabelFrame：带一圈可见边框，保证每个卡片独立一层（绝不与 app_bg 或其它卡片糊成同图层）
-        ttk_style.configure("TLabelframe",
-                            background=card_bg,
-                            bordercolor=card_border,
-                            relief="solid",
-                            borderwidth=1)
-        ttk_style.configure("TLabelframe.Label",
-                            background=app_bg,        # 标签文字在"卡片上沿外"用 app_bg（视觉更层叠）；如果要更"融入卡片"改成 card_bg 也可
-                            foreground=text_2,
-                            font=("Microsoft YaHei UI", 10, "bold"))
-        ttk_style.configure("TLabel", background=app_bg, foreground=text)
-        ttk_style.configure("Card.TLabel", background=card_bg, foreground=text)
-        ttk_style.configure("Hint.TLabel", background=card_bg, foreground=text_2)
-        ttk_style.configure("Title.TLabel", background=card_bg, foreground=text, font=("Microsoft YaHei UI", 10, "bold"))
-        # 状态栏：同样卡片边框 + 和 app_bg 分层（底部一个独立横条卡片）
-        ttk_style.configure("StatusBar.TFrame",
-                            background=card_bg,
-                            bordercolor=card_border,
-                            relief="solid",
-                            borderwidth=1)
-        ttk_style.configure("StatusBar.TLabel", background=card_bg, foreground=text_2, font=("Microsoft YaHei UI", 10))
-
-        # Button：主按钮 + 普通按钮（紧凑尺寸）
-        ttk_style.configure("TButton", padding=(6, 2), relief="flat", background=surface, foreground=text, bordercolor=border, focusthickness=1, font=("Microsoft YaHei UI", 10))
-        ttk_style.map("TButton",
-                      background=[("active", palette["primary"] if self.style == "win11" else surface),
-                                  ("pressed", primary_hover),
-                                  ("disabled", app_bg)],
-                      foreground=[("active", "#FFFFFF" if self.style == "win11" else text),
-                                  ("disabled", text_dis)])
-        ttk_style.configure("Primary.TButton", padding=(8, 3), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
-        ttk_style.map("Primary.TButton",
-                      background=[("active", primary_hover), ("pressed", primary_hover), ("disabled", border)],
-                      foreground=[("disabled", text_dis)])
-        ttk_style.configure("Danger.TButton", padding=(8, 3), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
-        ttk_style.map("Danger.TButton",
-                      background=[("active", "#A5211C"), ("pressed", "#A5211C"), ("disabled", border)])
-        # 紧凑型切换按钮（置顶、保存原始数据等）
-        ttk_style.configure("CompactPrimary.TButton", padding=(6, 2), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
-        ttk_style.map("CompactPrimary.TButton",
-                      background=[("active", primary_hover), ("pressed", primary_hover), ("disabled", border)],
-                      foreground=[("disabled", text_dis)])
-        ttk_style.configure("CompactDanger.TButton", padding=(6, 2), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
-        ttk_style.map("CompactDanger.TButton",
-                      background=[("active", "#A5211C"), ("pressed", "#A5211C"), ("disabled", border)])
-
-        # Entry / Combobox / Spinbox
-        for s in ("TEntry", "TSpinbox", "TCombobox"):
-            ttk_style.configure(s, fieldbackground=surface, foreground=text, bordercolor=border, lightcolor=border, darkcolor=border, arrowsize=14)
-            ttk_style.map(s,
-                          fieldbackground=[("readonly", card_bg), ("disabled", app_bg)],
-                          foreground=[("readonly", text), ("disabled", text_dis)],
-                          bordercolor=[("focus", primary), ("readonly", border)])
-
-        # Radiobutton / Checkbutton（修复 clam 主题下选中指示器显示为 × 的问题）
-        # 方案：增大指示器直径并配置状态颜色，使勾选标记更清晰可见
-        for _cb_style in ("TRadiobutton", "TCheckbutton"):
-            ttk_style.configure(_cb_style, background=card_bg, foreground=text,
-                                focuscolor=primary, indicatordiameter=13,
-                                indicatorcolor=surface, indicatorforeground=text)
-            ttk_style.map(_cb_style,
-                          background=[("active", card_bg)],
-                          indicatorcolor=[("selected", primary), ("pressed", primary_hover), ("active", surface)],
-                          indicatorforeground=[("selected", "#000000"), ("pressed", "#000000")])
-        # 顶栏专用（背景跟随 app_bg 而不是 card_bg）
-        ttk_style.configure("Toolbar.TCheckbutton", background=app_bg, foreground=text)
-        ttk_style.configure("Toolbar.TRadiobutton", background=app_bg, foreground=text)
-        ttk_style.configure("Toolbar.TLabel", background=app_bg, foreground=text)
-        ttk_style.configure("Toolbar.TButton", padding=(4, 2), font=("Microsoft YaHei UI", 10))
-
-        # PanedWindow：左右分栏之间的"分隔条"加宽，让左右大卡片之间更有层差感
-        try:
-            ttk_style.configure("TPanedwindow", background=app_bg, sashwidth=8, sashrelief="flat")
-        except tk.TclError:
-            # 某些主题或老版本 ttk 不接受 TPanedwindow 上的配置，忽略即可
-            ttk_style.configure("TPanedwindow", background=app_bg)
-
-        # Notebook
-        ttk_style.configure("TNotebook", background=app_bg, borderwidth=0)
-        ttk_style.configure("TNotebook.Tab", padding=(14, 6), background=app_bg, foreground=text_2, font=("Microsoft YaHei UI", 10))
-        ttk_style.map("TNotebook.Tab",
-                      background=[("selected", card_bg), ("active", card_bg)],
-                      foreground=[("selected", primary if self.style == "win11" else text), ("active", text)])
-
-        # Scrollbar：Win11 细滚动条视觉
-        ttk_style.configure("Vertical.TScrollbar", background=border, troughcolor=app_bg, bordercolor=app_bg, arrowcolor=text_2, relief="flat", arrowsize=14)
-        ttk_style.map("Vertical.TScrollbar", background=[("active", text_2)])
-        ttk_style.configure("Horizontal.TScrollbar", background=border, troughcolor=app_bg, bordercolor=app_bg, arrowcolor=text_2, relief="flat", arrowsize=14)
-        ttk_style.map("Horizontal.TScrollbar", background=[("active", text_2)])
-
-        # StatusBar
-        ttk_style.configure("Status.TFrame", background=palette["card_bg"] if self.style == "win11" else app_bg, relief="flat")
-        ttk_style.configure("Status.TLabel", background=palette["card_bg"] if self.style == "win11" else app_bg, foreground=text_2)
-
-
-# ---------- 通用：半透明气泡 Tooltip（替代括号小字说明） ----------
-
-
-class Tooltip:
-    """给任意 widget 绑定悬停气泡说明。"""
-
-    _DELAY_MS = 350  # 鼠标悬停多久后出现
-    _TOPLEVEL: tk.Toplevel | None = None  # 全局共享一个气泡，避免多实例抖
-
-    def __init__(self, widget: tk.Misc, text: str, theme: ThemeManager | None = None, width: int = 48):
-        self.widget = widget
-        self.text = text
-        self.theme = theme
-        self.width = width
-        self._after_id: str | None = None
-        widget.bind("<Enter>", self._on_enter, add="+")
-        widget.bind("<Leave>", self._on_leave, add="+")
-        widget.bind("<Motion>", self._on_motion, add="+")
-        widget.bind("<ButtonPress>", self._on_leave, add="+")
-
-    # ---------- helpers ----------
-    def _wrap(self) -> str:
-        lines = []
-        for para in self.text.split("\n"):
-            if len(para) <= self.width:
-                lines.append(para)
-                continue
-            # 简单按宽度换行（中文按字符数，足够用）
-            buf = ""
-            for ch in para:
-                if len(buf) >= self.width:
-                    lines.append(buf)
-                    buf = ""
-                buf += ch
-            if buf:
-                lines.append(buf)
-        return "\n".join(lines)
-
-    # ---------- events ----------
-    def _on_enter(self, _event=None):
-        if self._after_id is not None:
-            return
-        self._after_id = self.widget.after(self._DELAY_MS, self._show)
-
-    def _on_motion(self, _event=None):
-        # 进入控件区域内的小移动不重新计时，离开的 Leave 会负责取消
-        pass
-
-    def _on_leave(self, _event=None):
-        if self._after_id is not None:
-            try:
-                self.widget.after_cancel(self._after_id)
-            except Exception:
-                pass
-            self._after_id = None
-        self._hide()
-
-    # ---------- show / hide ----------
-    def _show(self):
-        self._after_id = None
-        try:
-            if not self.widget.winfo_ismapped():
-                return
-        except Exception:
-            return
-        theme = self.theme or ThemeManager()
-        bg = theme.get("tooltip_bg")
-        fg = theme.get("tooltip_fg")
-        x = self.widget.winfo_rootx() + 14
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
-        tl = tk.Toplevel(self.widget)
-        tl.wm_overrideredirect(True)
-        try:
-            tl.attributes("-alpha", 0.94)
-        except Exception:
-            pass
-        tl.configure(bg=theme.get("border"))
-        inner = tk.Frame(tl, bg=bg, padx=10, pady=6)
-        inner.pack(padx=1, pady=1)
-        tk.Label(inner, text=self._wrap(), bg=bg, fg=fg, justify="left",
-                 font=("Microsoft YaHei UI", 9), wraplength=self.width * 10).pack()
-        tl.update_idletasks()
-        # 防超出屏幕右侧/底部
-        sw = tl.winfo_screenwidth()
-        sh = tl.winfo_screenheight()
-        w = tl.winfo_width()
-        h = tl.winfo_height()
-        if x + w > sw - 8:
-            x = sw - w - 8
-        if y + h > sh - 8:
-            y = max(8, self.widget.winfo_rooty() - h - 8)
-        tl.wm_geometry(f"+{x}+{y}")
-        Tooltip._TOPLEVEL = tl
-
-    @staticmethod
-    def _hide():
-        tl = Tooltip._TOPLEVEL
-        if tl is None:
-            return
-        try:
-            tl.destroy()
-        except Exception:
-            pass
-        Tooltip._TOPLEVEL = None
-
-
-# ---------- 大圆角按钮控件（替代 ttk.Button，支持动态文本/样式切换） ----------
-
-
-class RoundedButton(tk.Canvas):
-    """大圆角按钮，支持动态 configure(text=..., style=...)，兼容 Tooltip。"""
-
-    # 样式名 → (正常背景, hover背景, 文字颜色)
-    _STYLE_MAP: dict[str, tuple[str, str, str]] = {}
-
-    @classmethod
-    def init_styles(cls, theme: "ThemeManager") -> None:
-        """根据主题色初始化样式映射。需在 ThemeManager.apply() 之后调用。"""
-        primary = theme.get("primary")
-        primary_hover = theme.get("primary_hover")
-        error = theme.get("error")
-        surface = theme.get("surface")
-        text = theme.get("text")
-
-        cls._STYLE_MAP = {
-            "TButton":             (surface, primary,    text),
-            "Toolbar.TButton":     (surface, primary,    text),
-            "Primary.TButton":     (primary, primary_hover, "#FFFFFF"),
-            "Danger.TButton":      (error,   "#A5211C",    "#FFFFFF"),
-            "CompactPrimary.TButton": (primary, primary_hover, "#FFFFFF"),
-            "CompactDanger.TButton":  (error,   "#A5211C",    "#FFFFFF"),
-        }
-
-    @classmethod
-    def redraw_all(cls, root: tk.Misc) -> None:
-        """遍历控件树，强制所有 RoundedButton 实例重绘。"""
-        def _walk(w):
-            if isinstance(w, cls):
-                w._draw()
-            for child in w.winfo_children():
-                _walk(child)
-        _walk(root)
-
-    def __init__(self, parent, *, text: str = "", command=None,
-                 style: str = "TButton", width: int | None = None,
-                 font: tuple | str | None = None, state: str = "normal",
-                 **kwargs):
-        self._command = command
-        self._style_name = style
-        self._state = state
-        self._hovered = False
-        self._pressed = False
-        self._text = text
-        self._width_chars = width
-
-        if font is None:
-            font = ("Microsoft YaHei UI", 8)
-        elif isinstance(font, str):
-            font = (font, 8)
-        self._font_tuple = font
-        
-        bg_normal, _, fg = self._colors()
-        
-        # 计算 Canvas 像素尺寸
-        import tkinter.font as tkfont
-        f = tkfont.Font(font=self._font_tuple)
-        char_w = max(f.measure("0"), 5)
-        text_w = f.measure(text) if text else 0
-        # width 参数作为最小字符宽度，但始终保证能容纳实际文本
-        base_w = max((width * char_w) if width else 0, text_w)
-        pad_x = 14 if style.startswith("Compact") else 18
-        pad_y = 4 if style.startswith("Compact") else 5
-        self._pad_x = pad_x
-        self._pad_y = pad_y
-        cw = base_w + pad_x * 2
-        ch = f.metrics("linespace") + pad_y * 2
-        self._radius = min(ch // 2, 12)  # 圆角：高度的一半，最备12px
-
-        # 获取父控件背景色（兼容 ttk/tk 控件）
-        parent_bg = kwargs.get("bg")
-        if parent_bg is None:
-            try:
-                parent_bg = parent.cget("background")
-            except Exception:
-                parent_bg = "#F0F0F0"
-
-        super().__init__(
-            parent, width=cw, height=ch,
-            bg=parent_bg,
-            highlightthickness=0, bd=0, relief="flat",
-        )
-
-        self._bg_id = self.create_rectangle(0, 0, cw, ch, fill=bg_normal, outline="", tags=("bg",))
-        self._text_id = self.create_text(cw / 2, ch / 2, text=text, fill=fg,
-                                         font=self._font_tuple, tags=("text",))
-
-        self.bind("<Enter>", self._on_enter)
-        self.bind("<Leave>", self._on_leave)
-        self.bind("<ButtonPress-1>", self._on_press)
-        self.bind("<ButtonRelease-1>", self._on_release)
-
-    # ---- 内部方法 ----
-
-    def _colors(self) -> tuple[str, str, str]:
-        return self._STYLE_MAP.get(self._style_name, ("#E0E0E0", "#C0C0C0", "#000000"))
-
-    def _draw(self) -> None:
-        bg_normal, bg_hover, fg = self._colors()
-        if self._state == "disabled":
-            bg = "#D0D0D0"; fg = "#999999"
-        elif self._pressed or self._hovered:
-            bg = bg_hover
-        else:
-            bg = bg_normal
-
-        # 优先使用 Canvas 配置尺寸（winfo_width 在首次显示前返回 1，导致截断）
-        w = int(self.cget("width"))
-        h = int(self.cget("height"))
-        r = self._radius
-
-        self.coords(self._bg_id, 0, 0, w, h)
-        self.coords(self._text_id, w / 2, h / 2)
-        self.itemconfigure(self._bg_id, fill=bg, outline="")
-        self.itemconfigure(self._text_id, fill=fg, text=self._text, font=self._font_tuple)
-
-    def _on_enter(self, _e=None): self._hovered = True; self._draw()
-    def _on_leave(self, _e=None): self._hovered = False; self._pressed = False; self._draw()
-    def _on_press(self, _e=None): self._pressed = True; self._draw()
-
-    def _on_release(self, _e=None):
-        self._pressed = False
-        self._draw()
-        if self._state != "disabled" and self._command:
-            try:
-                self._command()
-            except Exception:
-                pass
-
-    # ---- 兼容 ttk.Button API ----
-
-    def configure(self, cnf=None, **kw):
-        if cnf:
-            if isinstance(cnf, dict):
-                kw.update(cnf)
-            else:
-                return super().configure(cnf, **kw)
-        # 收集 Canvas 原生参数（如 width, height）传递给父类
-        native_kw = {}
-        for k in ("width", "height"):
-            if k in kw:
-                native_kw[k] = kw.pop(k)
-        if "text" in kw:
-            self._text = kw.pop("text")
-            import tkinter.font as tkfont
-            f = tkfont.Font(font=self._font_tuple)
-            text_w = f.measure(self._text) if self._text else 0
-            if self._width_chars:
-                char_w = max(f.measure("0"), 5)
-                fixed_w = self._width_chars * char_w + self._pad_x * 2
-                native_kw["width"] = fixed_w
-            else:
-                new_w = text_w + self._pad_x * 2
-                cur_w = int(self.cget("width"))
-                if new_w != cur_w:
-                    native_kw["width"] = new_w
-        if "style" in kw:
-            self._style_name = kw.pop("style")
-        if "state" in kw:
-            self._state = kw.pop("state")
-        if "command" in kw:
-            self._command = kw.pop("command")
-        self._draw()
-        # 将原生参数传递给 Canvas 父类
-        if native_kw:
-            return super().configure(**native_kw)
-        return super().configure()
-
-    config = configure
-
-    def cget(self, key):
-        if key == "text": return self._text
-        if key == "style": return self._style_name
-        if key == "state": return self._state
-        return super().cget(key)
-
-    def __getitem__(self, key): return self.cget(key)
-    def __setitem__(self, key, val): self.configure(**{key: val})
-
-
-# ---------- 通用：Text/Entry 右键菜单 + 快捷键 ----------
-
-def _bind_text_widget_menu(widget, readonly: bool = False) -> None:
-    """给 tk.Text / ttk.Entry 绑定：
-    - 右键菜单（复制/剪切/粘贴/全选/清空）
-    - 通用快捷键 Ctrl+C / Ctrl+V / Ctrl+X / Ctrl+A / Ctrl+BackSpace(清空)
-
-    readonly=True：只允许 Copy/全选（用于显示用的 Text/Entry）
-    """
-    widget_class = widget.winfo_class()  # "Text" or "TEntry" / "Entry"
-    is_text = (widget_class == "Text")
-
-    def _sel_range():
-        """返回选中的 (start, end)，如果没有选中返回 None。Entry/Text 兼容。"""
-        try:
-            if is_text:
-                if widget.tag_ranges("sel"):
-                    return widget.index("sel.first"), widget.index("sel.last")
-                return None
-            else:
-                # Entry
-                sel = widget.select_present()
-                if sel:
-                    return widget.index("sel.first"), widget.index("sel.last")
-                return None
-        except tk.TclError:
-            return None
-
-    def _has_selection() -> bool:
-        return _sel_range() is not None
-
-    def _copy():
-        try:
-            if _sel_range() is None:
-                # 没选中就复制整行/整内容
-                if is_text:
-                    content = widget.get("1.0", "end-1c")
-                else:
-                    content = widget.get()
-                widget.clipboard_clear()
-                widget.clipboard_append(content)
-            else:
-                widget.event_generate("<<Copy>>")
-        except Exception:
-            try:
-                widget.event_generate("<Control-c>")
-            except Exception:
-                pass
-
-    def _cut():
-        if readonly:
-            return
-        try:
-            widget.event_generate("<<Cut>>")
-        except Exception:
-            try:
-                widget.event_generate("<Control-x>")
-            except Exception:
-                pass
-
-    def _paste():
-        if readonly:
-            return
-        try:
-            widget.event_generate("<<Paste>>")
-        except Exception:
-            try:
-                widget.event_generate("<Control-v>")
-            except Exception:
-                pass
-
-    def _select_all():
-        try:
-            if is_text:
-                widget.tag_add("sel", "1.0", "end-1c")
-                widget.mark_set("insert", "end-1c")
-                widget.see("insert")
-            else:
-                widget.select_range(0, "end")
-                widget.icursor("end")
-        except Exception:
-            try:
-                widget.event_generate("<Control-a>")
-            except Exception:
-                pass
-
-    def _clear():
-        if readonly:
-            # 只读控件（显示类Text）允许"清空"显示缓冲，防内存膨胀
-            try:
-                if is_text:
-                    widget.configure(state="normal")
-                    widget.delete("1.0", "end")
-                    widget.configure(state="disabled")
-                else:
-                    widget.configure(state="normal")
-                    widget.delete(0, "end")
-                    widget.configure(state="readonly")
-            except Exception:
-                pass
-        else:
-            try:
-                if is_text:
-                    widget.delete("1.0", "end")
-                else:
-                    widget.delete(0, "end")
-            except Exception:
-                pass
-
-    # —— 右键菜单 ——
-    menu = tk.Menu(widget, tearoff=0)
-    menu.add_command(label="复制 (Ctrl+C)", command=_copy, accelerator="Ctrl+C")
-    if not readonly:
-        menu.add_command(label="剪切 (Ctrl+X)", command=_cut, accelerator="Ctrl+X")
-        menu.add_command(label="粘贴 (Ctrl+V)", command=_paste, accelerator="Ctrl+V")
-    menu.add_separator()
-    menu.add_command(label="全选 (Ctrl+A)", command=_select_all, accelerator="Ctrl+A")
-    menu.add_command(label="清空", command=_clear)
-
-    def _popup(event):
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
-
-    try:
-        widget.bind("<Button-3>", _popup)  # Windows 右键
-        widget.bind("<Button-2>", _popup)  # Mac/Linux 中键
-    except Exception:
-        pass
-
-    # —— 快捷键绑定（Tk 的 Text 自带部分快捷键，但 Entry 需要自己绑 Ctrl+A） ——
-    try:
-        widget.bind("<Control-c>", lambda e: (None, _copy(), "break")[2] if False else None)
-        widget.bind("<Control-C>", lambda e: _copy())
-    except Exception:
-        pass
-    try:
-        widget.bind("<Control-a>", lambda e: (_select_all(), "break")[1])
-        widget.bind("<Control-A>", lambda e: (_select_all(), "break")[1])
-    except Exception:
-        pass
-    if not readonly:
-        try:
-            widget.bind("<Control-x>", lambda e: (_cut(), "break")[1])
-            widget.bind("<Control-X>", lambda e: (_cut(), "break")[1])
-        except Exception:
-            pass
-        try:
-            widget.bind("<Control-v>", lambda e: (_paste(), "break")[1])
-            widget.bind("<Control-V>", lambda e: (_paste(), "break")[1])
-        except Exception:
-            pass
 
 
 class ProtocolParserApp:
@@ -1046,7 +318,7 @@ class ProtocolParserApp:
 
         # 定时刷新 UI 队列
         self._ui_queue: list[tuple[str, tuple]] = []
-        self.root.after(100, self._process_ui_queue)
+        self.root.after(50, self._process_ui_queue)
 
         # 关闭窗口时：保存偏好 + 安全停止串口（不要等更新才保存）
         self.root.protocol("WM_DELETE_WINDOW", self._safe(self._on_app_close))
@@ -3106,10 +2378,13 @@ class ProtocolParserApp:
     # ---------- UI 队列处理 ----------
 
     def _process_ui_queue(self) -> None:
-        """处理 UI 队列。最外层统一兜底，不允许堆栈冒泡到 Tk mainloop。"""
+        """处理 UI 队列。每拍最多处理 BATCH 条，避免高波特率下一次刷爆主线程。"""
+        BATCH = 40  # 每 50ms 最多处理 40 条；高负载时自然排队，UI 保持响应
         try:
-            while self._ui_queue:
+            n = 0
+            while self._ui_queue and n < BATCH:
                 kind, args = self._ui_queue.pop(0)
+                n += 1
                 try:
                     if kind == "serial_frame":
                         self.rx_frame_count += 1
@@ -3121,15 +2396,16 @@ class ProtocolParserApp:
                     elif kind == "serial_error":
                         self._display_serial_error(*args)
                 except Exception as e:  # noqa: BLE001
-                    # 单条消息失败不影响其他消息，只弹友好提示 + 日志
                     self._report_error(f"UI 处理失败（{kind}）", e)
-        except Exception as e:  # noqa: BLE001  顶层：死循环绝对不能崩
+        except Exception as e:  # noqa: BLE001
             try:
                 _log_error_to_disk(e)
             except Exception:
                 pass
         finally:
-            self.root.after(100, self._process_ui_queue)
+            # 有积压时加快下一拍；空闲时仍用 50ms
+            delay = 20 if self._ui_queue else 50
+            self.root.after(delay, self._process_ui_queue)
 
     def _format_raw_display_serial(self, raw_hex: str) -> str:
         """串口原始数据显示格式转换。"""
@@ -3528,7 +2804,7 @@ def main():
         # 极端情况：DISPLAY / Tk 初始化失败
         friendly, _ = classify_protocol_error(e)
         log_path_a = _log_error_to_disk(e)
-        log_path_b = _write_crash_log_gui(e)
+        log_path_b = write_crash_log(e)
         log_path = log_path_b or log_path_a
         print(f"[错误] 无法启动 GUI：{friendly}", file=sys.stderr)
         if log_path is not None:
@@ -3566,7 +2842,7 @@ def main():
                         pass
                     # 运行时严重错误也写 exe 同级 crash log，方便用户夜间抓包查
                     try:
-                        _write_crash_log_gui(e)
+                        write_crash_log(e)
                     except Exception:
                         pass
                     break
@@ -3577,7 +2853,7 @@ def main():
         raise
     except BaseException as e:  # noqa: BLE001  启动阶段兜底：任何错误都写 exe 同级 crash.log + 尽力弹窗
         log_path_a = _log_error_to_disk(e)
-        log_path_b = _write_crash_log_gui(e)
+        log_path_b = write_crash_log(e)
         log_path = log_path_b or log_path_a
         try:
             friendly, _ = classify_protocol_error(e)

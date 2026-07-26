@@ -1686,31 +1686,42 @@ def _encode_scalar_value(cfg: dict, value, typeid: int | None, *, for_attr: bool
         return s.encode("utf-8")
     if isinstance(value, bool):
         return bytes([int(value)])
-    if isinstance(value, int):
-        # attr 的标量先看 typeid → size
+
+    # 数值：先处理 scale（编码侧 = 除以 scale）
+    encode_value = value
+    type_info = TYPEID_MAP.get(typeid) if (for_attr and typeid is not None) else None
+    if type_info and isinstance(value, (int, float)):
+        scale = type_info.get("scale")
+        if scale:
+            try:
+                unscaled = value / float(scale)
+                if abs(unscaled - round(unscaled)) < 1e-9:
+                    encode_value = int(round(unscaled))
+                else:
+                    encode_value = unscaled
+            except Exception:
+                pass
+
+    if isinstance(encode_value, int):
         if for_attr and typeid is not None:
             ti = TYPEID_MAP.get(typeid)
-            if ti and "size" in ti:
+            if ti and ti.get("size"):
                 signed = bool(ti.get("ctype", "").startswith("int"))
                 byte_order = "little" if "_le" in ti.get("ctype", "") else "big"
-                return int(value).to_bytes(ti["size"], byte_order, signed=signed)
-        # 无 typeid ：最小 1 字节（不要溢出）
-        nbytes = max(1, (value.bit_length() + 7) // 8)
-        if value < 0:
-            nbytes = max(1, ((value + 1).bit_length() + 8) // 8)
+                return int(encode_value).to_bytes(ti["size"], byte_order, signed=signed)
+        nbytes = max(1, (encode_value.bit_length() + 7) // 8)
+        if encode_value < 0:
+            nbytes = max(1, ((encode_value + 1).bit_length() + 8) // 8)
         try:
-            return int(value).to_bytes(nbytes, "big", signed=(value < 0))
+            return int(encode_value).to_bytes(nbytes, "big", signed=(encode_value < 0))
         except Exception:
             nbytes += 1
-            return int(value).to_bytes(nbytes, "big", signed=True)
-    if isinstance(value, float):
+            return int(encode_value).to_bytes(nbytes, "big", signed=True)
+    if isinstance(encode_value, float):
         import struct as _struct
-        return _struct.pack(">f", float(value))
+        return _struct.pack(">f", float(encode_value))
     raise EncodeFrameError(f"标量编码失败：不支持类型 {type(value)!r}（value={value!r}）")
 
-
-# 变长 typeid 集合（需要 length 字段），与解析端共用
-VARLEN_TYPEIDS = frozenset({11, 12, 13, 14, 23, 24})
 
 
 def _encode_attr_list(cfg: dict, items: list) -> bytes:
@@ -1749,21 +1760,6 @@ def _encode_attr_list(cfg: dict, items: list) -> bytes:
         attr_meta = _lookup_attr(cfg, attrid_i)
 
         val_raw = _encode_scalar_value(cfg, value, typeid_i, for_attr=True)
-
-        # 应用 scale（反向：解析是乘 scale，编码就除 scale）
-        if type_info and isinstance(value, (int, float)):
-            scale = type_info.get("scale")
-            if scale:
-                try:
-                    unscaled = value / float(scale)
-                    if abs(unscaled - round(unscaled)) < 1e-9:
-                        unscaled = int(round(unscaled))
-                        signed = bool(type_info.get("ctype", "").startswith("int"))
-                        byte_order = "little" if "_le" in type_info.get("ctype", "") else "big"
-                        size = type_info.get("size") or len(val_raw)
-                        val_raw = int(unscaled).to_bytes(size, byte_order, signed=signed)
-                except Exception:
-                    pass
 
         # 顺序与解析端完全一致：typeid → attrid
         out.append(typeid_i & 0xFF)
