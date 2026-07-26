@@ -62,27 +62,6 @@ from protocol_parser.updater import (  # noqa: E402
     compute_sha256 as _updater_sha,
 )
 
-
-
-def get_protocol_dir() -> Path:
-    """获取协议配置目录。
-
-    始终返回用户可见的 product/ 目录，确保：
-    1. 打包成 exe 后：使用 exe 同目录下的 product/（不存在则创建）
-    2. 开发模式下：使用项目根目录的 product/
-
-    这样用户可以在任意电脑上使用，导入的协议会保存在可见位置。
-    """
-    if getattr(sys, "frozen", False):
-        exe_dir = Path(sys.executable).resolve().parent
-        proto_dir = exe_dir / "product"
-        proto_dir.mkdir(parents=True, exist_ok=True)
-        return proto_dir
-    dev = Path(__file__).resolve().parent.parent / "product"
-    dev.mkdir(parents=True, exist_ok=True)
-    return dev
-
-
 # ---------- 崩溃日志（启动期闪退辅助）：写 exe 同级目录 crash_*.log ----------
 
 
@@ -798,12 +777,9 @@ class ProtocolParserApp:
         self.send_frame.rowconfigure(0, weight=1)
         # 四周留白：和左侧实时数据（2+4=6px gap）、和下/上边沿都有间距
         self.send_frame.configure(padding=(2, 4, 4, 0))
-        self.send_panel_inner = ttk.Frame(self.send_frame)
-        self.send_panel_inner.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
         # 发送面板三行可伸缩区域
         self.send_panel_inner.columnconfigure(0, weight=1)
-        self.send_panel_inner.rowconfigure(2, weight=1)   # 协议参数/字段 JSON
-        self.send_panel_inner.rowconfigure(3, weight=1)   # Raw 内容
+        self.send_panel_inner.rowconfigure(0, weight=1)  # 唯一伸缩行：由内部 raw/protocol 去吃高度
         self._build_send_panel(self.send_panel_inner)
         self.main_paned.add(self.send_frame, weight=2)  # 左侧 3 右侧 2
 
@@ -1209,82 +1185,104 @@ class ProtocolParserApp:
         self.font_size_var.set(new_size)
 
     def _build_send_panel(self, parent: tk.Misc) -> None:
-        """构建"指令发送"Tab。"""
-        tip = ttk.Label(
-            parent,
-            text="三种发送模式：协议模式（自动组帧+CRC）/ Raw HEX / Raw ASCII；可设置毫秒级周期循环发送。",
-            foreground="#555555",
-            justify="left",
-        )
-        tip.grid(row=0, column=0, sticky="we", pady=(0, 6))
+        theme = self.theme
+        parent.columnconfigure(0, weight=1)
+        # 中间内容行可伸展 → 吃掉下面空白
+        parent.rowconfigure(2, weight=1)
 
-        # 模式选择
-        mode_row = ttk.LabelFrame(parent, text="发送模式", padding=8)
-        mode_row.grid(row=1, column=0, sticky="we", pady=(0, 8))
-        mode_row.columnconfigure(0, weight=1)
+        # ----- 发送模式 -----
+        mode_row = ttk.LabelFrame(parent, text="发送模式", padding=(8, 6))
+        mode_row.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         for i, (label, value) in enumerate([
-            ("协议模式（自动组帧+CRC）", "protocol"),
+            ("协议组帧", "protocol"),
             ("Raw HEX", "raw_hex"),
             ("Raw ASCII", "raw_ascii"),
         ]):
-            rb = ttk.Radiobutton(mode_row, text=label, value=value, variable=self.send_mode_var, command=self._on_send_mode_change)
-            rb.grid(row=0, column=i, padx=6, sticky="w")
+            ttk.Radiobutton(
+                mode_row, text=label, value=value,
+                variable=self.send_mode_var, command=self._on_send_mode_change,
+            ).grid(row=0, column=i, padx=(0, 12), sticky="w")
 
-        # 协议模式内容
-        self.protocol_frame = ttk.LabelFrame(parent, text="协议参数", padding=8)
-        self.protocol_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))
+        # ----- 协议参数（和 Raw 占同一行 row=2，互斥显示）-----
+        self.protocol_frame = ttk.LabelFrame(parent, text="协议参数", padding=(8, 6))
+        self.protocol_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
         self.protocol_frame.columnconfigure(1, weight=1)
-        self.protocol_frame.columnconfigure(3, weight=1)
-        ttk.Label(self.protocol_frame, text="命令字 (CmdID):").grid(row=0, column=0, sticky="w", pady=3)
-        self.cmd_code_entry = ttk.Entry(self.protocol_frame, textvariable=self.tx_cmd_code_var, width=20)
-        self.cmd_code_entry.grid(row=0, column=1, sticky="we", padx=(0, 12), pady=3)
-        ttk.Label(self.protocol_frame, text="方向:").grid(row=0, column=2, sticky="e")
-        dir_combo = ttk.Combobox(
-            self.protocol_frame,
-            textvariable=self.tx_direction_var,
-            values=["模组发送", "MCU发送"],
-            state="readonly",
-            width=12,
-        )
-        dir_combo.grid(row=0, column=3, sticky="w", pady=3)
+        self.protocol_frame.rowconfigure(2, weight=1)
+        # …命令、方向控件…
+        self.fields_text = tk.Text(self.protocol_frame, height=6, font=self.serial_font, wrap="word")
+        self.fields_text.grid(row=2, column=1, sticky="nsew")  # sticky=nsew 才会拉高
 
-        ttk.Label(self.protocol_frame, text="字段 JSON:").grid(row=1, column=0, sticky="nw", pady=3)
-        self.fields_text = tk.Text(self.protocol_frame, height=10, font=("Consolas", 10))
-        self.fields_text.grid(row=1, column=1, columnspan=3, sticky="nsew", pady=3)
-        self.protocol_frame.rowconfigure(1, weight=1)
-        # 双向同步 StringVar 和 Text（避免复杂 trace，每次发送时从 text 读）
-        self.fields_text.insert("1.0", self.tx_fields_var.get())
-
-        # Raw 内容（共用 1 个帧，通过 mode 显示不同的 placeholder）
-        self.raw_frame = ttk.LabelFrame(parent, text="Raw 内容（切换模式后此处改变语义）", padding=8)
-        self.raw_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 8))
+        # ----- Raw -----
+        self.raw_frame = ttk.LabelFrame(parent, text="Raw 内容", padding=(8, 6))
+        self.raw_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
         self.raw_frame.columnconfigure(0, weight=1)
-        self.raw_hint = ttk.Label(self.raw_frame, text="HEX 模式：1A 2B 3C 或 1A2B3C", foreground="#555")
-        self.raw_hint.grid(row=0, column=0, sticky="w")
-        self.raw_text = tk.Text(self.raw_frame, height=8, font=("Consolas", 10))
-        self.raw_text.grid(row=1, column=0, sticky="nsew", pady=3)
         self.raw_frame.rowconfigure(1, weight=1)
+        self.raw_hint = ttk.Label(self.raw_frame, text="HEX：1A 2B 3C", style="Hint.TLabel")
+        self.raw_hint.grid(row=0, column=0, sticky="w")
+        self.raw_text = tk.Text(self.raw_frame, height=6, font=self.serial_font, wrap="word")
+        self.raw_text.grid(row=1, column=0, sticky="nsew")  # 同样拉高
 
-        # 周期发送 + 操作按钮
-        act = ttk.LabelFrame(parent, text="发送操作", padding=8)
-        act.grid(row=4, column=0, sticky="we")
-        act.columnconfigure(7, weight=1)
-        ttk.Label(act, text="间隔(ms):").grid(row=0, column=0, sticky="w")
-        ivs = ttk.Spinbox(act, from_=10, to=3600000, increment=10, textvariable=self.tx_interval_ms_var, width=8)
-        ivs.grid(row=0, column=1, sticky="w", padx=(2, 10))
-        cb = ttk.Checkbutton(act, text="启用循环", variable=self.tx_cycle_var)
-        cb.grid(row=0, column=2, sticky="w", padx=(0, 10))
+        # ----- 发送操作：贴在底部，一行四个按钮 -----
+        act = ttk.LabelFrame(parent, text="发送操作", padding=(8, 6))
+        act.grid(row=3, column=0, sticky="ew")  # 注意：不要 nsew，高度随内容
 
-        self.send_once_btn = RoundedButton(act, text="▶ 发送一次", command=self._safe(self._on_send_once))
-        self.send_once_btn.grid(row=0, column=3, sticky="w", padx=2)
-        self.tx_cycle_btn = RoundedButton(act, text="▶ 开始循环", command=self._safe(self._on_toggle_cycle_send))
-        self.tx_cycle_btn.grid(row=0, column=4, sticky="w", padx=2)
-        self.copy_hex_btn = RoundedButton(act, text="复制当前帧 HEX", command=self._safe(self._on_copy_hex))
-        self.copy_hex_btn.grid(row=0, column=5, sticky="w", padx=2)
-        self.clear_send_btn = RoundedButton(act, text="清空输入", command=self._safe(self._on_clear_send))
-        self.clear_send_btn.grid(row=0, column=6, sticky="w", padx=2)
+        cycle_row = ttk.Frame(act)
+        cycle_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(cycle_row, text="间隔(ms)").pack(side="left")
+        ttk.Spinbox(cycle_row, from_=10, to=3600000, increment=10,
+                    textvariable=self.tx_interval_ms_var, width=8).pack(side="left", padx=(4, 12))
+        ttk.Checkbutton(cycle_row, text="启用循环", variable=self.tx_cycle_var).pack(side="left")
+
+        btn_row = ttk.Frame(act)
+        btn_row.pack(fill="x")
+        self.send_once_btn = RoundedButton(btn_row, text="▶ 发送一次", style="Primary.TButton",
+                                        command=self._safe(self._on_send_once))
+        self.send_once_btn.pack(side="left", padx=(0, 6))
+        self.tx_cycle_btn = RoundedButton(btn_row, text="▶ 开始循环", style="Primary.TButton",
+                                        command=self._safe(self._on_toggle_cycle_send))
+        self.tx_cycle_btn.pack(side="left", padx=(0, 6))
+        self.copy_hex_btn = RoundedButton(btn_row, text="复制帧 HEX", style="Toolbar.TButton",
+                                        command=self._safe(self._on_copy_hex))
+        self.copy_hex_btn.pack(side="left", padx=(0, 6))
+        self.clear_send_btn = RoundedButton(btn_row, text="清空输入", style="Toolbar.TButton",
+                                            command=self._safe(self._on_clear_send))
+        self.clear_send_btn.pack(side="left")
 
         self._on_send_mode_change()
+
+    def _refresh_send_cmd_list(self) -> None:
+        """根据当前协议刷新发送面板的命令下拉。"""
+        labels: list[str] = []
+        self._send_cmd_map: dict[str, int] = {}
+        cfg = self.cfg or {}
+        for c in (cfg.get("commands") or []):
+            if not isinstance(c, dict):
+                continue
+            code = c.get("code", c.get("id", c.get("cmd")))
+            name = c.get("name") or c.get("title") or ""
+            try:
+                if isinstance(code, str):
+                    code_i = int(code, 0)
+                else:
+                    code_i = int(code)
+            except Exception:
+                continue
+            label = f"0x{code_i:02X}  {name}".strip() if name else f"0x{code_i:02X}"
+            labels.append(label)
+            self._send_cmd_map[label] = code_i
+        try:
+            self.cmd_combo["values"] = labels
+            if labels and not self.tx_cmd_label_var.get():
+                self.cmd_combo.current(0)
+                self._on_send_cmd_selected()
+        except Exception:
+            pass
+
+    def _on_send_cmd_selected(self, _event=None) -> None:
+        label = (self.tx_cmd_label_var.get() or "").strip()
+        code = self._send_cmd_map.get(label)
+        if code is not None:
+            self.tx_cmd_code_var.set(f"0x{code:02X}")
 
     def _on_send_mode_change(self) -> None:
         mode = self.send_mode_var.get()
@@ -1523,6 +1521,10 @@ class ProtocolParserApp:
                 return
 
         self._set_status(f"已加载: {product_name}")
+        try:
+                self._refresh_send_cmd_list()
+        except Exception:
+                pass
 
     def _on_product_change(self, event=None) -> None:
         """切换产品协议。"""
@@ -1675,7 +1677,7 @@ class ProtocolParserApp:
                 # 否则 minsize=0 时 sashpos 无法让右侧撑开）
                 try:
                     self.main_paned.paneconfig(self.realtime_container, minsize=260)
-                    self.main_paned.paneconfig(self.send_frame, weight=2, minsize=200)
+                    self.main_paned.paneconfig(self.send_frame, weight=2, minsize=280)
                 except Exception:
                     pass
                 # 一次性把 sash 拉到目标位置（pane 结构没变，只有这一次重定位）
