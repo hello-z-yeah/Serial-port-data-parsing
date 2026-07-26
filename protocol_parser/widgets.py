@@ -48,21 +48,6 @@ class Tooltip:
             return
         self._after_id = self.widget.after(self._DELAY_MS, self._show)
 
-    def _on_configure(self, event=None) -> None:
-        """grid/pack 拉宽后按真实像素重绘，避免显示宽与点击区域不一致。"""
-        try:
-            w = int(self.winfo_width())
-            h = int(self.winfo_height())
-        except Exception:
-            return
-        if w <= 1 or h <= 1:
-            return
-        try:
-            if int(self.cget("width")) != w or int(self.cget("height")) != h:
-                super().configure(width=w, height=h)
-        except Exception:
-            pass
-        self._draw()
 
     def _on_motion(self, _event=None):
         # 进入控件区域内的小移动不重新计时，离开的 Leave 会负责取消
@@ -221,23 +206,6 @@ class RoundedButton(tk.Canvas):
         self.bind("<ButtonRelease-1>", self._on_release)
         self.bind("<Configure>", self._on_configure, add="+")
 
-        def _on_configure(self, event=None) -> None:
-            """grid/pack 拉宽后，按真实像素重绘，避免“看起来窄、点得到的区域宽”。"""
-            try:
-                w = int(self.winfo_width())
-                h = int(self.winfo_height())
-            except Exception:
-                return
-            if w <= 1 or h <= 1:
-                return
-            # 与当前配置尺寸不一致时，同步到 Canvas，再重绘
-            try:
-                if int(self.cget("width")) != w or int(self.cget("height")) != h:
-                    super().configure(width=w, height=h)
-            except Exception:
-                pass
-            self._draw()
-
     # ---- 内部方法 ----
 
     def _colors(self) -> tuple[str, str, str]:
@@ -268,8 +236,31 @@ class RoundedButton(tk.Canvas):
         self.itemconfigure(self._bg_id, fill=bg, outline="")
         self.itemconfigure(self._text_id, fill=fg, text=self._text, font=self._font_tuple)
 
-    def _on_enter(self, _e=None): self._hovered = True; self._draw()
-    def _on_leave(self, _e=None): self._hovered = False; self._pressed = False; self._draw()
+    def _on_configure(self, event=None) -> None:
+        """grid/pack 拉宽后按真实像素重绘。"""
+        try:
+            w = int(self.winfo_width())
+            h = int(self.winfo_height())
+        except Exception:
+            return
+        if w <= 1 or h <= 1:
+            return
+        try:
+            if int(self.cget("width")) != w or int(self.cget("height")) != h:
+                super().configure(width=w, height=h)
+        except Exception:
+            pass
+        self._draw()
+
+    def _on_enter(self, _e=None):
+        self._hovered = True
+        self._draw()
+
+    def _on_leave(self, _e=None):
+        self._hovered = False
+        self._pressed = False
+        self._draw()
+
     def _on_press(self, _e=None): self._pressed = True; self._draw()
 
     def _on_release(self, _e=None):

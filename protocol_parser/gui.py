@@ -290,9 +290,6 @@ class ProtocolParserApp:
 
         # 主布局
         self._build_ui()
-        # 设置左右分栏初始比例（右侧约 30%）——仅当面板默认显示时才在启动后恢复宽度
-        if self.send_frame_visible:
-            self.root.after(100, self._restore_send_panel_width)
         self._load_protocols()
 
         # 定时刷新 UI 队列
@@ -621,6 +618,7 @@ class ProtocolParserApp:
         #    row 2  →  底部状态栏（fixed）
         #    col 0  →  weight=1（所有内容横向跟随窗口伸缩）
         # ============================================================
+        self.SEND_PANEL_WIDTH = 360   # 指令发送面板固定宽度（像素）
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=0)
         self.root.rowconfigure(1, weight=1)
@@ -756,52 +754,53 @@ class ProtocolParserApp:
 
         self._build_serial_config_panel(self.serial_frame)
 
-        # 下方水平分栏：实时数据（左） ∥ 指令发送（右）
-        # 注：ttk.PanedWindow 不支持经典Tk的 sashwidth / sashrelief 构造参数，
-        # 分隔条宽度统一在 apply_ttk_styles 里用 TPanedwindow 样式控制。
-        self.main_paned = ttk.PanedWindow(self.serial_frame, orient="horizontal")
-        self.main_paned.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
+        # 下方：实时数据（左，可伸缩） + 指令发送（右，固定宽度）
+        # 不用 PanedWindow，避免出现可拖动的分隔条
+        self.serial_frame.columnconfigure(0, weight=1)   # 左侧吃宽度
+        self.serial_frame.columnconfigure(1, weight=0)   # 右侧固定
+        self.serial_frame.rowconfigure(1, weight=1)
 
-        # 左侧：实时数据容器 —— 用 app_bg TFrame（留白层），里面 LabelFrame 才是真正卡片
-        self.realtime_container = ttk.Frame(self.main_paned)
+        # 左侧：实时数据
+        self.realtime_container = ttk.Frame(self.serial_frame)
+        self.realtime_container.grid(row=1, column=0, sticky="nsew")
         self.realtime_container.columnconfigure(0, weight=1)
         self.realtime_container.rowconfigure(0, weight=1)
-        # 容器四周留白（卡片边框外要留出一圈 app_bg 色空隙），这样和左边列、右边发送面板都有间距
         self.realtime_container.configure(padding=(4, 4, 2, 0))
         self._build_serial_panel(self.realtime_container)
-        self.main_paned.add(self.realtime_container, weight=3)
 
-        # 右侧：指令发送 —— 用 app_bg TFrame（留白层），里面的四个发送 LabelFrame 才是真正卡片
-        self.send_frame = ttk.Frame(self.main_paned)
+        # 右侧：指令发送（固定宽度，无分隔条）
+        self.send_frame = ttk.Frame(self.serial_frame, width=self.SEND_PANEL_WIDTH)
+        self.send_frame.grid(row=1, column=1, sticky="ns")  # 只上下伸展，左右不拉
+        self.send_frame.grid_propagate(False)               # 锁死 width
         self.send_frame.columnconfigure(0, weight=1)
         self.send_frame.rowconfigure(0, weight=1)
-        # 四周留白：和左侧实时数据（2+4=6px gap）、和下/上边沿都有间距
         self.send_frame.configure(padding=(2, 4, 4, 0))
-        # 发送面板三行可伸缩区域
+
+        self.send_panel_inner = ttk.Frame(self.send_frame)
+        self.send_panel_inner.grid(row=0, column=0, sticky="nsew")
         self.send_panel_inner.columnconfigure(0, weight=1)
-        self.send_panel_inner.rowconfigure(0, weight=1)  # 唯一伸缩行：由内部 raw/protocol 去吃高度
+        self.send_panel_inner.rowconfigure(2, weight=1)
         self._build_send_panel(self.send_panel_inner)
-        self.main_paned.add(self.send_frame, weight=2)  # 左侧 3 右侧 2
+
+        # 兼容旧引用（有的逻辑还在用 main_paned）
+        self.main_paned = self.serial_frame
+
+        self.serial_tab = self.serial_frame
+        self.send_tab = self.send_frame
+        self.send_frame_visible = False
+        self.send_frame_frac = 0.40
+
+        # 默认不显示右侧
+        try:
+            self.send_frame.grid_remove()
+        except Exception:
+            pass
 
         # 兼容旧代码可能引用到的 tab 别名
         self.serial_tab = self.serial_frame
         self.send_tab = self.send_frame
         # ⚠️ 先设置默认可见性，后续 minsize/weight 判断才会生效
         self.send_frame_visible = False
-        self.send_frame_frac = 0.40  # 右侧默认占 40%
-
-        # 为左右分栏设置最小宽度，避免缩小时发送面板被压得过窄
-        # 默认关闭时先把 send_frame 的 minsize 与 weight 都置 0，
-        # 否则 minsize=200 会导致即使 sashpos 推到最右也有 200px 的发送面板挤在视野内，
-        # 出现"默认打开+大小不对+点一次开关再关闭才能消除"的 bug
-        try:
-            self.main_paned.paneconfig(self.realtime_container, minsize=260)
-            if self.send_frame_visible:
-                self.main_paned.paneconfig(self.send_frame, minsize=200)
-            else:
-                self.main_paned.paneconfig(self.send_frame, minsize=0, weight=0)
-        except Exception:
-            pass
 
         # ============================================================
         #  row=2: 底部状态栏（fixed）
@@ -848,27 +847,6 @@ class ProtocolParserApp:
         except Exception:
             pass
 
-        # 2.5) 指令发送面板默认关闭：
-        #   - 立刻把 weight/minsize 设 0（即使此时 winfo_width 还不准，先把最小宽度这道闸门关上）
-        #   - after(200) 再执行一次 sashpos 推到最右（此时窗口几何稳定，winfo_width 是真实值）
-        #   双重保险避免"默认打开+大小错乱，点一次开关才恢复"的 bug
-        try:
-            if not self.send_frame_visible:
-                self.main_paned.paneconfig(self.send_frame, weight=0, minsize=0)
-        except Exception:
-            pass
-        def _deferred_hide_send_panel():
-            try:
-                if hasattr(self, "send_frame_visible") and not self.send_frame_visible:
-                    if hasattr(self, "main_paned"):
-                        _pw = max(1, self.main_paned.winfo_width())
-                        self.main_paned.sashpos(0, _pw)
-            except Exception:
-                pass
-        try:
-            self.root.after(200, self._safe(_deferred_hide_send_panel))
-        except Exception:
-            pass
         try:
             self.root.update_idletasks()
         except Exception:
@@ -919,7 +897,7 @@ class ProtocolParserApp:
         theme = self.theme
 
         frame = ttk.LabelFrame(parent, text="串口配置", padding=(12, 10))
-        frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
         # 串口配置面板整体按 grid 展开：每行 1 列，权重=0（fixed height，不参与挤压）
         frame.columnconfigure(0, weight=1)
 
@@ -1185,12 +1163,10 @@ class ProtocolParserApp:
         self.font_size_var.set(new_size)
 
     def _build_send_panel(self, parent: tk.Misc) -> None:
-        theme = self.theme
         parent.columnconfigure(0, weight=1)
-        # 中间内容行可伸展 → 吃掉下面空白
-        parent.rowconfigure(2, weight=1)
+        parent.rowconfigure(2, weight=1)  # 中间内容行可伸展
 
-        # ----- 发送模式 -----
+        # ----- 发送模式（固定顶部）-----
         mode_row = ttk.LabelFrame(parent, text="发送模式", padding=(8, 6))
         mode_row.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         for i, (label, value) in enumerate([
@@ -1203,14 +1179,47 @@ class ProtocolParserApp:
                 variable=self.send_mode_var, command=self._on_send_mode_change,
             ).grid(row=0, column=i, padx=(0, 12), sticky="w")
 
-        # ----- 协议参数（和 Raw 占同一行 row=2，互斥显示）-----
+        # 统一输入框边框样式（四边都有线）
+        _text_kw = dict(
+            font=self.serial_font,
+            wrap="word",
+            relief="flat",              # 不要 solid，否则发黑
+            borderwidth=0,
+            highlightthickness=1,       # 用这一层画边框
+            highlightbackground="#E0E0E0",  # 未聚焦：浅灰
+            highlightcolor="#E0E0E0",       # 聚焦也保持同色（不换成蓝/黑）
+            padx=6,
+            pady=4,
+        )
+
+        # ----- 协议参数 -----
         self.protocol_frame = ttk.LabelFrame(parent, text="协议参数", padding=(8, 6))
         self.protocol_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
         self.protocol_frame.columnconfigure(1, weight=1)
         self.protocol_frame.rowconfigure(2, weight=1)
-        # …命令、方向控件…
-        self.fields_text = tk.Text(self.protocol_frame, height=6, font=self.serial_font, wrap="word")
-        self.fields_text.grid(row=2, column=1, sticky="nsew")  # sticky=nsew 才会拉高
+
+        ttk.Label(self.protocol_frame, text="命令字:").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.cmd_code_entry = ttk.Entry(
+            self.protocol_frame, textvariable=self.tx_cmd_code_var, width=16
+        )
+        self.cmd_code_entry.grid(row=0, column=1, sticky="w", pady=(0, 4))
+
+        ttk.Label(self.protocol_frame, text="方向:").grid(row=1, column=0, sticky="w", pady=(0, 4))
+        ttk.Combobox(
+            self.protocol_frame,
+            textvariable=self.tx_direction_var,
+            values=["模组发送", "MCU发送"],
+            state="readonly",
+            width=12,
+        ).grid(row=1, column=1, sticky="w", pady=(0, 4))
+
+        ttk.Label(self.protocol_frame, text="字段 JSON:").grid(row=2, column=0, sticky="nw")
+        self.fields_text = tk.Text(self.protocol_frame, height=6, **_text_kw)
+        self.fields_text.grid(row=2, column=1, sticky="nsew")
+        try:
+            self.fields_text.insert("1.0", self.tx_fields_var.get())
+        except Exception:
+            pass
 
         # ----- Raw -----
         self.raw_frame = ttk.LabelFrame(parent, text="Raw 内容", padding=(8, 6))
@@ -1218,34 +1227,46 @@ class ProtocolParserApp:
         self.raw_frame.columnconfigure(0, weight=1)
         self.raw_frame.rowconfigure(1, weight=1)
         self.raw_hint = ttk.Label(self.raw_frame, text="HEX：1A 2B 3C", style="Hint.TLabel")
-        self.raw_hint.grid(row=0, column=0, sticky="w")
-        self.raw_text = tk.Text(self.raw_frame, height=6, font=self.serial_font, wrap="word")
-        self.raw_text.grid(row=1, column=0, sticky="nsew")  # 同样拉高
+        self.raw_hint.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.raw_text = tk.Text(self.raw_frame, height=6, **_text_kw)
+        self.raw_text.grid(row=1, column=0, sticky="nsew")
 
-        # ----- 发送操作：贴在底部，一行四个按钮 -----
+        # ----- 发送操作（固定底部）-----
         act = ttk.LabelFrame(parent, text="发送操作", padding=(8, 6))
-        act.grid(row=3, column=0, sticky="ew")  # 注意：不要 nsew，高度随内容
+        act.grid(row=3, column=0, sticky="ew")
 
         cycle_row = ttk.Frame(act)
         cycle_row.pack(fill="x", pady=(0, 6))
         ttk.Label(cycle_row, text="间隔(ms)").pack(side="left")
-        ttk.Spinbox(cycle_row, from_=10, to=3600000, increment=10,
-                    textvariable=self.tx_interval_ms_var, width=8).pack(side="left", padx=(4, 12))
-        ttk.Checkbutton(cycle_row, text="启用循环", variable=self.tx_cycle_var).pack(side="left")
+        ttk.Spinbox(
+            cycle_row, from_=10, to=3600000, increment=10,
+            textvariable=self.tx_interval_ms_var, width=8,
+        ).pack(side="left", padx=(4, 12))
+        ttk.Checkbutton(
+            cycle_row, text="启用循环", variable=self.tx_cycle_var
+        ).pack(side="left")
 
         btn_row = ttk.Frame(act)
         btn_row.pack(fill="x")
-        self.send_once_btn = RoundedButton(btn_row, text="▶ 发送一次", style="Primary.TButton",
-                                        command=self._safe(self._on_send_once))
+        self.send_once_btn = RoundedButton(
+            btn_row, text="▶ 发送一次", style="Primary.TButton",
+            command=self._safe(self._on_send_once),
+        )
         self.send_once_btn.pack(side="left", padx=(0, 6))
-        self.tx_cycle_btn = RoundedButton(btn_row, text="▶ 开始循环", style="Primary.TButton",
-                                        command=self._safe(self._on_toggle_cycle_send))
+        self.tx_cycle_btn = RoundedButton(
+            btn_row, text="▶ 开始循环", style="Primary.TButton",
+            command=self._safe(self._on_toggle_cycle_send),
+        )
         self.tx_cycle_btn.pack(side="left", padx=(0, 6))
-        self.copy_hex_btn = RoundedButton(btn_row, text="复制帧 HEX", style="Toolbar.TButton",
-                                        command=self._safe(self._on_copy_hex))
+        self.copy_hex_btn = RoundedButton(
+            btn_row, text="复制帧 HEX", style="Toolbar.TButton",
+            command=self._safe(self._on_copy_hex),
+        )
         self.copy_hex_btn.pack(side="left", padx=(0, 6))
-        self.clear_send_btn = RoundedButton(btn_row, text="清空输入", style="Toolbar.TButton",
-                                            command=self._safe(self._on_clear_send))
+        self.clear_send_btn = RoundedButton(
+            btn_row, text="清空", style="Toolbar.TButton",
+            command=self._safe(self._on_clear_send),
+        )
         self.clear_send_btn.pack(side="left")
 
         self._on_send_mode_change()
@@ -1634,80 +1655,24 @@ class ProtocolParserApp:
         # trace_add 会自动触发 _on_topmost_change()
 
     def _toggle_send_panel(self) -> None:
-        """显示/隐藏右侧指令发送面板。
-
-        ⚠️ 防闪烁终极方案（彻底避免"先弹宽框再回弹"）：
-        不再使用 PanedWindow.forget/add，因为 add 会先按 weight=3/2 平均分配宽度，
-        再由 sashpos 矫正，这两次布局计算之间的帧会被人眼捕捉到 → 视觉"弹一下"。
-
-        正确做法：send_frame 永远留在 PanedWindow 里（pane 结构不变），仅通过
-        「sashpos 推拉分隔条」+「weight/minsize 动态调整」来实现显示/隐藏。
-        整个过程只有一次 sashpos，只有一次最终重绘。
-        """
+        """显示/隐藏右侧指令发送面板（固定宽度，无拖动条）。"""
         try:
             if self.send_frame_visible:
-                # ---- 收起（隐藏）发送面板：把分隔条推到最右边 ----
-                # 先记录当前右侧所占比例（在推到右边之前）
-                try:
-                    w = max(1, self.main_paned.winfo_width())
-                    try:
-                        self.send_frame_frac = 1.0 - self.main_paned.sashpos(0) / w
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-                # 把 send_frame 的 weight 置 0、minsize 置 0，避免它继续占空间
-                try:
-                    self.main_paned.paneconfig(self.send_frame, weight=0, minsize=0)
-                except Exception:
-                    pass
-                # 把分隔条一路推到 PanedWindow 最右侧（= send_frame 宽度 0）
-                try:
-                    w = max(1, self.main_paned.winfo_width())
-                    self.main_paned.sashpos(0, w)
-                except Exception:
-                    pass
+                self.send_frame.grid_remove()
                 self.send_frame_visible = False
                 self.send_panel_btn.config(text="打开指令发送界面", style="Toolbar.TButton")
                 self._set_status("已隐藏指令发送面板")
-                self.root.update_idletasks()
             else:
-                # ---- 展开（显示）发送面板：把分隔条从最右边拉回目标位置 ----
-                # 恢复 send_frame 的 weight 和 minsize（必须先于 sashpos 设置，
-                # 否则 minsize=0 时 sashpos 无法让右侧撑开）
-                try:
-                    self.main_paned.paneconfig(self.realtime_container, minsize=260)
-                    self.main_paned.paneconfig(self.send_frame, weight=2, minsize=280)
-                except Exception:
-                    pass
-                # 一次性把 sash 拉到目标位置（pane 结构没变，只有这一次重定位）
-                paned_w = max(1, self.main_paned.winfo_width())
-                target_sash = None
-                if 0.1 <= self.send_frame_frac <= 0.9:
-                    target_right_px = max(200, int(paned_w * self.send_frame_frac))
-                    target_sash = paned_w - target_right_px
-                if target_sash is not None:
-                    try:
-                        self.main_paned.sashpos(0, target_sash)
-                    except Exception:
-                        pass
-                # 更新按钮文字/样式（不触发布局）
+                self.send_frame.configure(width=self.SEND_PANEL_WIDTH)
+                self.send_frame.grid_propagate(False)
+                self.send_frame.grid(row=1, column=1, sticky="ns")
                 self.send_frame_visible = True
                 self.send_panel_btn.config(text="关闭指令发送界面", style="Danger.TButton")
                 self._set_status("已显示指令发送面板")
-                # 统一只重绘一次
-                self.root.update_idletasks()
-        except Exception as e:  # noqa: BLE001
+            self.root.update_idletasks()
+        except Exception as e:
             self._report_error("切换指令发送面板失败", e)
-
-    def _restore_send_panel_width(self) -> None:
-        """恢复指令发送面板之前的宽度比例。"""
-        try:
-            w = self.main_paned.winfo_width()
-            if w > 0 and 0.1 <= self.send_frame_frac <= 0.9:
-                self.main_paned.sashpos(0, int(w * (1 - self.send_frame_frac)))
-        except Exception:
-            pass
+    
 
     # ------------------------------------------------------------
     # 主题/字体/偏好 相关方法
@@ -1754,16 +1719,7 @@ class ProtocolParserApp:
                 _w.configure(font=self.serial_font)
         except Exception:
             pass
-        if not getattr(self, "send_frame_visible", False) and hasattr(self, "main_paned"):
-            try:
-                self.main_paned.paneconfig(self.send_frame, weight=0, minsize=0)
-            except Exception:
-                pass
-            try:
-                _pw = max(1, self.main_paned.winfo_width())
-                self.main_paned.sashpos(0, _pw)
-            except Exception:
-                pass
+
         if save:
             try:
                 self._save_preferences()
