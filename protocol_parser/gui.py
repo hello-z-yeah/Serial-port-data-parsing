@@ -2791,9 +2791,11 @@ class ProtocolParserApp:
         if not hasattr(self, "hex_btn") or self.hex_btn is None:
             return
         if bool(self.hex_format_var.get()):
+            # HEX：蓝色主按钮
             self.hex_btn.configure(text="HEX 格式", style="Primary.TButton", width=10)
         else:
-            self.hex_btn.configure(text="ASCII 格式", style="Toolbar.TButton", width=10)
+            # ASCII：红色
+            self.hex_btn.configure(text="ASCII 格式", style="Danger.TButton", width=10)
 
 
     def _on_hex_format_change(self) -> None:

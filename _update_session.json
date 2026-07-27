@@ -27,7 +27,7 @@
     "theme_style": "win11",
     "font_size": 10,
     "topmost": false,
-    "serial_config_collapsed": true,
+    "serial_config_collapsed": false,
     "save_raw_enabled_default": false,
     "save_raw_path_default": "D:\\测试\\工具\\串口协议解析\\Serial-port-data-parsing\\data",
     "raw_auto_split_mb": 50,
