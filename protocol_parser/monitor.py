@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import re
 import sys
 import time
 from datetime import datetime
@@ -275,12 +276,6 @@ class ResultLogger:
         self._f.write(body)
         self._f.flush()
         self._count += 1
-
-
-# 兼容性：旧代码可能用 text_log（原来叫这个名，也可能是笔误；保留为 ResultLogger 别名即可）
-# 注意：为避免重复实现，不再单独提供 text_log；需要按天滚动时直接 rotate_mode='daily'
-import re  # noqa: E402  （放在文件底部以免污染其他代码）
-
 
 
 # ---------- 粘贴交互模式 ----------

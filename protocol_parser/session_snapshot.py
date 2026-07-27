@@ -127,8 +127,6 @@ def save_snapshot(snap: SessionSnapshot, path: str | Path | None = None) -> Path
             json.dump(payload, fp, ensure_ascii=False, indent=2)
         os.replace(tmp, target)
     except Exception as e:
-        from protocol_parser.parser import _UpdaterError_proxy
-        # 这里用函数创建避免强 import 循环
         raise _mk_snapshot_error(
             message=f"save session snapshot failed: {e}",
             friendly_msg="保存更新会话快照失败，请检查磁盘或文件权限后重试。",

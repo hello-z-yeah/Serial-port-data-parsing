@@ -15,16 +15,9 @@ import os
 import sys
 import threading
 import time
+from collections import deque
 import tkinter as tk
 import tkinter.font as tkfont
-from protocol_parser.theme import ThemeManager
-from protocol_parser.widgets import Tooltip, RoundedButton, _bind_text_widget_menu
-from protocol_parser.paths import (
-    resource_path,
-    user_data_path,
-    get_protocol_dir,
-    write_crash_log,
-)
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -62,8 +55,123 @@ from protocol_parser.updater import (  # noqa: E402
     compute_sha256 as _updater_sha,
 )
 
+
+# ---------- 资源/数据路径（兼容 PyInstaller 单文件模式） ----------
+
+def resource_path(relative: str) -> Path:
+    """获取资源路径（只读/内置资源）：优先 _MEIPASS 打包目录。
+    只用于 product/ 协议文件等打包进来的资源，**绝不要用来写文件**（_MEIPASS 是临时目录，重启就清空）。"""
+    if hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / relative
+    base = Path(__file__).resolve().parent
+    # 开发模式下，product 在上一级目录
+    candidate = base / relative
+    if candidate.exists():
+        return candidate
+    return base.parent / relative
+
+
+def user_data_path(relative: str = "") -> Path:
+    """获取**用户可写**数据目录：
+    * 打包模式：优先 exe 同级的 data\\；exe 写目录不可用（如 Program Files）时降级到用户「文档\\串口解析工具\\data」。
+    * 开发模式：项目根目录下的 data\\。
+    相对路径 relative 会拼在后面并自动创建目录。"""
+    try:
+        # 1) 打包模式：sys.executable = xxx.exe
+        if getattr(sys, "frozen", False) and hasattr(sys, "executable"):
+            exe_dir = Path(sys.executable).resolve().parent
+            try:
+                write_probe = exe_dir / ".write_probe"
+                write_probe.write_text("probe", encoding="utf-8")
+                write_probe.unlink(missing_ok=True)
+                root = exe_dir
+            except (OSError, PermissionError):
+                # 无权限写 exe 目录（如 C:\\Program Files\\）→ 降级：我的文档\串口解析工具
+                doc_dir = Path.home() / "Documents"
+                if not doc_dir.exists():
+                    doc_dir = Path.home()
+                root = doc_dir / "串口解析工具"
+            data_dir = root / "data"
+        else:
+            # 2) 开发模式：项目根 data
+            project_root = Path(__file__).resolve().parent.parent
+            data_dir = project_root / "data"
+        # 拼 relative 后缀
+        if relative:
+            data_dir = data_dir / relative
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return data_dir
+    except Exception:
+        # 终极兜底：%USERPROFILE%\\串口解析工具\\data
+        fb = Path.home() / "串口解析工具" / "data"
+        if relative:
+            fb = fb / relative
+        fb.mkdir(parents=True, exist_ok=True)
+        return fb
+
+
+def get_protocol_dir() -> Path:
+    """获取协议配置目录。
+
+    始终返回用户可见的 product/ 目录，确保：
+    1. 打包成 exe 后：使用 exe 同目录下的 product/（不存在则创建）
+    2. 开发模式下：使用项目根目录的 product/
+
+    这样用户可以在任意电脑上使用，导入的协议会保存在可见位置。
+    """
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        proto_dir = exe_dir / "product"
+        proto_dir.mkdir(parents=True, exist_ok=True)
+        return proto_dir
+    dev = Path(__file__).resolve().parent.parent / "product"
+    dev.mkdir(parents=True, exist_ok=True)
+    return dev
+
+
 # ---------- 崩溃日志（启动期闪退辅助）：写 exe 同级目录 crash_*.log ----------
 
+
+def _crash_log_dir() -> Path:
+    """崩溃日志落盘目录：
+    * 打包 EXE → exe 同级目录；
+    * 开发模式 → 项目根目录（protocol_parser 父级）。
+    """
+    try:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent.parent
+    except Exception:
+        return Path.cwd()
+
+
+def _write_crash_log_gui(exc: BaseException) -> Path | None:
+    """启动期 / 运行期崩溃 → 写 exe 同级目录 crash_时间戳.log，
+    即便 mainloop 和 messagebox 都起不来，用户也能在 exe 旁边找到堆栈。
+    """
+    import traceback as _tb
+
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = _crash_log_dir() / f"crash_{ts}.log"
+        tb_s = _tb.format_exc()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(f"Time:       {datetime.now().isoformat(timespec='seconds')}\n")
+            f.write(f"Frozen:     {getattr(sys, 'frozen', False)}\n")
+            f.write(f"Executable: {sys.executable}\n")
+            f.write(f"MEIPASS:    {getattr(sys, '_MEIPASS', '')}\n")
+            f.write(f"CWD:        {os.getcwd()}\n")
+            f.write(f"Argv:       {sys.argv}\n")
+            f.write("\n========== Exception ==========\n")
+            f.write(f"{type(exc).__module__}.{type(exc).__name__}: {exc}\n")
+            f.write("\n========== Traceback ==========\n")
+            f.write(tb_s)
+            f.write("\n========== sys.path ==========\n")
+            for p in sys.path:
+                f.write(p + "\n")
+        return path
+    except Exception:
+        return None
 
 
 def load_builtin_protocol() -> dict:
@@ -106,6 +214,787 @@ def get_builtin_v3(refresh: bool = False) -> dict:
     return _builtin_v3
 
 
+# ---------- 通用：主题管理（Light/Dark + Win11/Classic 风格） ----------
+
+
+class ThemeManager:
+    """纯 Tk 主题系统（不引入第三方依赖）。
+
+    主题 = 配色 + ttk 样式：
+      - light / dark：两套配色（背景/卡片/主色/次级色/文本色/禁用色）
+      - classic / win11：classic 使用系统默认 ttk 外观；
+        win11 使用 ttk clam 自定义，卡片/控件有更柔和的圆角/间距/微阴影（纯 Frame 模拟）。
+    """
+
+    PALETTES: dict[str, dict[str, str]] = {
+        "light": {
+            "app_bg":          "#F9FAFB",  # 应用整体背景（比卡片灰更明显，让"留白分隔"直接有层差）
+            "card_bg":         "#F3F4F6",  # LabelFrame / 卡片背景（纯白 + 一圈细边框 = 独立卡片）
+            "card_border":     "#E0E0E0",  # 卡片边框色（比通用 border 稍深，每张卡片有"一层"的视觉）
+            "surface":         "#F3F4F6",  # Entry / Combobox / Text 背景
+            "border":          "#E0E0E0",  # 控件边框色
+            "primary":         "#0078D4",  # Win11 主色（蓝）
+            "primary_hover":   "#106EBE",  # 主色 hover
+            "success":         "#0F7B0F",  # 接收成功 / OK
+            "error":           "#C42B1C",  # 错误 / 异常红
+            "warn":            "#BC6A00",  # 告警 / 方向橙
+            "tx":              "#0A7A5A",  # [TX] 发送绿
+            "cmd":             "#1A56DB",  # 命令字蓝
+            "field":           "#374151",  # 字段灰
+            "raw":             "#6B7280",  # Raw 报文灰
+            "ts":              "#8A9099",  # 时间戳灰
+            "pid":             "#8E24AA",  # PID 紫
+            "model":           "#0D7A73",  # Model 青
+            "raw_data":        "#0E6E7A",  # raw_data
+            "text":            "#111827",  # 主文本色
+            "text_secondary":  "#525C6B",  # 次要说明文本
+            "text_disabled":   "#9CA3AF",  # 禁用文本
+            "tooltip_bg":      "#1F2937",  # Tooltip 气泡背景
+            "tooltip_fg":      "#F9FAFB",  # Tooltip 文字
+        },
+        "dark": {
+            "app_bg":          "#141517",  # App 背景（深色差）
+            "card_bg":         "#23252A",  # LabelFrame / 卡片（比 app_bg 更亮一点）
+            "card_border":     "#383A41",  # 卡片边框（亮于背景，轮廓清晰）
+            "surface":         "#2E3035",  # Entry / Combobox / Text 背景
+            "border":          "#3F4045",  # 边框
+            "primary":         "#4CC2FF",  # Win11 深色主色（亮蓝）
+            "primary_hover":   "#7FD2FF",  # 主色 hover
+            "success":         "#54C361",  # 接收成功 / OK
+            "error":           "#F06E68",  # 错误 / 异常红
+            "warn":            "#F6C177",  # 告警 / 方向橙
+            "tx":              "#39D5A4",  # 发送 [TX] 绿
+            "cmd":             "#6CB5FF",  # 命令字蓝
+            "field":           "#D1D5DB",  # 字段灰
+            "raw":             "#9BA1A6",  # Raw 报文灰
+            "ts":              "#7A7F85",  # 时间戳灰
+            "pid":             "#E0A4F7",  # PID 紫
+            "model":           "#5AD6CF",  # Model 青
+            "raw_data":        "#76D0DB",  # raw_data
+            "text":            "#ECEDF0",  # 主文本
+            "text_secondary":  "#B9BCC2",  # 次要说明文本
+            "text_disabled":   "#7A7F85",  # 禁用文本
+            "tooltip_bg":      "#E6E8EB",  # Tooltip 气泡背景
+            "tooltip_fg":      "#111827",  # Tooltip 文字
+        },
+    }
+
+    def __init__(self, mode: str = "light", style: str = "win11"):
+        self.mode = mode if mode in self.PALETTES else "light"
+        self.style = style if style in ("win11", "classic") else "win11"
+
+    # ------------------------------------------------------------------
+    # 取色
+    # ------------------------------------------------------------------
+    def get(self, name: str) -> str:
+        return self.PALETTES[self.mode].get(name, "#000000")
+
+    # ------------------------------------------------------------------
+    # 应用到 ttk 全局样式
+    # ------------------------------------------------------------------
+    def apply_ttk_styles(self, ttk_style: ttk.Style) -> None:
+        palette = self.PALETTES[self.mode]
+        app_bg = palette["app_bg"]
+        card_bg = palette["card_bg"]
+        card_border = palette.get("card_border", palette["border"])
+        surface = palette["surface"]
+        border = palette["border"]
+        primary = palette["primary"]
+        primary_hover = palette["primary_hover"]
+        text = palette["text"]
+        text_2 = palette["text_secondary"]
+        text_dis = palette["text_disabled"]
+
+        if self.style == "win11":
+            try:
+                ttk_style.theme_use("clam")
+            except tk.TclError:
+                pass
+
+        # ttk 根样式：Label/Button/Frame/LabelFrame/Entry/Combobox/Radiobutton/Checkbutton/Notebook
+        ttk_style.configure(".", background=app_bg, foreground=text, fieldbackground=surface, bordercolor=border, lightcolor=border, darkcolor=border)
+
+        # Frame / LabelFrame：卡片 = 细边框 + 卡片区与留白(app_bg)分层
+        ttk_style.configure("TFrame", background=app_bg)
+        ttk_style.configure("Card.TFrame", background=card_bg, relief="flat")
+        # 真正的"卡片"LabelFrame：带一圈可见边框，保证每个卡片独立一层（绝不与 app_bg 或其它卡片糊成同图层）
+        ttk_style.configure("TLabelframe",
+                            background=card_bg,
+                            bordercolor=card_border,
+                            relief="solid",
+                            borderwidth=1)
+        ttk_style.configure("TLabelframe.Label",
+                            background=app_bg,        # 标签文字在"卡片上沿外"用 app_bg（视觉更层叠）；如果要更"融入卡片"改成 card_bg 也可
+                            foreground=text_2,
+                            font=("Microsoft YaHei UI", 10, "bold"))
+        ttk_style.configure("TLabel", background=app_bg, foreground=text)
+        ttk_style.configure("Card.TLabel", background=card_bg, foreground=text)
+        ttk_style.configure("Hint.TLabel", background=card_bg, foreground=text_2)
+        ttk_style.configure("Title.TLabel", background=card_bg, foreground=text, font=("Microsoft YaHei UI", 10, "bold"))
+        # 状态栏：同样卡片边框 + 和 app_bg 分层（底部一个独立横条卡片）
+        ttk_style.configure("StatusBar.TFrame",
+                            background=card_bg,
+                            bordercolor=card_border,
+                            relief="solid",
+                            borderwidth=1)
+        ttk_style.configure("StatusBar.TLabel", background=card_bg, foreground=text_2, font=("Microsoft YaHei UI", 10))
+
+        # Button：主按钮 + 普通按钮（紧凑尺寸）
+        ttk_style.configure("TButton", padding=(6, 2), relief="flat", background=surface, foreground=text, bordercolor=border, focusthickness=1, font=("Microsoft YaHei UI", 10))
+        ttk_style.map("TButton",
+                      background=[("active", palette["primary"] if self.style == "win11" else surface),
+                                  ("pressed", primary_hover),
+                                  ("disabled", app_bg)],
+                      foreground=[("active", "#FFFFFF" if self.style == "win11" else text),
+                                  ("disabled", text_dis)])
+        ttk_style.configure("Primary.TButton", padding=(8, 3), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
+        ttk_style.map("Primary.TButton",
+                      background=[("active", primary_hover), ("pressed", primary_hover), ("disabled", border)],
+                      foreground=[("disabled", text_dis)])
+        ttk_style.configure("Danger.TButton", padding=(8, 3), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
+        ttk_style.map("Danger.TButton",
+                      background=[("active", "#A5211C"), ("pressed", "#A5211C"), ("disabled", border)])
+        # 紧凑型切换按钮（置顶、保存原始数据等）
+        ttk_style.configure("CompactPrimary.TButton", padding=(6, 2), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
+        ttk_style.map("CompactPrimary.TButton",
+                      background=[("active", primary_hover), ("pressed", primary_hover), ("disabled", border)],
+                      foreground=[("disabled", text_dis)])
+        ttk_style.configure("CompactDanger.TButton", padding=(6, 2), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
+        ttk_style.map("CompactDanger.TButton",
+                      background=[("active", "#A5211C"), ("pressed", "#A5211C"), ("disabled", border)])
+
+        # Entry / Combobox / Spinbox
+        for s in ("TEntry", "TSpinbox", "TCombobox"):
+            ttk_style.configure(s, fieldbackground=surface, foreground=text, bordercolor=border, lightcolor=border, darkcolor=border, arrowsize=14)
+            ttk_style.map(s,
+                          fieldbackground=[("readonly", card_bg), ("disabled", app_bg)],
+                          foreground=[("readonly", text), ("disabled", text_dis)],
+                          bordercolor=[("focus", primary), ("readonly", border)])
+
+        # Radiobutton / Checkbutton（修复 clam 主题下选中指示器显示为 × 的问题）
+        # 方案：增大指示器直径并配置状态颜色，使勾选标记更清晰可见
+        for _cb_style in ("TRadiobutton", "TCheckbutton"):
+            ttk_style.configure(_cb_style, background=card_bg, foreground=text,
+                                focuscolor=primary, indicatordiameter=13,
+                                indicatorcolor=surface, indicatorforeground=text)
+            ttk_style.map(_cb_style,
+                          background=[("active", card_bg)],
+                          indicatorcolor=[("selected", primary), ("pressed", primary_hover), ("active", surface)],
+                          indicatorforeground=[("selected", "#000000"), ("pressed", "#000000")])
+        # 顶栏专用（背景跟随 app_bg 而不是 card_bg）
+        ttk_style.configure("Toolbar.TCheckbutton", background=app_bg, foreground=text)
+        ttk_style.configure("Toolbar.TRadiobutton", background=app_bg, foreground=text)
+        ttk_style.configure("Toolbar.TLabel", background=app_bg, foreground=text)
+        ttk_style.configure("Toolbar.TButton", padding=(4, 2), font=("Microsoft YaHei UI", 10))
+
+        # PanedWindow：左右分栏之间的"分隔条"加宽，让左右大卡片之间更有层差感
+        try:
+            ttk_style.configure("TPanedwindow", background=app_bg, sashwidth=8, sashrelief="flat")
+        except tk.TclError:
+            # 某些主题或老版本 ttk 不接受 TPanedwindow 上的配置，忽略即可
+            ttk_style.configure("TPanedwindow", background=app_bg)
+
+        # Notebook
+        ttk_style.configure("TNotebook", background=app_bg, borderwidth=0)
+        ttk_style.configure("TNotebook.Tab", padding=(14, 6), background=app_bg, foreground=text_2, font=("Microsoft YaHei UI", 10))
+        ttk_style.map("TNotebook.Tab",
+                      background=[("selected", card_bg), ("active", card_bg)],
+                      foreground=[("selected", primary if self.style == "win11" else text), ("active", text)])
+
+        # Scrollbar：Win11 细滚动条视觉
+        ttk_style.configure("Vertical.TScrollbar", background=border, troughcolor=app_bg, bordercolor=app_bg, arrowcolor=text_2, relief="flat", arrowsize=14)
+        ttk_style.map("Vertical.TScrollbar", background=[("active", text_2)])
+        ttk_style.configure("Horizontal.TScrollbar", background=border, troughcolor=app_bg, bordercolor=app_bg, arrowcolor=text_2, relief="flat", arrowsize=14)
+        ttk_style.map("Horizontal.TScrollbar", background=[("active", text_2)])
+
+        # StatusBar
+        ttk_style.configure("Status.TFrame", background=palette["card_bg"] if self.style == "win11" else app_bg, relief="flat")
+        ttk_style.configure("Status.TLabel", background=palette["card_bg"] if self.style == "win11" else app_bg, foreground=text_2)
+
+
+# ---------- 通用：半透明气泡 Tooltip（替代括号小字说明） ----------
+
+
+class Tooltip:
+    """给任意 widget 绑定悬停气泡说明。"""
+
+    _DELAY_MS = 350  # 鼠标悬停多久后出现
+    _TOPLEVEL: tk.Toplevel | None = None  # 全局共享一个气泡，避免多实例抖
+
+    def __init__(self, widget: tk.Misc, text: str, theme: ThemeManager | None = None, width: int = 48):
+        self.widget = widget
+        self.text = text
+        self.theme = theme
+        self.width = width
+        self._after_id: str | None = None
+        widget.bind("<Enter>", self._on_enter, add="+")
+        widget.bind("<Leave>", self._on_leave, add="+")
+        widget.bind("<Motion>", self._on_motion, add="+")
+        widget.bind("<ButtonPress>", self._on_leave, add="+")
+
+    # ---------- helpers ----------
+    def _wrap(self) -> str:
+        lines = []
+        for para in self.text.split("\n"):
+            if len(para) <= self.width:
+                lines.append(para)
+                continue
+            # 简单按宽度换行（中文按字符数，足够用）
+            buf = ""
+            for ch in para:
+                if len(buf) >= self.width:
+                    lines.append(buf)
+                    buf = ""
+                buf += ch
+            if buf:
+                lines.append(buf)
+        return "\n".join(lines)
+
+    # ---------- events ----------
+    def _on_enter(self, _event=None):
+        if self._after_id is not None:
+            return
+        self._after_id = self.widget.after(self._DELAY_MS, self._show)
+
+    def _on_motion(self, _event=None):
+        # 进入控件区域内的小移动不重新计时，离开的 Leave 会负责取消
+        pass
+
+    def _on_leave(self, _event=None):
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+        self._hide()
+
+    # ---------- show / hide ----------
+    def _show(self):
+        self._after_id = None
+        try:
+            if not self.widget.winfo_ismapped():
+                return
+        except Exception:
+            return
+        theme = self.theme or ThemeManager()
+        bg = theme.get("tooltip_bg")
+        fg = theme.get("tooltip_fg")
+        x = self.widget.winfo_rootx() + 14
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        tl = tk.Toplevel(self.widget)
+        tl.wm_overrideredirect(True)
+        try:
+            tl.attributes("-alpha", 0.94)
+        except Exception:
+            pass
+        tl.configure(bg=theme.get("border"))
+        inner = tk.Frame(tl, bg=bg, padx=10, pady=6)
+        inner.pack(padx=1, pady=1)
+        tk.Label(inner, text=self._wrap(), bg=bg, fg=fg, justify="left",
+                 font=("Microsoft YaHei UI", 9), wraplength=self.width * 10).pack()
+        tl.update_idletasks()
+        # 防超出屏幕右侧/底部
+        sw = tl.winfo_screenwidth()
+        sh = tl.winfo_screenheight()
+        w = tl.winfo_width()
+        h = tl.winfo_height()
+        if x + w > sw - 8:
+            x = sw - w - 8
+        if y + h > sh - 8:
+            y = max(8, self.widget.winfo_rooty() - h - 8)
+        tl.wm_geometry(f"+{x}+{y}")
+        Tooltip._TOPLEVEL = tl
+
+    @staticmethod
+    def _hide():
+        tl = Tooltip._TOPLEVEL
+        if tl is None:
+            return
+        try:
+            tl.destroy()
+        except Exception:
+            pass
+        Tooltip._TOPLEVEL = None
+
+def _enable_full_combobox(combo: ttk.Combobox) -> None:
+    """合上时悬停显示当前完整文本；展开后列表项悬停也显示完整行；列表按最长项加宽。"""
+    tip_win: list[tk.Toplevel | None] = [None]
+    after_id: list[str | None] = [None]
+
+    def _hide_tip() -> None:
+        if after_id[0] is not None:
+            try:
+                combo.after_cancel(after_id[0])
+            except Exception:
+                pass
+            after_id[0] = None
+        w = tip_win[0]
+        if w is not None:
+            try:
+                w.destroy()
+            except Exception:
+                pass
+            tip_win[0] = None
+
+    def _show_tip(text: str, x: int, y: int) -> None:
+        _hide_tip()
+        text = (text or "").strip()
+        if not text:
+            return
+        try:
+            tw = tk.Toplevel(combo)
+            tw.wm_overrideredirect(True)
+            try:
+                tw.wm_attributes("-topmost", True)
+            except Exception:
+                pass
+            tk.Label(
+                tw,
+                text=text,
+                bg="#1F2937",
+                fg="#F9FAFB",
+                font=("Microsoft YaHei UI", 9),
+                padx=8,
+                pady=4,
+                justify="left",
+            ).pack()
+            tw.update_idletasks()
+            tw.geometry(f"+{x + 12}+{y + 16}")
+            tip_win[0] = tw
+        except Exception:
+            tip_win[0] = None
+
+    def _schedule_closed_tip(event=None) -> None:
+        _hide_tip()
+
+        def _do() -> None:
+            after_id[0] = None
+            try:
+                text = str(combo.get() or "")
+            except Exception:
+                text = ""
+            if not text:
+                return
+            try:
+                x = combo.winfo_rootx()
+                y = combo.winfo_rooty() + combo.winfo_height()
+            except Exception:
+                return
+            _show_tip(text, x, y)
+
+        try:
+            after_id[0] = combo.after(350, _do)
+        except Exception:
+            pass
+
+    def _find_listbox():
+        try:
+            popdown = combo.tk.call("ttk::combobox::PopdownWindow", combo)
+        except Exception:
+            return None
+        for path in (f"{popdown}.f.l", f"{popdown}.lb", f"{popdown}.f.lb"):
+            try:
+                return combo.nametowidget(path)
+            except Exception:
+                continue
+        # 兜底：递归找 Listbox
+        try:
+            pd = combo.nametowidget(str(popdown))
+            stack = [pd]
+            while stack:
+                w = stack.pop()
+                if w.winfo_class() == "Listbox":
+                    return w
+                stack.extend(w.winfo_children())
+        except Exception:
+            pass
+        return None
+
+    def _widen_popdown(_event=None) -> None:
+        def _do() -> None:
+            try:
+                values = combo.cget("values") or ()
+                if not values:
+                    return
+                longest = max(len(str(v)) for v in values)
+                try:
+                    entry_w = int(float(str(combo.cget("width") or 0)))
+                except Exception:
+                    entry_w = 0
+                w = max(longest + 2, entry_w, 12)
+                lb = _find_listbox()
+                if lb is None:
+                    return
+                try:
+                    lb.configure(width=w)
+                except Exception:
+                    pass
+
+                def _on_motion(event) -> None:
+                    try:
+                        idx = lb.nearest(event.y)
+                        text = str(lb.get(idx))
+                    except Exception:
+                        text = ""
+                    _show_tip(text, event.x_root, event.y_root)
+
+                def _on_leave(_e=None) -> None:
+                    _hide_tip()
+
+                lb.bind("<Motion>", _on_motion, add="+")
+                lb.bind("<Leave>", _on_leave, add="+")
+                lb.bind("<ButtonPress>", _on_leave, add="+")
+            except Exception:
+                pass
+
+        try:
+            combo.after(80, _do)
+        except Exception:
+            pass
+
+    combo.bind("<Enter>", _schedule_closed_tip, add="+")
+    combo.bind("<Leave>", lambda _e: _hide_tip(), add="+")
+    combo.bind("<ButtonPress>", lambda _e: _hide_tip(), add="+")
+    combo.bind("<ButtonPress-1>", _widen_popdown, add="+")
+    combo.bind("<Down>", _widen_popdown, add="+")
+    combo.bind("<<ComboboxSelected>>", lambda _e: _hide_tip(), add="+")
+
+class RoundedButton(tk.Canvas):
+    """大圆角按钮，支持动态 configure(text=..., style=...)，兼容 Tooltip。"""
+
+    # 样式名 → (正常背景, hover背景, 文字颜色)
+    _STYLE_MAP: dict[str, tuple[str, str, str]] = {}
+
+    @classmethod
+    def init_styles(cls, theme: "ThemeManager") -> None:
+        """根据主题色初始化样式映射。需在 ThemeManager.apply() 之后调用。"""
+        primary = theme.get("primary")
+        primary_hover = theme.get("primary_hover")
+        error = theme.get("error")
+        surface = theme.get("surface")
+        text = theme.get("text")
+
+        cls._STYLE_MAP = {
+            "TButton":             (surface, primary,    text),
+            "Toolbar.TButton":     (surface, primary,    text),
+            "Primary.TButton":     (primary, primary_hover, "#FFFFFF"),
+            "Danger.TButton":      (error,   "#A5211C",    "#FFFFFF"),
+            "CompactPrimary.TButton": (primary, primary_hover, "#FFFFFF"),
+            "CompactDanger.TButton":  (error,   "#A5211C",    "#FFFFFF"),
+        }
+
+    @classmethod
+    def redraw_all(cls, root: tk.Misc) -> None:
+        """遍历控件树，强制所有 RoundedButton 实例重绘。"""
+        def _walk(w):
+            if isinstance(w, cls):
+                w._draw()
+            for child in w.winfo_children():
+                _walk(child)
+        _walk(root)
+
+    def __init__(self, parent, *, text: str = "", command=None,
+                 style: str = "TButton", width: int | None = None,
+                 font: tuple | str | None = None, state: str = "normal",
+                 **kwargs):
+        self._command = command
+        self._style_name = style
+        self._state = state
+        self._hovered = False
+        self._pressed = False
+        self._text = text
+        self._width_chars = width
+
+        if font is None:
+            font = ("Microsoft YaHei UI", 8)
+        elif isinstance(font, str):
+            font = (font, 8)
+        self._font_tuple = font
+        
+        bg_normal, _, fg = self._colors()
+        
+        # 计算 Canvas 像素尺寸
+        import tkinter.font as tkfont
+        f = tkfont.Font(font=self._font_tuple)
+        char_w = max(f.measure("0"), 5)
+        text_w = f.measure(text) if text else 0
+        # width 参数作为最小字符宽度，但始终保证能容纳实际文本
+        base_w = max((width * char_w) if width else 0, text_w)
+        pad_x = 14 if style.startswith("Compact") else 18
+        pad_y = 4 if style.startswith("Compact") else 5
+        self._pad_x = pad_x
+        self._pad_y = pad_y
+        cw = base_w + pad_x * 2
+        ch = f.metrics("linespace") + pad_y * 2
+        self._radius = min(ch // 2, 12)  # 圆角：高度的一半，最备12px
+
+        # 获取父控件背景色（兼容 ttk/tk 控件）
+        parent_bg = kwargs.get("bg")
+        if parent_bg is None:
+            try:
+                parent_bg = parent.cget("background")
+            except Exception:
+                parent_bg = "#F0F0F0"
+
+        super().__init__(
+            parent, width=cw, height=ch,
+            bg=parent_bg,
+            highlightthickness=0, bd=0, relief="flat",
+        )
+
+        self._bg_id = self.create_rectangle(0, 0, cw, ch, fill=bg_normal, outline="", tags=("bg",))
+        self._text_id = self.create_text(cw / 2, ch / 2, text=text, fill=fg,
+                                         font=self._font_tuple, tags=("text",))
+
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<ButtonPress-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
+
+    # ---- 内部方法 ----
+
+    def _colors(self) -> tuple[str, str, str]:
+        return self._STYLE_MAP.get(self._style_name, ("#E0E0E0", "#C0C0C0", "#000000"))
+
+    def _draw(self) -> None:
+        bg_normal, bg_hover, fg = self._colors()
+        if self._state == "disabled":
+            bg = "#D0D0D0"; fg = "#999999"
+        elif self._pressed or self._hovered:
+            bg = bg_hover
+        else:
+            bg = bg_normal
+
+        # 优先使用 Canvas 配置尺寸（winfo_width 在首次显示前返回 1，导致截断）
+        w = int(self.cget("width"))
+        h = int(self.cget("height"))
+        r = self._radius
+
+        self.coords(self._bg_id, 0, 0, w, h)
+        self.coords(self._text_id, w / 2, h / 2)
+        self.itemconfigure(self._bg_id, fill=bg, outline="")
+        self.itemconfigure(self._text_id, fill=fg, text=self._text, font=self._font_tuple)
+
+    def _on_enter(self, _e=None): self._hovered = True; self._draw()
+    def _on_leave(self, _e=None): self._hovered = False; self._pressed = False; self._draw()
+    def _on_press(self, _e=None): self._pressed = True; self._draw()
+
+    def _on_release(self, _e=None):
+        self._pressed = False
+        self._draw()
+        if self._state != "disabled" and self._command:
+            try:
+                self._command()
+            except Exception:
+                pass
+
+    # ---- 兼容 ttk.Button API ----
+
+    def configure(self, cnf=None, **kw):
+        if cnf:
+            if isinstance(cnf, dict):
+                kw.update(cnf)
+            else:
+                return super().configure(cnf, **kw)
+        # 收集 Canvas 原生参数（如 width, height）传递给父类
+        native_kw = {}
+        for k in ("width", "height"):
+            if k in kw:
+                native_kw[k] = kw.pop(k)
+        if "text" in kw:
+            self._text = kw.pop("text")
+            import tkinter.font as tkfont
+            f = tkfont.Font(font=self._font_tuple)
+            text_w = f.measure(self._text) if self._text else 0
+            if self._width_chars:
+                char_w = max(f.measure("0"), 5)
+                fixed_w = self._width_chars * char_w + self._pad_x * 2
+                native_kw["width"] = fixed_w
+            else:
+                new_w = text_w + self._pad_x * 2
+                cur_w = int(self.cget("width"))
+                if new_w != cur_w:
+                    native_kw["width"] = new_w
+        if "style" in kw:
+            self._style_name = kw.pop("style")
+        if "state" in kw:
+            self._state = kw.pop("state")
+        if "command" in kw:
+            self._command = kw.pop("command")
+        self._draw()
+        # 将原生参数传递给 Canvas 父类
+        if native_kw:
+            return super().configure(**native_kw)
+        return super().configure()
+
+    config = configure
+
+    def cget(self, key):
+        if key == "text": return self._text
+        if key == "style": return self._style_name
+        if key == "state": return self._state
+        return super().cget(key)
+
+    def __getitem__(self, key): return self.cget(key)
+    def __setitem__(self, key, val): self.configure(**{key: val})
+
+
+# ---------- 通用：Text/Entry 右键菜单 + 快捷键 ----------
+
+def _bind_text_widget_menu(widget, readonly: bool = False) -> None:
+    """给 tk.Text / ttk.Entry 绑定：
+    - 右键菜单（复制/剪切/粘贴/全选/清空）
+    - 通用快捷键 Ctrl+C / Ctrl+V / Ctrl+X / Ctrl+A / Ctrl+BackSpace(清空)
+
+    readonly=True：只允许 Copy/全选（用于显示用的 Text/Entry）
+    """
+    widget_class = widget.winfo_class()  # "Text" or "TEntry" / "Entry"
+    is_text = (widget_class == "Text")
+
+    def _sel_range():
+        """返回选中的 (start, end)，如果没有选中返回 None。Entry/Text 兼容。"""
+        try:
+            if is_text:
+                if widget.tag_ranges("sel"):
+                    return widget.index("sel.first"), widget.index("sel.last")
+                return None
+            else:
+                # Entry
+                sel = widget.select_present()
+                if sel:
+                    return widget.index("sel.first"), widget.index("sel.last")
+                return None
+        except tk.TclError:
+            return None
+
+    def _has_selection() -> bool:
+        return _sel_range() is not None
+
+    def _copy():
+        try:
+            if _sel_range() is None:
+                # 没选中就复制整行/整内容
+                if is_text:
+                    content = widget.get("1.0", "end-1c")
+                else:
+                    content = widget.get()
+                widget.clipboard_clear()
+                widget.clipboard_append(content)
+            else:
+                widget.event_generate("<<Copy>>")
+        except Exception:
+            try:
+                widget.event_generate("<Control-c>")
+            except Exception:
+                pass
+
+    def _cut():
+        if readonly:
+            return
+        try:
+            widget.event_generate("<<Cut>>")
+        except Exception:
+            try:
+                widget.event_generate("<Control-x>")
+            except Exception:
+                pass
+
+    def _paste():
+        if readonly:
+            return
+        try:
+            widget.event_generate("<<Paste>>")
+        except Exception:
+            try:
+                widget.event_generate("<Control-v>")
+            except Exception:
+                pass
+
+    def _select_all():
+        try:
+            if is_text:
+                widget.tag_add("sel", "1.0", "end-1c")
+                widget.mark_set("insert", "end-1c")
+                widget.see("insert")
+            else:
+                widget.select_range(0, "end")
+                widget.icursor("end")
+        except Exception:
+            try:
+                widget.event_generate("<Control-a>")
+            except Exception:
+                pass
+
+    def _clear():
+        if readonly:
+            # 只读控件（显示类Text）允许"清空"显示缓冲，防内存膨胀
+            try:
+                if is_text:
+                    widget.configure(state="normal")
+                    widget.delete("1.0", "end")
+                    widget.configure(state="disabled")
+                else:
+                    widget.configure(state="normal")
+                    widget.delete(0, "end")
+                    widget.configure(state="readonly")
+            except Exception:
+                pass
+        else:
+            try:
+                if is_text:
+                    widget.delete("1.0", "end")
+                else:
+                    widget.delete(0, "end")
+            except Exception:
+                pass
+
+    # —— 右键菜单 ——
+    menu = tk.Menu(widget, tearoff=0)
+    menu.add_command(label="复制 (Ctrl+C)", command=_copy, accelerator="Ctrl+C")
+    if not readonly:
+        menu.add_command(label="剪切 (Ctrl+X)", command=_cut, accelerator="Ctrl+X")
+        menu.add_command(label="粘贴 (Ctrl+V)", command=_paste, accelerator="Ctrl+V")
+    menu.add_separator()
+    menu.add_command(label="全选 (Ctrl+A)", command=_select_all, accelerator="Ctrl+A")
+    menu.add_command(label="清空", command=_clear)
+
+    def _popup(event):
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    try:
+        widget.bind("<Button-3>", _popup)  # Windows 右键
+        widget.bind("<Button-2>", _popup)  # Mac/Linux 中键
+    except Exception:
+        pass
+
+    # —— 快捷键绑定（Tk 的 Text 自带部分快捷键，但 Entry 需要自己绑 Ctrl+A） ——
+    try:
+        widget.bind("<Control-c>", lambda e: (None, _copy(), "break")[2] if False else None)
+        widget.bind("<Control-C>", lambda e: _copy())
+    except Exception:
+        pass
+    try:
+        widget.bind("<Control-a>", lambda e: (_select_all(), "break")[1])
+        widget.bind("<Control-A>", lambda e: (_select_all(), "break")[1])
+    except Exception:
+        pass
+    if not readonly:
+        try:
+            widget.bind("<Control-x>", lambda e: (_cut(), "break")[1])
+            widget.bind("<Control-X>", lambda e: (_cut(), "break")[1])
+        except Exception:
+            pass
+        try:
+            widget.bind("<Control-v>", lambda e: (_paste(), "break")[1])
+            widget.bind("<Control-V>", lambda e: (_paste(), "break")[1])
+        except Exception:
+            pass
+
+
 class ProtocolParserApp:
     def __init__(self, root: tk.Tk, monitor_port: str | None = None, monitor_baud: int = 115200):
         self.root = root
@@ -136,59 +1025,55 @@ class ProtocolParserApp:
         self.root.configure(bg=self.theme.get("app_bg"))
 
         # ============================================================
-        #  窗口尺寸：统一约束 + 按上次会话恢复（保证 minsize 一定生效）
-        #    关键：必须先 set minsize 再 set geometry，否则在部分 WM 下 minsize 不生效
+        #  窗口尺寸：统一约束 + 按上次会话恢复
         # ============================================================
-        _MIN_W, _MIN_H = 1020, 660       # 全功能展开时不裁剪的安全下限
+        _MIN_W, _MIN_H = 1500, 800
         try:
             self.root.minsize(_MIN_W, _MIN_H)
         except Exception:
             pass
 
-        # 恢复上次的窗口尺寸/位置（如果合理才恢复；否则默认 1200x720 居中）
         import re as _re
         def _parse_geom(g: str) -> tuple[int, int, int, int] | None:
-            m = _re.match(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$", str(g or "").strip())
+            m = _re.match(r"^(\d+)x(\d+)(?:\+(-?\d+)\+(-?\d+))?$", str(g or "").strip())
             if not m:
                 return None
-            w, h, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+            w, h = int(m.group(1)), int(m.group(2))
+            x = int(m.group(3)) if m.group(3) is not None else None
+            y = int(m.group(4)) if m.group(4) is not None else None
             if w < _MIN_W or h < _MIN_H:
                 return None
+            if x is None or y is None:
+                return w, h, 0, 0
             return w, h, x, y
+
+        try:
+            sw = max(800, int(self.root.winfo_screenwidth()))
+            sh = max(600, int(self.root.winfo_screenheight()))
+        except Exception:
+            sw, sh = 1920, 1080
+
+        _DEF_W = max(_MIN_W, min(1400, int(sw * 0.75)))
+        _DEF_H = max(_MIN_H, min(860, int(sh * 0.75)))
 
         _last_geom = _extras.get("window_geometry") if isinstance(_extras, dict) else None
         _parsed = _parse_geom(str(_last_geom)) if _last_geom else None
+
         if _parsed is None:
-            # 默认 1200x720，再按屏幕尺寸留边，避免顶到任务栏
-            try:
-                sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-            except Exception:
-                sw, sh = 1920, 1080
-            _DEF_W, _DEF_H = 1200, 720
-            # 如果屏幕本身比默认尺寸小，就按屏幕-80 但不小于 minsize
-            if sw < _DEF_W + 80 or sh < _DEF_H + 80:
-                _DEF_W = max(_MIN_W, sw - 80)
-                _DEF_H = max(_MIN_H, sh - 80)
             self.root.geometry(f"{_DEF_W}x{_DEF_H}")
         else:
             w, h, x, y = _parsed
-            # 避免恢复到屏幕外（x/y 为负时通常在多屏下是合理的，但太离谱就回退默认）
-            try:
-                sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-            except Exception:
-                sw, sh = 1920, 1080
-            if x < -2000 or y < -1000 or x > sw - 200 or y > sh - 100:
+            w = max(w, _MIN_W)
+            h = max(h, _MIN_H)
+            if x == 0 and y == 0:
+                self.root.geometry(f"{w}x{h}")
+            elif x < -2000 or y < -1000 or x > sw - 200 or y > sh - 100:
                 self.root.geometry(f"{w}x{h}")
             else:
                 self.root.geometry(f"{w}x{h}+{x}+{y}")
 
-        # 禁止恢复到比 minsize 还小：若保存的 geometry < minsize，geometry 会在 minsize 之前设置过导致失效
-        # 解决：再显式 set 一次 minsize，并触发 update_idletasks 让窗口管理器确认
         try:
             self.root.minsize(_MIN_W, _MIN_H)
-        except Exception:
-            pass
-        try:
             self.root.update_idletasks()
         except Exception:
             pass
@@ -198,8 +1083,25 @@ class ProtocolParserApp:
         # ============================================================
         self.font_size_var = tk.IntVar(value=int(_extras.get("font_size", 10)))
         # 构建可变等宽字体（Ctrl+滚轮缩放字号）
-        self.serial_font = tkfont.Font(family="Consolas", size=self.font_size_var.get())
-        self.cmd_font = tkfont.Font(family="Consolas", size=self.font_size_var.get(), weight="bold")
+        def _pick_mono_family() -> str:
+            try:
+                families = {f.lower() for f in tkfont.families()}
+            except Exception:
+                families = set()
+            for name in (
+                "Cascadia Mono",      # Win10/11 较清晰
+                "Consolas",           # 常见默认
+                "Sarasa Mono SC",     # 若装了中文等宽
+                "Microsoft YaHei Mono",
+                "Courier New",
+            ):
+                if name.lower() in families:
+                    return name
+            return "Consolas"
+
+        _mono = _pick_mono_family()
+        self.serial_font = tkfont.Font(family=_mono, size=self.font_size_var.get())
+        self.cmd_font = tkfont.Font(family=_mono, size=self.font_size_var.get(), weight="bold")
         # 日志框 Tag 定义颜色（在创建 serial_text 之后会按 theme.get() 刷新）
 
         # 置顶状态（菜单栏会引用该变量，必须先初始化）
@@ -290,11 +1192,14 @@ class ProtocolParserApp:
 
         # 主布局
         self._build_ui()
+        # 设置左右分栏初始比例（右侧约 30%）——仅当面板默认显示时才在启动后恢复宽度
         self._load_protocols()
 
         # 定时刷新 UI 队列
-        self._ui_queue: list[tuple[str, tuple]] = []
-        self.root.after(50, self._process_ui_queue)
+        self._ui_queue: deque[tuple[str, tuple]] = deque()
+        self.root.after(100, self._process_ui_queue)
+        # 串口列表：启动立即刷新 + 后台热插拔轮询
+        self.root.after(200, self._safe(self._start_port_watch))
 
         # 关闭窗口时：保存偏好 + 安全停止串口（不要等更新才保存）
         self.root.protocol("WM_DELETE_WINDOW", self._safe(self._on_app_close))
@@ -364,19 +1269,10 @@ class ProtocolParserApp:
         return _wrapper
 
     # ---------- UI 构建 ----------
-
     def _build_menu_bar(self) -> None:
-        """构建顶部菜单栏：关于 / 检查更新。"""
-        menubar = tk.Menu(self.root)
-
-        # ---- 关于（独立菜单项） ----
-        menubar.add_command(label="关于", command=self._safe(self._menu_about))
-
-        # ---- 检查更新（独立菜单项） ----
-        menubar.add_command(label="检查更新", command=self._safe(self._menu_check_update))
-
+        """已移除「关于 / 检查更新」菜单项。"""
         try:
-            self.root.config(menu=menubar)
+            self.root.config(menu="")
         except Exception:
             pass
 
@@ -618,7 +1514,6 @@ class ProtocolParserApp:
         #    row 2  →  底部状态栏（fixed）
         #    col 0  →  weight=1（所有内容横向跟随窗口伸缩）
         # ============================================================
-        self.SEND_PANEL_WIDTH = 360   # 指令发送面板固定宽度（像素）
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=0)
         self.root.rowconfigure(1, weight=1)
@@ -626,7 +1521,6 @@ class ProtocolParserApp:
 
         # 限制窗口最小尺寸，防止缩太小时控件被截断（和 __init__ 保持一致，避免被后续逻辑覆盖）
         try:
-            self.root.minsize(1020, 660)
             self.root.update_idletasks()
         except Exception:
             pass
@@ -674,11 +1568,9 @@ class ProtocolParserApp:
         self.product_combo = ttk.Combobox(row0_left, textvariable=self.product_var, width=18, state="readonly")
         self.product_combo.grid(row=0, column=row0_left._next_col, sticky="w",  # type: ignore[attr-defined]
                                 padx=(4, 10), pady=(2, 2))
+        _enable_full_combobox(self.product_combo)
         row0_left._next_col += 1  # type: ignore[attr-defined]
         self.product_combo.bind("<<ComboboxSelected>>", self._on_product_change)
-        Tooltip(self.product_combo,
-                "切换当前要解析/发送的产品协议 JSON。\n放 JSON 到 product/ 目录后，点旁边刷新按钮即可出现。",
-                self.theme)
 
         _tool_button(row0_left, "刷新", self._load_protocols,
                      tip="重新扫描 product/ 目录下的协议 JSON。", padx=(0, 4))
@@ -754,24 +1646,37 @@ class ProtocolParserApp:
 
         self._build_serial_config_panel(self.serial_frame)
 
-        # 下方：实时数据（左，可伸缩） + 指令发送（右，固定宽度）
-        # 不用 PanedWindow，避免出现可拖动的分隔条
-        self.serial_frame.columnconfigure(0, weight=1)   # 左侧吃宽度
-        self.serial_frame.columnconfigure(1, weight=0)   # 右侧固定
-        self.serial_frame.rowconfigure(1, weight=1)
+        # 下方：实时数据（左，自适应） + 指令发送（右，固定宽度，不可拖）
+        self.SEND_PANEL_WIDTH = 600
+
+        self.content_row = ttk.Frame(self.serial_frame)
+        self.content_row.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
+        self.content_row.columnconfigure(0, weight=1)   # 左侧拉伸
+        self.content_row.columnconfigure(1, weight=0)   # 右侧固定
+        self.content_row.rowconfigure(0, weight=1)
 
         # 左侧：实时数据
-        self.realtime_container = ttk.Frame(self.serial_frame)
-        self.realtime_container.grid(row=1, column=0, sticky="nsew")
+        self.realtime_container = ttk.Frame(self.content_row)
+        self.realtime_container.grid(row=0, column=0, sticky="nsew")
         self.realtime_container.columnconfigure(0, weight=1)
         self.realtime_container.rowconfigure(0, weight=1)
         self.realtime_container.configure(padding=(4, 4, 2, 0))
         self._build_serial_panel(self.realtime_container)
 
-        # 右侧：指令发送（固定宽度，无分隔条）
-        self.send_frame = ttk.Frame(self.serial_frame, width=self.SEND_PANEL_WIDTH)
-        self.send_frame.grid(row=1, column=1, sticky="ns")  # 只上下伸展，左右不拉
-        self.send_frame.grid_propagate(False)               # 锁死 width
+        # 右侧：固定宽度外壳（grid_propagate=False 锁死宽度）
+        self.send_outer = tk.Frame(
+            self.content_row,
+            width=self.SEND_PANEL_WIDTH,
+            bg=self.theme.get("app_bg"),
+            highlightthickness=0,
+        )
+        self.send_outer.grid(row=0, column=1, sticky="ns")
+        self.send_outer.grid_propagate(False)
+        self.send_outer.columnconfigure(0, weight=1)
+        self.send_outer.rowconfigure(0, weight=1)
+
+        self.send_frame = ttk.Frame(self.send_outer)
+        self.send_frame.grid(row=0, column=0, sticky="nsew")
         self.send_frame.columnconfigure(0, weight=1)
         self.send_frame.rowconfigure(0, weight=1)
         self.send_frame.configure(padding=(2, 4, 4, 0))
@@ -779,28 +1684,23 @@ class ProtocolParserApp:
         self.send_panel_inner = ttk.Frame(self.send_frame)
         self.send_panel_inner.grid(row=0, column=0, sticky="nsew")
         self.send_panel_inner.columnconfigure(0, weight=1)
-        self.send_panel_inner.rowconfigure(2, weight=1)
+        self.send_panel_inner.rowconfigure(2, weight=1)  # 协议/Raw 拉伸
         self._build_send_panel(self.send_panel_inner)
 
-        # 兼容旧引用（有的逻辑还在用 main_paned）
-        self.main_paned = self.serial_frame
-
+        # 兼容旧引用
         self.serial_tab = self.serial_frame
         self.send_tab = self.send_frame
-        self.send_frame_visible = False
-        self.send_frame_frac = 0.40
+        self.main_paned = None  # 已不再使用 PanedWindow
 
-        # 默认不显示右侧
+        self.send_frame_visible = False
+        self.send_frame_frac = 0.0  # 不再按比例
+
+        # 默认隐藏发送面板
         try:
-            self.send_frame.grid_remove()
+            self.send_outer.grid_remove()
         except Exception:
             pass
 
-        # 兼容旧代码可能引用到的 tab 别名
-        self.serial_tab = self.serial_frame
-        self.send_tab = self.send_frame
-        # ⚠️ 先设置默认可见性，后续 minsize/weight 判断才会生效
-        self.send_frame_visible = False
 
         # ============================================================
         #  row=2: 底部状态栏（fixed）
@@ -847,10 +1747,6 @@ class ProtocolParserApp:
         except Exception:
             pass
 
-        try:
-            self.root.update_idletasks()
-        except Exception:
-            pass
 
         # 3) 串口配置收起/展开按钮：_apply_serial_config_collapsed 已在 _build_serial_config_panel 末尾调用，
         #    这里再兜底一次，避免 trace/快照恢复导致文字错位。
@@ -897,7 +1793,7 @@ class ProtocolParserApp:
         theme = self.theme
 
         frame = ttk.LabelFrame(parent, text="串口配置", padding=(12, 10))
-        frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
+        frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
         # 串口配置面板整体按 grid 展开：每行 1 列，权重=0（fixed height，不参与挤压）
         frame.columnconfigure(0, weight=1)
 
@@ -912,9 +1808,10 @@ class ProtocolParserApp:
         row1.columnconfigure(100, weight=1)
 
         ttk.Label(row1, text="串口：", style="Card.TLabel").grid(row=0, column=0, sticky="w")
-        self.port_combo = ttk.Combobox(row1, textvariable=self.port_var, width=28, state="readonly")
+        # 串口选择框
+        self.port_combo = ttk.Combobox(row1, textvariable=self.port_var, width=40, state="readonly")
         self.port_combo.grid(row=0, column=1, sticky="w", padx=(4, 2))
-        Tooltip(self.port_combo, "选择要监控的串口号（如 COM3 / COM5）。监控中切换会自动重连到新串口。", theme)
+        _enable_full_combobox(self.port_combo)
         # 监控中切换串口：自动停止当前串口并连接新选中的串口
         self.port_combo.bind("<<ComboboxSelected>>", self._safe(self._on_port_change_while_collecting), add="+")
         refresh_ports_btn = RoundedButton(row1, text="刷新", width=6,
@@ -928,16 +1825,27 @@ class ProtocolParserApp:
             values=[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
                     1000000, 1500000, 2000000, 3000000, 4000000, 5000000, 6000000],
         )
+        _enable_full_combobox(self.baudrate_combo)
         self.baudrate_combo.grid(row=0, column=11, sticky="w", padx=(4, 2))
-        Tooltip(self.baudrate_combo, "选择或输入任意波特率（最高 6,000,000 = 6M）。", theme)
+        self.baudrate_combo.bind("<<ComboboxSelected>>", self._safe(self._on_serial_param_change_while_collecting), add="+")
+        self.baudrate_combo.bind("<Return>", self._safe(self._on_serial_param_change_while_collecting), add="+")
+        self.baudrate_combo.bind("<FocusOut>", self._safe(self._on_serial_param_change_while_collecting), add="+")
 
         ttk.Label(row1, text="数据位：", style="Card.TLabel").grid(row=0, column=20, sticky="w", padx=(8, 0))
-        ttk.Combobox(row1, textvariable=self.bytesize_var, values=[5, 6, 7, 8], width=5,
-                     state="readonly").grid(row=0, column=21, sticky="w", padx=(4, 8))
+        bytesize_combo = ttk.Combobox(
+            row1, textvariable=self.bytesize_var, values=[5, 6, 7, 8], width=5, state="readonly"
+        )
+        bytesize_combo.grid(row=0, column=21, sticky="w", padx=(4, 8))
+        _enable_full_combobox(bytesize_combo)
+        bytesize_combo.bind("<<ComboboxSelected>>", self._safe(self._on_serial_param_change_while_collecting), add="+")
 
         ttk.Label(row1, text="停止位：", style="Card.TLabel").grid(row=0, column=30, sticky="w")
-        ttk.Combobox(row1, textvariable=self.stopbits_var, values=[1, 1.5, 2], width=5,
-                     state="readonly").grid(row=0, column=31, sticky="w", padx=(4, 8))
+        stopbits_combo = ttk.Combobox(
+            row1, textvariable=self.stopbits_var, values=[1, 1.5, 2], width=5, state="readonly"
+        )
+        stopbits_combo.grid(row=0, column=31, sticky="w", padx=(4, 8))
+        _enable_full_combobox(stopbits_combo)
+        stopbits_combo.bind("<<ComboboxSelected>>", self._safe(self._on_serial_param_change_while_collecting), add="+")
 
         # 折叠/展开按钮（放在第一行最右侧，开始监控按钮左侧，节省一行空间）
         self.serial_config_toggle_btn = RoundedButton(
@@ -1143,16 +2051,29 @@ class ProtocolParserApp:
         # 通用右键菜单
         _bind_text_widget_menu(self.serial_text, readonly=True)
 
-        # Ctrl + 鼠标滚轮：日志框内无级缩放
-        self.serial_text.bind("<Control-MouseWheel>", self._safe(self._on_ctrl_mousewheel_text), add="+")
+        # Ctrl + 鼠标滚轮：日志框内缩放字号（不触发分栏）
+        self.serial_text.bind("<Control-MouseWheel>", self._on_ctrl_mousewheel_text, add="+")
+        # Linux 兼容
+        self.serial_text.bind("<Control-Button-4>", self._on_ctrl_mousewheel_text, add="+")
+        self.serial_text.bind("<Control-Button-5>", self._on_ctrl_mousewheel_text, add="+")
 
     # ------------------------------------------------------------
     # 字体：无级缩放
     # ------------------------------------------------------------
     def _on_ctrl_mousewheel_text(self, event):
         delta = getattr(event, "delta", 0)
-        steps = 1 if delta > 0 else -1
-        self._zoom_serial_font(steps)
+        # Linux: Button-4 上滚 / Button-5 下滚
+        num = getattr(event, "num", None)
+        if num == 4:
+            steps = 1
+        elif num == 5:
+            steps = -1
+        else:
+            steps = 1 if delta > 0 else -1
+        try:
+            self._zoom_serial_font(steps)
+        except Exception as e:
+            self._report_error("缩放字号失败", e)
         return "break"
 
     def _zoom_serial_font(self, steps: int) -> None:
@@ -1163,111 +2084,128 @@ class ProtocolParserApp:
         self.font_size_var.set(new_size)
 
     def _build_send_panel(self, parent: tk.Misc) -> None:
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(2, weight=1)  # 中间内容行可伸展
+        """构建"指令发送"Tab。"""
 
-        # ----- 发送模式（固定顶部）-----
-        mode_row = ttk.LabelFrame(parent, text="发送模式", padding=(8, 6))
-        mode_row.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        # 模式选择
+        mode_row = ttk.LabelFrame(parent, text="发送模式", padding=8)
+        mode_row.grid(row=1, column=0, sticky="we", pady=(0, 8))
+        mode_row.columnconfigure(0, weight=1)
         for i, (label, value) in enumerate([
-            ("协议组帧", "protocol"),
+            ("协议模式（自动组帧+CRC）", "protocol"),
             ("Raw HEX", "raw_hex"),
             ("Raw ASCII", "raw_ascii"),
         ]):
-            ttk.Radiobutton(
-                mode_row, text=label, value=value,
-                variable=self.send_mode_var, command=self._on_send_mode_change,
-            ).grid(row=0, column=i, padx=(0, 12), sticky="w")
+            rb = ttk.Radiobutton(mode_row, text=label, value=value, variable=self.send_mode_var, command=self._on_send_mode_change)
+            rb.grid(row=0, column=i, padx=6, sticky="w")
 
-        # 统一输入框边框样式（四边都有线）
-        _text_kw = dict(
-            font=self.serial_font,
-            wrap="word",
-            relief="flat",              # 不要 solid，否则发黑
-            borderwidth=0,
-            highlightthickness=1,       # 用这一层画边框
-            highlightbackground="#E0E0E0",  # 未聚焦：浅灰
-            highlightcolor="#E0E0E0",       # 聚焦也保持同色（不换成蓝/黑）
-            padx=6,
-            pady=4,
-        )
-
-        # ----- 协议参数 -----
-        self.protocol_frame = ttk.LabelFrame(parent, text="协议参数", padding=(8, 6))
-        self.protocol_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        # 协议模式内容
+        self.protocol_frame = ttk.LabelFrame(parent, text="协议参数", padding=8)
+        self.protocol_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))
         self.protocol_frame.columnconfigure(1, weight=1)
-        self.protocol_frame.rowconfigure(2, weight=1)
-
-        ttk.Label(self.protocol_frame, text="命令字:").grid(row=0, column=0, sticky="w", pady=(0, 4))
-        self.cmd_code_entry = ttk.Entry(
-            self.protocol_frame, textvariable=self.tx_cmd_code_var, width=16
+        self.protocol_frame.columnconfigure(3, weight=1)
+        ttk.Label(self.protocol_frame, text="命令:").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.tx_cmd_label_var = tk.StringVar(value="")
+        self.cmd_combo = ttk.Combobox(
+            self.protocol_frame,
+            textvariable=self.tx_cmd_label_var,
+            state="readonly",
+            width=28,
         )
-        self.cmd_code_entry.grid(row=0, column=1, sticky="w", pady=(0, 4))
-
-        ttk.Label(self.protocol_frame, text="方向:").grid(row=1, column=0, sticky="w", pady=(0, 4))
-        ttk.Combobox(
+        _enable_full_combobox(self.cmd_combo)
+        self.cmd_combo.grid(row=0, column=1, sticky="ew", pady=(0, 4))
+        self.cmd_combo.bind("<<ComboboxSelected>>", self._on_send_cmd_selected)
+        ttk.Label(self.protocol_frame, text="方向:").grid(row=0, column=2, sticky="e")
+        dir_combo = ttk.Combobox(
             self.protocol_frame,
             textvariable=self.tx_direction_var,
             values=["模组发送", "MCU发送"],
             state="readonly",
             width=12,
-        ).grid(row=1, column=1, sticky="w", pady=(0, 4))
+        )
+        _enable_full_combobox(dir_combo)
+        dir_combo.grid(row=0, column=3, sticky="w", pady=3)
 
-        ttk.Label(self.protocol_frame, text="字段 JSON:").grid(row=2, column=0, sticky="nw")
-        self.fields_text = tk.Text(self.protocol_frame, height=6, **_text_kw)
-        self.fields_text.grid(row=2, column=1, sticky="nsew")
-        try:
-            self.fields_text.insert("1.0", self.tx_fields_var.get())
-        except Exception:
-            pass
+        ttk.Label(self.protocol_frame, text="字段 JSON:").grid(row=1, column=0, sticky="nw", pady=3)
+        self.fields_text = tk.Text(
+            self.protocol_frame,
+            height=4,
+            font=self.serial_font,
+            relief="solid",
+            borderwidth=1,
+            highlightthickness=1,
+            highlightbackground="#E0E0E0",
+            highlightcolor="#E0E0E0",
+            bd=1,
+        )
+        self.fields_text.grid(row=1, column=1, columnspan=3, sticky="nsew", pady=3)
+        self.protocol_frame.rowconfigure(1, weight=1)
+        self.protocol_frame.columnconfigure(1, weight=1)
+        # 双向同步 StringVar 和 Text（避免复杂 trace，每次发送时从 text 读）
+        self.fields_text.insert("1.0", self.tx_fields_var.get())
 
-        # ----- Raw -----
-        self.raw_frame = ttk.LabelFrame(parent, text="Raw 内容", padding=(8, 6))
-        self.raw_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        # Raw 内容（共用 1 个帧，通过 mode 显示不同的 placeholder）
+        self.raw_frame = ttk.LabelFrame(parent, text="Raw 内容（切换模式后此处改变语义）", padding=8)
+        self.raw_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))  # 与协议同排
         self.raw_frame.columnconfigure(0, weight=1)
         self.raw_frame.rowconfigure(1, weight=1)
-        self.raw_hint = ttk.Label(self.raw_frame, text="HEX：1A 2B 3C", style="Hint.TLabel")
-        self.raw_hint.grid(row=0, column=0, sticky="w", pady=(0, 4))
-        self.raw_text = tk.Text(self.raw_frame, height=6, **_text_kw)
-        self.raw_text.grid(row=1, column=0, sticky="nsew")
+        self.raw_frame.columnconfigure(0, weight=1)
+        self.raw_hint = ttk.Label(self.raw_frame, text="HEX 模式：1A 2B 3C 或 1A2B3C", foreground="#555")
+        self.raw_hint.grid(row=0, column=0, sticky="w")
+        self.raw_text = tk.Text(
+            self.raw_frame,
+            height=4,
+            font=self.serial_font,
+            relief="solid",
+            borderwidth=1,
+            highlightthickness=1,
+            highlightbackground="#E0E0E0",
+            highlightcolor="#E0E0E0",
+            bd=1,
+        )
+        self.raw_text.grid(row=1, column=1, columnspan=3, sticky="nsew", pady=3)
+        self.raw_frame.rowconfigure(1, weight=1)
 
-        # ----- 发送操作（固定底部）-----
-        act = ttk.LabelFrame(parent, text="发送操作", padding=(8, 6))
+        # 周期发送 + 操作按钮（两行，避免窄宽度下被裁切）
+        act = ttk.LabelFrame(parent, text="发送操作", padding=6)
         act.grid(row=3, column=0, sticky="ew")
+        act.columnconfigure(0, weight=1)
 
-        cycle_row = ttk.Frame(act)
-        cycle_row.pack(fill="x", pady=(0, 6))
-        ttk.Label(cycle_row, text="间隔(ms)").pack(side="left")
-        ttk.Spinbox(
-            cycle_row, from_=10, to=3600000, increment=10,
+        # 第一行：间隔 + 启用循环
+        row_a = ttk.Frame(act)
+        row_a.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        ttk.Label(row_a, text="间隔(ms):").pack(side="left")
+        ivs = ttk.Spinbox(
+            row_a, from_=10, to=3600000, increment=10,
             textvariable=self.tx_interval_ms_var, width=8,
-        ).pack(side="left", padx=(4, 12))
-        ttk.Checkbutton(
-            cycle_row, text="启用循环", variable=self.tx_cycle_var
-        ).pack(side="left")
+        )
+        ivs.pack(side="left", padx=(2, 8))
+        ttk.Checkbutton(row_a, text="启用循环", variable=self.tx_cycle_var).pack(
+            side="left", padx=(0, 8)
+        )
 
-        btn_row = ttk.Frame(act)
-        btn_row.pack(fill="x")
+        # 第二行：发送一次 + 开始循环（单独一行，避免被裁）
+        row_b = ttk.Frame(act)
+        row_b.grid(row=1, column=0, sticky="ew", pady=(0, 4))
         self.send_once_btn = RoundedButton(
-            btn_row, text="▶ 发送一次", style="Primary.TButton",
-            command=self._safe(self._on_send_once),
+            row_b, text="▶ 发送一次", command=self._safe(self._on_send_once)
         )
-        self.send_once_btn.pack(side="left", padx=(0, 6))
+        self.send_once_btn.pack(side="left", padx=2)
         self.tx_cycle_btn = RoundedButton(
-            btn_row, text="▶ 开始循环", style="Primary.TButton",
-            command=self._safe(self._on_toggle_cycle_send),
+            row_b, text="▶ 开始循环", command=self._safe(self._on_toggle_cycle_send)
         )
-        self.tx_cycle_btn.pack(side="left", padx=(0, 6))
+        self.tx_cycle_btn.pack(side="left", padx=2)
+
+        # 第三行：复制 / 清空
+        row_c = ttk.Frame(act)
+        row_c.grid(row=2, column=0, sticky="ew")
         self.copy_hex_btn = RoundedButton(
-            btn_row, text="复制帧 HEX", style="Toolbar.TButton",
-            command=self._safe(self._on_copy_hex),
+            row_c, text="复制当前帧 HEX", command=self._safe(self._on_copy_hex)
         )
-        self.copy_hex_btn.pack(side="left", padx=(0, 6))
+        self.copy_hex_btn.pack(side="left", padx=2)
         self.clear_send_btn = RoundedButton(
-            btn_row, text="清空", style="Toolbar.TButton",
-            command=self._safe(self._on_clear_send),
+            row_c, text="清空输入", command=self._safe(self._on_clear_send)
         )
-        self.clear_send_btn.pack(side="left")
+        self.clear_send_btn.pack(side="left", padx=2)
 
         self._on_send_mode_change()
 
@@ -1282,20 +2220,26 @@ class ProtocolParserApp:
             code = c.get("code", c.get("id", c.get("cmd")))
             name = c.get("name") or c.get("title") or ""
             try:
-                if isinstance(code, str):
-                    code_i = int(code, 0)
-                else:
-                    code_i = int(code)
+                code_i = int(code, 0) if isinstance(code, str) else int(code)
             except Exception:
                 continue
             label = f"0x{code_i:02X}  {name}".strip() if name else f"0x{code_i:02X}"
             labels.append(label)
             self._send_cmd_map[label] = code_i
         try:
+            if not hasattr(self, "cmd_combo") or self.cmd_combo is None:
+                return
             self.cmd_combo["values"] = labels
-            if labels and not self.tx_cmd_label_var.get():
-                self.cmd_combo.current(0)
-                self._on_send_cmd_selected()
+            if labels:
+                cur = (self.tx_cmd_label_var.get() or "").strip()
+                if cur in self._send_cmd_map:
+                    self.cmd_combo.set(cur)
+                else:
+                    self.cmd_combo.current(0)
+                    self._on_send_cmd_selected()
+            else:
+                self.cmd_combo.set("")
+                self.tx_cmd_code_var.set("0x20")
         except Exception:
             pass
 
@@ -1384,85 +2328,107 @@ class ProtocolParserApp:
             elif mode == "raw_hex":
                 s = self._current_raw_text().strip()
                 if not s:
-                    raise ValueError("请输入 HEX 内容")
+                    messagebox.showwarning("提示", "请输入 HEX 内容（例如：1A 2B 3C）")
+                    return
                 self.collector.send_raw(s, as_text=False)
             else:  # raw_ascii
                 s = self._current_raw_text()
                 if not s:
-                    raise ValueError("请输入 ASCII 内容")
+                    messagebox.showwarning("提示", "请输入 ASCII 内容")
+                    return
                 self.collector.send_raw(s, as_text=True)
             self._sync_inputs_to_vars()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self._report_error("发送失败", e)
 
     def _on_toggle_cycle_send(self) -> None:
-        if self.tx_cycle_var.get():
-            # 正在运行 → 停止
+        # 正在循环（有 after 任务）→ 停止
+        if getattr(self, "_tx_cycle_job", None) is not None:
             self.tx_cycle_var.set(False)
-            if self._tx_cycle_job is not None:
-                try:
-                    self.root.after_cancel(self._tx_cycle_job)
-                except Exception:
-                    pass
-                self._tx_cycle_job = None
+            try:
+                self.root.after_cancel(self._tx_cycle_job)
+            except Exception:
+                pass
+            self._tx_cycle_job = None
             try:
                 self.tx_cycle_btn.configure(text="▶ 开始循环")
             except Exception:
                 pass
             self._sync_inputs_to_vars()
-        else:
-            if not (self.collector and self.collector.running):
-                messagebox.showwarning("提示", "请先打开串口（开始监控）后再发送")
-                return
-            try:
-                iv = int(self.tx_interval_ms_var.get())
-                if iv < 10:
-                    raise ValueError
-            except Exception:
-                messagebox.showwarning("提示", "循环间隔必须为 ≥ 10ms 的整数")
-                return
-            self.tx_cycle_var.set(True)
-            try:
-                self.tx_cycle_btn.configure(text="⏹ 停止循环")
-            except Exception:
-                pass
-            self._sync_inputs_to_vars()
-            self._schedule_tx_cycle()
-            # 立刻发一次
-            self._on_send_once()
+            self._set_status("已停止循环发送")
+            return
+
+        # 未在循环 → 启动
+        if not (self.collector and self.collector.running):
+            messagebox.showwarning("提示", "请先打开串口（开始监控）后再发送")
+            return
+        try:
+            iv = int(self.tx_interval_ms_var.get())
+            if iv < 10:
+                raise ValueError
+        except Exception:
+            messagebox.showwarning("提示", "循环间隔必须为 ≥ 10ms 的整数")
+            return
+
+        # 启动前先检查一次内容，避免空内容循环狂弹窗
+        mode = self.send_mode_var.get()
+        if mode == "raw_hex" and not self._current_raw_text().strip():
+            messagebox.showwarning("提示", "请输入 HEX 内容后再开始循环")
+            return
+        if mode == "raw_ascii" and not self._current_raw_text():
+            messagebox.showwarning("提示", "请输入 ASCII 内容后再开始循环")
+            return
+
+        self.tx_cycle_var.set(True)
+        try:
+            self.tx_cycle_btn.configure(text="⏹ 停止循环")
+        except Exception:
+            pass
+        self._sync_inputs_to_vars()
+        self._on_send_once()
+        self._schedule_tx_cycle()
+        self._set_status("循环发送已开始")
+
 
     def _schedule_tx_cycle(self) -> None:
-        iv = 1000
         try:
             iv = max(10, int(self.tx_interval_ms_var.get()))
         except Exception:
             iv = 1000
 
         def _job():
+            still = bool(
+                self.collector
+                and self.collector.running
+                and self.tx_cycle_var.get()
+            )
+            if not still:
+                self.tx_cycle_var.set(False)
+                try:
+                    self.tx_cycle_btn.configure(text="▶ 开始循环")
+                except Exception:
+                    pass
+                self._tx_cycle_job = None
+                return
             try:
-                if not (self.collector and self.collector.running):
-                    self.tx_cycle_var.set(False)
-                    try:
-                        self.tx_cycle_btn.configure(text="▶ 开始循环")
-                    except Exception:
-                        pass
-                    self._tx_cycle_job = None
-                    return
-                if not self.tx_cycle_var.get():
-                    self._tx_cycle_job = None
-                    return
                 self._on_send_once()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 try:
                     self._report_error("周期发送出错", e)
                 except Exception:
                     pass
-            finally:
+                self.tx_cycle_var.set(False)
                 try:
-                    iv2 = max(10, int(self.tx_interval_ms_var.get()))
+                    self.tx_cycle_btn.configure(text="▶ 开始循环")
                 except Exception:
-                    iv2 = 1000
-                self._tx_cycle_job = self.root.after(iv2, _job)
+                    pass
+                self._tx_cycle_job = None
+                return
+            try:
+                iv2 = max(10, int(self.tx_interval_ms_var.get()))
+            except Exception:
+                iv2 = 1000
+            self._tx_cycle_job = self.root.after(iv2, _job)
 
         self._tx_cycle_job = self.root.after(iv, _job)
 
@@ -1543,9 +2509,9 @@ class ProtocolParserApp:
 
         self._set_status(f"已加载: {product_name}")
         try:
-                self._refresh_send_cmd_list()
+            self._refresh_send_cmd_list()
         except Exception:
-                pass
+            pass
 
     def _on_product_change(self, event=None) -> None:
         """切换产品协议。"""
@@ -1633,10 +2599,13 @@ class ProtocolParserApp:
             pass
 
     def _clear_output(self) -> None:
-        """清空输出。"""
+        """清空输出与统计。"""
         self.serial_text.configure(state="normal")
         self.serial_text.delete("1.0", "end")
         self.serial_text.configure(state="disabled")
+        self.rx_frame_count = 0
+        self.tx_frame_count = 0
+        self.stats_var.set("RX 0  TX 0  错误 0  缓冲 0B")
 
     def _on_topmost_change(self) -> None:
         """窗口置顶状态变化时同步到窗口属性并更新按钮样式。"""
@@ -1655,24 +2624,37 @@ class ProtocolParserApp:
         # trace_add 会自动触发 _on_topmost_change()
 
     def _toggle_send_panel(self) -> None:
-        """显示/隐藏右侧指令发送面板（固定宽度，无拖动条）。"""
+        """显示/隐藏指令发送面板（固定宽度，不可横向拖动）。"""
         try:
             if self.send_frame_visible:
-                self.send_frame.grid_remove()
+                self.send_outer.grid_remove()
                 self.send_frame_visible = False
-                self.send_panel_btn.config(text="打开指令发送界面", style="Toolbar.TButton")
+                try:
+                    self.send_panel_btn.config(text="打开指令发送界面", style="Toolbar.TButton")
+                except Exception:
+                    pass
                 self._set_status("已隐藏指令发送面板")
             else:
-                self.send_frame.configure(width=self.SEND_PANEL_WIDTH)
-                self.send_frame.grid_propagate(False)
-                self.send_frame.grid(row=1, column=1, sticky="ns")
+                self.send_outer.grid(row=0, column=1, sticky="ns")
+                # 再次锁定宽度（某些主题下 grid 后需重设）
+                try:
+                    self.send_outer.configure(width=self.SEND_PANEL_WIDTH)
+                    self.send_outer.grid_propagate(False)
+                except Exception:
+                    pass
                 self.send_frame_visible = True
-                self.send_panel_btn.config(text="关闭指令发送界面", style="Danger.TButton")
+                try:
+                    self.send_panel_btn.config(text="关闭指令发送界面", style="Danger.TButton")
+                except Exception:
+                    pass
                 self._set_status("已显示指令发送面板")
             self.root.update_idletasks()
         except Exception as e:
             self._report_error("切换指令发送面板失败", e)
-    
+
+    def _restore_send_panel_width(self) -> None:
+        """已改为固定宽度，无需恢复 sash 比例。"""
+        return
 
     # ------------------------------------------------------------
     # 主题/字体/偏好 相关方法
@@ -1695,12 +2677,7 @@ class ProtocolParserApp:
         self.serial_text.tag_configure("raw_data", foreground=t.get("raw_data"), font=self.serial_font)
 
     def _apply_font_and_line_spacing(self, save: bool = True) -> None:
-        """改字号时（Ctrl+滚轮）：
-        1) 更新 serial_font / cmd_font 的 size；
-        2) 应用到 serial_text 与所有 tag；
-        3) 指令发送 Tab 里的两个代码 Text 也同步改；
-        4) 隐藏态下防止 send_frame 被意外撑开。
-        """
+        """Ctrl+滚轮改字号：只改字体，不动分栏 / 发送面板。"""
         try:
             size = max(8, min(32, int(self.font_size_var.get())))
             self.serial_font.configure(size=size)
@@ -1708,18 +2685,21 @@ class ProtocolParserApp:
         except Exception:
             pass
         try:
-            self.serial_text.configure(font=self.serial_font)
+            if hasattr(self, "serial_text") and self.serial_text is not None:
+                self.serial_text.configure(font=self.serial_font)
         except Exception:
             pass
-        self._apply_theme_tags()
+        try:
+            self._apply_theme_tags()
+        except Exception:
+            pass
         try:
             for _w in (getattr(self, "fields_text", None), getattr(self, "raw_text", None)):
-                if _w is None:
-                    continue
-                _w.configure(font=self.serial_font)
+                if _w is not None:
+                    _w.configure(font=self.serial_font)
         except Exception:
             pass
-
+        # 注意：这里不要 paneconfig / sashpos，否则改字号会把发送面板顶出来
         if save:
             try:
                 self._save_preferences()
@@ -1807,7 +2787,8 @@ class ProtocolParserApp:
         try:
             save_snapshot(snap)
         except Exception as e:  # noqa: BLE001
-            # 保存偏好失败不影响使用，只写本地 error log
+            # 保存偏好失败不影响使用，只写本地 e
+            # rror log
             try:
                 _log_error_to_disk(e)
             except Exception:
@@ -1819,6 +2800,11 @@ class ProtocolParserApp:
         ② 停周期发送 → 停串口 → close_log_file(写结束标记) → close_save_raw_file
         ③ root.destroy()
         """
+        """WM_DELETE_WINDOW 统一关闭流程：..."""
+        try:
+            self._stop_port_watch()
+        except Exception:
+            pass
         # ① 偏好
         try:
             self._save_preferences()
@@ -1888,6 +2874,7 @@ class ProtocolParserApp:
 
         port_var = tk.StringVar()
         port_combo = ttk.Combobox(frm, textvariable=port_var, values=port_display_list, width=30, state="readonly")
+        _enable_full_combobox(port_combo)
         port_combo.grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=4)
         if port_display_list:
             port_combo.current(0)
@@ -1900,6 +2887,7 @@ class ProtocolParserApp:
             width=10, state="normal",
         )
         baud_combo.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=4)
+        _enable_full_combobox(baud_combo)
         ttk.Label(frm, text="(支持自定义,含6M)", foreground="#888").grid(row=1, column=1, sticky="e", padx=(8, 0), pady=4)
 
         btn_frm = ttk.Frame(frm)
@@ -1965,20 +2953,112 @@ class ProtocolParserApp:
 
     # ---------- 串口实时 ----------
 
-    def _refresh_ports(self) -> None:
-        """刷新可用串口列表。"""
+    def _refresh_ports(self, *, silent: bool = False) -> bool:
+        """刷新可用串口列表。
+
+        silent=True：后台轮询时用，列表没变化不刷状态栏。
+        返回：列表相对上次是否有变化。
+        """
         ports = SerialCollector.list_ports()
         display_list = []
+        devices = []
         for p in ports:
+            dev = p.get("device", "")
+            devices.append(dev)
             desc = p.get("description", "")
-            if desc and desc != p["device"]:
-                display_list.append(f'{p["device"]} - {desc}')
+            if desc and desc != dev:
+                display_list.append(f"{dev} - {desc}")
             else:
-                display_list.append(p["device"])
-        self.port_combo["values"] = display_list
-        if display_list and not self.port_var.get():
-            self.port_combo.current(0)
-        self._set_status(f"找到 {len(ports)} 个串口")
+                display_list.append(dev)
+
+        changed = devices != getattr(self, "_last_port_devices", None)
+        self._last_port_devices = devices
+
+        cur = (self.port_var.get() or "").strip()
+        # 当前显示值对应的设备名（"COM3 - xxx" → "COM3"）
+        cur_dev = cur.split(" - ")[0].strip() if cur else ""
+
+        try:
+            self.port_combo["values"] = display_list
+        except Exception:
+            return changed
+
+        if not display_list:
+            if cur:
+                self.port_var.set("")
+            if not silent:
+                self._set_status("未找到可用串口")
+            return changed
+
+        # 仍在列表里：尽量保持原选项（匹配 device 前缀）
+        keep_idx = -1
+        if cur_dev:
+            for i, disp in enumerate(display_list):
+                if disp == cur or disp.startswith(cur_dev + " ") or disp.startswith(cur_dev + "-") or disp == cur_dev:
+                    keep_idx = i
+                    break
+        if keep_idx >= 0:
+            try:
+                self.port_combo.current(keep_idx)
+            except Exception:
+                pass
+        elif not cur:
+            # 启动时无选中 → 选第一项
+            try:
+                self.port_combo.current(0)
+            except Exception:
+                pass
+        else:
+            # 原来的口拔掉了
+            try:
+                self.port_combo.current(0)
+            except Exception:
+                self.port_var.set("")
+            if not silent:
+                self._set_status(f"串口 {cur_dev} 已断开，已切换到 {self.port_var.get()}")
+
+        if changed and not silent:
+            self._set_status(f"找到 {len(ports)} 个串口")
+        elif changed and silent:
+            # 热插拔：轻提示，不打扰
+            self._set_status(f"串口列表已更新（{len(ports)} 个）")
+        return changed
+
+    def _start_port_watch(self) -> None:
+        """启动串口热插拔轮询（启动时先刷一次，之后定时扫）。"""
+        self._port_watch_job = None
+        self._last_port_devices = None
+        try:
+            self._refresh_ports(silent=False)
+        except Exception:
+            pass
+        self._schedule_port_watch()
+
+    def _schedule_port_watch(self) -> None:
+        try:
+            if self._port_watch_job is not None:
+                self.root.after_cancel(self._port_watch_job)
+        except Exception:
+            pass
+        self._port_watch_job = self.root.after(1500, self._safe(self._poll_ports))
+
+    def _poll_ports(self) -> None:
+        self._port_watch_job = None
+        try:
+            # 监控中也允许更新列表（不改当前连接，只刷新下拉）
+            self._refresh_ports(silent=True)
+        except Exception:
+            pass
+        self._schedule_port_watch()
+
+    def _stop_port_watch(self) -> None:
+        job = getattr(self, "_port_watch_job", None)
+        if job is not None:
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+            self._port_watch_job = None
 
     def _toggle_serial(self) -> None:
         """切换串口监控状态。"""
@@ -2004,6 +3084,27 @@ class ProtocolParserApp:
             self._start_serial()
         except Exception as e:  # noqa: BLE001
             self._report_error("切换串口失败", e)
+
+    def _on_serial_param_change_while_collecting(self, _event=None) -> None:
+        """监控中修改波特率/数据位/停止位：按新参数重新连接。"""
+        if not self.is_collecting:
+            return
+        try:
+            baud_s = str(self.baudrate_var.get()).strip()
+            baudrate = int(baud_s)
+            if baudrate <= 0:
+                raise ValueError("baud")
+        except Exception:
+            messagebox.showwarning("提示", "波特率必须填写正整数（支持自定义，如6M填6000000）")
+            return
+        try:
+            self._stop_serial()
+        except Exception:
+            pass
+        try:
+            self._start_serial()
+        except Exception as e:
+            self._report_error("切换串口参数失败", e)
 
     def _start_serial(self) -> None:
         """启动串口监控。
@@ -2336,13 +3437,10 @@ class ProtocolParserApp:
     # ---------- UI 队列处理 ----------
 
     def _process_ui_queue(self) -> None:
-        """处理 UI 队列。每拍最多处理 BATCH 条，避免高波特率下一次刷爆主线程。"""
-        BATCH = 40  # 每 50ms 最多处理 40 条；高负载时自然排队，UI 保持响应
+        """处理 UI 队列。最外层统一兜底，不允许堆栈冒泡到 Tk mainloop。"""
         try:
-            n = 0
-            while self._ui_queue and n < BATCH:
-                kind, args = self._ui_queue.pop(0)
-                n += 1
+            while self._ui_queue:
+                kind, args = self._ui_queue.popleft()
                 try:
                     if kind == "serial_frame":
                         self.rx_frame_count += 1
@@ -2354,16 +3452,15 @@ class ProtocolParserApp:
                     elif kind == "serial_error":
                         self._display_serial_error(*args)
                 except Exception as e:  # noqa: BLE001
+                    # 单条消息失败不影响其他消息，只弹友好提示 + 日志
                     self._report_error(f"UI 处理失败（{kind}）", e)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001  顶层：死循环绝对不能崩
             try:
                 _log_error_to_disk(e)
             except Exception:
                 pass
         finally:
-            # 有积压时加快下一拍；空闲时仍用 50ms
-            delay = 20 if self._ui_queue else 50
-            self.root.after(delay, self._process_ui_queue)
+            self.root.after(100, self._process_ui_queue)
 
     def _format_raw_display_serial(self, raw_hex: str) -> str:
         """串口原始数据显示格式转换。"""
@@ -2756,13 +3853,39 @@ def main():
         except Exception:
             monitor_baud = 115200
 
+# Windows 高 DPI：先声明感知，再创建窗口，避免字体被拉伸发虚
+    if sys.platform == "win32":
+        try:
+            from ctypes import windll
+            try:
+                # Per-Monitor V2（Win10 1703+）
+                windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                try:
+                    windll.shcore.SetProcessDpiAwareness(1)
+                except Exception:
+                    try:
+                        windll.user32.SetProcessDPIAware()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     try:
         root = tk.Tk()
+        try:
+            # 按系统 DPI 设 Tk 缩放，避免非整数拉伸发虚
+            if sys.platform == "win32":
+                from ctypes import windll
+                dpi = windll.user32.GetDpiForSystem()
+                root.tk.call("tk", "scaling", dpi / 72.0)
+        except Exception:
+            pass
     except Exception as e:
         # 极端情况：DISPLAY / Tk 初始化失败
         friendly, _ = classify_protocol_error(e)
         log_path_a = _log_error_to_disk(e)
-        log_path_b = write_crash_log(e)
+        log_path_b = _write_crash_log_gui(e)
         log_path = log_path_b or log_path_a
         print(f"[错误] 无法启动 GUI：{friendly}", file=sys.stderr)
         if log_path is not None:
@@ -2800,7 +3923,7 @@ def main():
                         pass
                     # 运行时严重错误也写 exe 同级 crash log，方便用户夜间抓包查
                     try:
-                        write_crash_log(e)
+                        _write_crash_log_gui(e)
                     except Exception:
                         pass
                     break
@@ -2811,7 +3934,7 @@ def main():
         raise
     except BaseException as e:  # noqa: BLE001  启动阶段兜底：任何错误都写 exe 同级 crash.log + 尽力弹窗
         log_path_a = _log_error_to_disk(e)
-        log_path_b = write_crash_log(e)
+        log_path_b = _write_crash_log_gui(e)
         log_path = log_path_b or log_path_a
         try:
             friendly, _ = classify_protocol_error(e)
