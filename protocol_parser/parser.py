@@ -338,11 +338,37 @@ def merge_protocol(base: dict, override: dict) -> dict:
     # 策略：完全保留 base 的命令定义（包括 name/description/format），
     #       只有 override 中独有的命令才添加
     if "commands" in override:
-        base_cmds = {c["cmd_code"]: c for c in result.get("commands", [])}
+        import copy as _copy
+        def _cmd_key(c: dict):
+            raw = c.get("cmd_code", c.get("code", c.get("id", c.get("cmd"))))
+            try:
+                if isinstance(raw, str):
+                    return int(raw, 0) & 0xFF
+                return int(raw) & 0xFF
+            except Exception:
+                return str(raw)
+
+        base_cmds = {}
+        for c in result.get("commands", []):
+            base_cmds[_cmd_key(c)] = _copy.deepcopy(c)
+
         for cmd in override["commands"]:
-            cmd_code = cmd["cmd_code"]
-            if cmd_code not in base_cmds:
-                base_cmds[cmd_code] = cmd
+            if not isinstance(cmd, dict):
+                continue
+            key = _cmd_key(cmd)
+            if key in base_cmds:
+                # 同 cmd：产品侧覆盖 name/description 等，保留 base 的 request/response 格式
+                merged = base_cmds[key]
+                for k, v in cmd.items():
+                    if k in ("request", "response") and isinstance(v, dict):
+                        base_block = merged.get(k) if isinstance(merged.get(k), dict) else {}
+                        merged[k] = {**base_block, **v}
+                    else:
+                        merged[k] = v
+                base_cmds[key] = merged
+            else:
+                base_cmds[key] = _copy.deepcopy(cmd)
+
         result["commands"] = list(base_cmds.values())
 
     # attributes 合并（以 attrid 为键）

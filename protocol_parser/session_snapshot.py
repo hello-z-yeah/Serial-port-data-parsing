@@ -114,25 +114,55 @@ def default_session_path() -> Path:
 # ---------------------------------------------------------------------------
 
 def save_snapshot(snap: SessionSnapshot, path: str | Path | None = None) -> Path:
-    """把快照写盘。写入失败时抛 UpdaterError（上层 classify_protocol_error 会友好提示）。
-
-    策略：先写临时文件再 os.replace，保证 crash 时旧快照不被半写损坏。
-    """
+    """把快照写盘。写入失败时抛 UpdaterError。"""
     target = Path(path) if path else default_session_path()
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_suffix(target.suffix + ".tmp")
-        payload = asdict(snap)
+    payload = asdict(snap)
+
+    def _write(p: Path) -> None:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(p.suffix + ".tmp")
         with open(tmp, "w", encoding="utf-8") as fp:
             json.dump(payload, fp, ensure_ascii=False, indent=2)
-        os.replace(tmp, target)
-    except Exception as e:
-        raise _mk_snapshot_error(
-            message=f"save session snapshot failed: {e}",
-            friendly_msg="保存更新会话快照失败，请检查磁盘或文件权限后重试。",
-        ) from e
-    return target
+        try:
+            os.replace(tmp, p)
+        except OSError:
+            # Windows 下 replace 偶发拒绝访问：退化为直接覆盖
+            try:
+                if p.exists():
+                    p.unlink()
+            except OSError:
+                pass
+            try:
+                os.replace(tmp, p)
+            except OSError:
+                with open(p, "w", encoding="utf-8") as fp:
+                    json.dump(payload, fp, ensure_ascii=False, indent=2)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
+    try:
+        _write(target)
+        return target
+    except Exception as e1:
+        # 项目目录不可写 → 用户文档目录
+        try:
+            from protocol_parser.gui import user_data_path  # 若循环导入，可内联 Path.home()...
+        except Exception:
+            fb = Path.home() / "Documents" / "串口协议解析工具" / "data"
+        else:
+            fb = user_data_path()
+        # alt = fb / SESSION_FILENAME
+        alt = Path.home() / "Documents" / "串口协议解析工具" / "data" / SESSION_FILENAME
+        try:
+            _write(alt)
+            return alt
+        except Exception as e2:
+            raise _mk_snapshot_error(
+                message=f"save session snapshot failed: {e1}; fallback: {e2}",
+                friendly_msg="保存会话快照失败，请检查磁盘或文件权限后重试。",
+            ) from e2
 
 def load_snapshot(path: str | Path | None = None) -> SessionSnapshot | None:
     """读取快照。文件不存在/损坏/缺字段都返回 None（不崩主流程）。"""

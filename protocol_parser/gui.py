@@ -999,11 +999,9 @@ class ProtocolParserApp:
     def __init__(self, root: tk.Tk, monitor_port: str | None = None, monitor_baud: int = 115200):
         self.root = root
         self.root.title(f"串口协议解析工具 v{VERSION}")
-
         # ============================================================
-        #  主题/视觉：Light/Dark + Win11 风格（纯 Tk，不引入第三方依赖）
+        #  主题/视觉：Light/Dark + Win11 风格
         # ============================================================
-        # 先尝试从旧快照 extras 里恢复偏好（即便没有 was_collecting 也能恢复字体/主题/窗口尺寸）
         _pref_snap = load_snapshot()
         _extras: dict = dict(getattr(_pref_snap, "extras", None) or {})
         self.theme = ThemeManager(
@@ -1012,22 +1010,26 @@ class ProtocolParserApp:
         )
         self.theme_mode_var = tk.StringVar(value=self.theme.mode)
         self.theme_style_var = tk.StringVar(value=self.theme.style)
+
+        # 显示模式变量
+        self.view_mode_var = tk.StringVar(value="protocol")  # protocol | raw
+
         # 配置全局 ttk 样式
         self.ttk_style = ttk.Style()
         try:
             self.theme.apply_ttk_styles(self.ttk_style)
         except Exception:
-            # 样式应用失败不影响主流程
             pass
-        # 初始化大圆角按钮样式映射
         RoundedButton.init_styles(self.theme)
-        # 根窗口背景色
         self.root.configure(bg=self.theme.get("app_bg"))
+        # 显示模式变量
+        self.view_mode_var = tk.StringVar(value="protocol")  # protocol | raw
+
 
         # ============================================================
         #  窗口尺寸：统一约束 + 按上次会话恢复
         # ============================================================
-        _MIN_W, _MIN_H = 1500, 800
+        _MIN_W, _MIN_H = 1730, 800
         try:
             self.root.minsize(_MIN_W, _MIN_H)
         except Exception:
@@ -1148,6 +1150,7 @@ class ProtocolParserApp:
         self.log_count = 0
         self.rx_frame_count = 0
         self.tx_frame_count = 0
+        
 
         # 原始数据保存：默认关闭 + 默认保存路径用 user_data_path（可写持久目录）
         self.save_raw_enabled_var = tk.BooleanVar(
@@ -1186,7 +1189,7 @@ class ProtocolParserApp:
         self.tx_cycle_var = tk.BooleanVar(value=False)
         self.tx_interval_ms_var = tk.IntVar(value=1000)
         self._tx_cycle_job: str | None = None
-
+        self.tx_auto_crc8_var = tk.BooleanVar(value=False)
         # 显示缓冲区限制（防止内存溢出）
         self.max_display_lines = 50000
 
@@ -1556,67 +1559,10 @@ class ProtocolParserApp:
         top_row0.columnconfigure(1, weight=1)   # 中间：伸缩缓冲区，压到 0 都不影响左右
         top_row0.columnconfigure(2, weight=0)   # 右区：固定尺寸，绝不裁剪
 
-        # 左区
-        row0_left = ttk.Frame(top_row0)
-        row0_left.grid(row=0, column=0, sticky="w")
-        _tool_place_reset(row0_left)
-
-        ttk.Label(row0_left, text="产品协议：", style="Toolbar.TLabel").grid(
-            row=0, column=row0_left._next_col, sticky="w", pady=(2, 2))  # type: ignore[attr-defined]
-        row0_left._next_col += 1  # type: ignore[attr-defined]
-
-        self.product_combo = ttk.Combobox(row0_left, textvariable=self.product_var, width=18, state="readonly")
-        self.product_combo.grid(row=0, column=row0_left._next_col, sticky="w",  # type: ignore[attr-defined]
-                                padx=(4, 10), pady=(2, 2))
-        _enable_full_combobox(self.product_combo)
-        row0_left._next_col += 1  # type: ignore[attr-defined]
-        self.product_combo.bind("<<ComboboxSelected>>", self._on_product_change)
-
-        _tool_button(row0_left, "刷新", self._load_protocols,
-                     tip="重新扫描 product/ 目录下的协议 JSON。", padx=(0, 4))
-        _tool_button(row0_left, "导入Word协议", self._import_docx,
-                     tip="导入 Word 协议文档并解析为 JSON。", padx=(0, 4))
-        _tool_button(row0_left, "查看协议", self._show_protocol,
-                     tip="查看当前已加载的协议字段和指令列表。", padx=(0, 4))
 
         # 中间伸缩 spacer：窗口缩小时这一块先被压扁为 0，左右两侧的按钮/下拉永远不被裁剪隐藏
         row0_spacer = ttk.Frame(top_row0, width=1)
         row0_spacer.grid(row=0, column=1, sticky="ew")
-
-        # 右区
-        row0_right = ttk.Frame(top_row0)
-        row0_right.grid(row=0, column=2, sticky="e")
-        _tool_place_reset(row0_right)
-
-        self.send_panel_btn = RoundedButton(row0_right, text="打开指令发送界面", style="Toolbar.TButton",
-                                            command=self._safe(self._toggle_send_panel))
-        self.send_panel_btn.grid(row=0, column=row0_right._next_col, sticky="w",  # type: ignore[attr-defined]
-                                 padx=(0, 4), pady=(1, 1))
-        row0_right._next_col += 1  # type: ignore[attr-defined]
-        Tooltip(self.send_panel_btn, "打开或关闭右侧「指令发送」面板。", self.theme)
-
-        _tool_button(row0_right, "添加串口", self._add_serial_port,
-                     tip="新增一个独立串口监控窗口。", padx=(0, 4))
-        _tool_button(row0_right, "保存日志", self._choose_log,
-                     tip="选择结构化解析日志的保存路径。", padx=(0, 4))
-        _tool_button(row0_right, "清空", self._clear_output,
-                     tip="清空实时数据区和统计数据。", padx=(0, 4))
-
-        # 置顶按钮（蓝色=未启用 / 红色=已启用）
-        try:
-            self.topmost_btn = RoundedButton(
-                row0_right, text="置顶", style="CompactPrimary.TButton",
-                command=self._safe(self._toggle_topmost_btn),
-                width=4,
-            )
-            self.topmost_btn.grid(row=0, column=row0_right._next_col, sticky="w",  # type: ignore[attr-defined]
-                                  padx=(2, 0), pady=(1, 1))
-            row0_right._next_col += 1  # type: ignore[attr-defined]
-            Tooltip(self.topmost_btn, "窗口始终置顶 / 取消置顶。", self.theme)
-            self.topmost_chk = self.topmost_btn  # 兼容旧引用
-        except Exception:
-            self.topmost_btn = None
-            self.topmost_chk = None
 
         try:
             self.root.bind("<F5>", lambda _e: (self._safe(self._start_serial)(), None)[1] if not self.is_collecting else None)
@@ -1792,7 +1738,70 @@ class ProtocolParserApp:
     def _build_serial_config_panel(self, parent: tk.Misc) -> None:
         theme = self.theme
 
-        frame = ttk.LabelFrame(parent, text="串口配置", padding=(12, 10))
+        # 标题行：左「串口配置」+ 右四按钮（与标题同一行）
+        _cfg_hdr = ttk.Frame(parent)
+        ttk.Label(_cfg_hdr, text="串口配置", style="TLabelframe.Label").pack(
+            side="left", padx=(0, 12)
+        )
+
+        self.send_panel_btn = RoundedButton(
+            _cfg_hdr, text="打开指令发送界面", style="Toolbar.TButton",
+            command=self._safe(self._toggle_send_panel),
+        )
+        self.send_panel_btn.pack(side="left", padx=(0, 4))
+        Tooltip(self.send_panel_btn, "打开或关闭右侧「指令发送」面板。", theme)
+
+        RoundedButton(
+            _cfg_hdr, text="添加串口", style="Toolbar.TButton",
+            command=self._safe(self._add_serial_port),
+        ).pack(side="left", padx=(0, 4))
+
+        RoundedButton(
+            _cfg_hdr, text="保存日志", style="Toolbar.TButton",
+            command=self._safe(self._choose_log),
+        ).pack(side="left", padx=(0, 4))
+
+        ttk.Frame(_cfg_hdr).pack(side="left", expand=True, fill="x")
+
+        # 右侧：发送方 + HEX + 自动滚动（与「串口配置」同一行）
+        ttk.Frame(_cfg_hdr, width=12).pack(side="left")  # 小间距；若要贴最右可再加 expand
+
+        ttk.Label(_cfg_hdr, text="发送方：", style="TLabelframe.Label").pack(side="left")
+        sender_frame = ttk.Frame(_cfg_hdr)
+        sender_frame.pack(side="left", padx=(4, 12))
+        self.sender_module_rb = ttk.Radiobutton(
+            sender_frame, text="模组发送", variable=self.serial_sender_var,
+            value="模组发送", style="TRadiobutton",
+        )
+        self.sender_module_rb.pack(side="left", padx=(0, 8))
+        self.sender_mcu_rb = ttk.Radiobutton(
+            sender_frame, text="MCU发送", variable=self.serial_sender_var,
+            value="MCU发送", style="TRadiobutton",
+        )
+        self.sender_mcu_rb.pack(side="left")
+
+        _auto_chk = ttk.Checkbutton(
+            _cfg_hdr, text="自动滚动", variable=self.autoscroll_var, style="TCheckbutton",
+        )
+        _auto_chk.pack(side="left")
+        Tooltip(_auto_chk, "有新报文时自动滚动到底部；关闭后可方便回看历史。", theme)
+
+        # 置顶：标题栏最右侧
+        try:
+            self.topmost_btn = RoundedButton(
+                _cfg_hdr, text="置顶", style="CompactPrimary.TButton",
+                command=self._safe(self._toggle_topmost_btn), width=4,
+            )
+            self.topmost_btn.pack(side="left", padx=(8, 0))
+            Tooltip(self.topmost_btn, "窗口始终置顶 / 取消置顶。", theme)
+            self.topmost_chk = self.topmost_btn
+        except Exception:
+            self.topmost_btn = None
+            self.topmost_chk = None
+
+        ttk.Frame(_cfg_hdr).pack(side="left", expand=True, fill="x")
+
+        frame = ttk.LabelFrame(parent, labelwidget=_cfg_hdr, padding=(12, 10))
         frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
         # 串口配置面板整体按 grid 展开：每行 1 列，权重=0（fixed height，不参与挤压）
         frame.columnconfigure(0, weight=1)
@@ -1847,79 +1856,43 @@ class ProtocolParserApp:
         _enable_full_combobox(stopbits_combo)
         stopbits_combo.bind("<<ComboboxSelected>>", self._safe(self._on_serial_param_change_while_collecting), add="+")
 
-        # 折叠/展开按钮（放在第一行最右侧，开始监控按钮左侧，节省一行空间）
+        self.hex_btn = RoundedButton(
+            row1,
+            text="HEX 格式",
+            style="Primary.TButton",
+            command=self._safe(self._toggle_hex_format_btn),
+            width=10,
+        )
+        self.hex_btn.grid(row=0, column=198, sticky="e", padx=(8, 4))
+        Tooltip(self.hex_btn, "在 HEX / ASCII 显示之间切换。", theme)
+        self.hex_chk = self.hex_btn  # 兼容旧引用
+        self._sync_hex_btn_style()
+
+        # 收起/展开
         self.serial_config_toggle_btn = RoundedButton(
-            row1, text="收起 ▲", width=7, style="Toolbar.TButton",
+            row1, text="收起 ▲", width=5, style="Toolbar.TButton",
             command=self._safe(self._toggle_serial_config_panel),
         )
         self.serial_config_toggle_btn.grid(row=0, column=199, sticky="e", padx=(6, 2))
         Tooltip(
             self.serial_config_toggle_btn,
-            "收起/展开串口配置高级选项（详细模式、发送方、HEX、自动滚动、保存原始数据）。",
+            "收起/展开串口配置高级选项（保存原始数据等）。",
             theme,
         )
 
-        # 开始监控按钮：占据 row1 最右侧 (weight=1) 的可伸缩空白后放，避免被挤压
-        self.start_btn = RoundedButton(row1, text="● 开始监控", style="Primary.TButton",
-                                       command=self._safe(self._toggle_serial))
+        # 开始监控（必须先创建，再 grid）
+        self.start_btn = RoundedButton(
+            row1, text="● 开始监控", style="Primary.TButton",
+            command=self._safe(self._toggle_serial),
+        )
         self.start_btn.grid(row=0, column=200, sticky="e", padx=(0, 4))
-        Tooltip(self.start_btn,
-                "开始监控（绿灯）/ 停止监控（灰）。\n快捷键：F5 开始 / Shift+F5 停止。",
-                theme)
-
-        # ---- 第二行：详细模式 / 发送方 [← spacer(weight=1) →] HEX / 自动滚动 ----
-        row2_wrap = ttk.Frame(frame, style="Card.TFrame")
-        row2_wrap.grid(row=1, column=0, sticky="ew", pady=(2, 3))
-        self._serial_config_detail_row = row2_wrap
-        row2 = ttk.Frame(row2_wrap, style="Card.TFrame")
-        row2.pack(fill="x", padx=2, pady=2)
-        # 明确三列：左(控件) + 中(spacer 缓冲) + 右(控件)，窄窗口只压中间不裁控件
-        row2.columnconfigure(0, weight=0)  # 左区：详细模式 + 发送方
-        row2.columnconfigure(1, weight=1)  # 中区：伸缩 spacer（缓冲区，可压到 0）
-        row2.columnconfigure(2, weight=0)  # 右区：HEX + 自动滚动
-
-        # 左区
-        row2_left = ttk.Frame(row2, style="Card.TFrame")
-        row2_left.grid(row=0, column=0, sticky="w")
-
-        ttk.Checkbutton(row2_left, text="详细模式", variable=self.detail_var,
-                        style="TCheckbutton").pack(side="left", padx=(0, 24))
-        Tooltip(row2_left.winfo_children()[-1],
-                "勾选后串口实时日志会把每个协议字段逐行展开显示。", theme)
-
-        ttk.Label(row2_left, text="发送方：", style="Card.TLabel").pack(side="left")
-        sender_frame = ttk.Frame(row2_left, style="Card.TFrame")
-        sender_frame.pack(side="left", padx=(4, 0))
-        self.sender_module_rb = ttk.Radiobutton(
-            sender_frame, text="模组发送", variable=self.serial_sender_var,
-            value="模组发送", style="TRadiobutton"
+        Tooltip(
+            self.start_btn,
+            "开始监控（绿灯）/ 停止监控（灰）。\n快捷键：F5 开始 / Shift+F5 停止。",
+            theme,
         )
-        self.sender_module_rb.pack(side="left", padx=(0, 10))
-        self.sender_mcu_rb = ttk.Radiobutton(
-            sender_frame, text="MCU发送", variable=self.serial_sender_var,
-            value="MCU发送", style="TRadiobutton"
-        )
-        self.sender_mcu_rb.pack(side="left")
 
-        # 中间 spacer（伸缩缓冲）
-        row2_spacer = ttk.Frame(row2, width=1, style="Card.TFrame")
-        row2_spacer.grid(row=0, column=1, sticky="ew")
-
-        # 右区
-        row2_right = ttk.Frame(row2, style="Card.TFrame")
-        row2_right.grid(row=0, column=2, sticky="e")
-
-        self.hex_chk = ttk.Checkbutton(
-            row2_right, text="HEX 格式", variable=self.hex_format_var,
-            command=self._safe(self._on_hex_format_change), style="TCheckbutton"
-        )
-        self.hex_chk.pack(side="left", padx=(0, 24))
-        Tooltip(self.hex_chk, "HEX 十六进制显示；不勾选则为 ASCII 文本模式。", theme)
-
-        ttk.Checkbutton(row2_right, text="自动滚动", variable=self.autoscroll_var,
-                        style="TCheckbutton").pack(side="left")
-        Tooltip(row2_right.winfo_children()[-1],
-                "有新报文时自动滚动到底部；关闭后可方便回看历史。", theme)
+        self._serial_config_detail_row = None
 
         # ---- 第三/第四行：保存原始数据（拆为两行，避免窄窗口时路径/文件名被裁剪隐藏） ----
         #  row3a：☑保存原始数据   路径：[Entry 伸缩 weight=1]  [选择]
@@ -1978,19 +1951,27 @@ class ProtocolParserApp:
         except Exception:
             collapsed = True
 
+        for attr in (
+            "_serial_config_detail_row",
+            "_serial_config_raw_row_a",
+            "_serial_config_raw_row_b",
+        ):
+            w = getattr(self, attr, None)
+            if w is None:
+                continue
+            try:
+                if collapsed:
+                    w.grid_remove()
+                else:
+                    w.grid()
+            except Exception:
+                pass
+
         try:
-            if collapsed:
-                self._serial_config_detail_row.grid_remove()
-                self._serial_config_raw_row_a.grid_remove()
-                self._serial_config_raw_row_b.grid_remove()
-                self.serial_config_toggle_btn.config(text="展开 ▼")
-            else:
-                self._serial_config_detail_row.grid()
-                self._serial_config_raw_row_a.grid()
-                self._serial_config_raw_row_b.grid()
-                self.serial_config_toggle_btn.config(text="收起 ▲")
+            self.serial_config_toggle_btn.config(
+                text="展开 ▼" if collapsed else "收起 ▲"
+            )
         except Exception:
-            # 构建阶段可能尚未完成，忽略
             pass
 
     def _build_serial_panel(self, parent: tk.Misc) -> None:
@@ -1999,7 +1980,48 @@ class ProtocolParserApp:
         card_bg = theme.get("card_bg")
 
         # 实时数据分组
-        realtime_frame = ttk.LabelFrame(parent, text="实时数据", padding=6)
+        # 标题栏：实时数据 + 模式按钮 + 清空
+        _hdr = ttk.Frame(parent)
+        ttk.Label(_hdr, text="实时数据", style="TLabelframe.Label").pack(side="left", padx=(0, 8))
+        self.view_mode_btn = RoundedButton(
+            _hdr,
+            text="协议解析模式",
+            style="CompactPrimary.TButton",
+            command=self._safe(self._toggle_view_mode),
+            width=12,
+        )
+        self.view_mode_btn.pack(side="left", padx=(0, 6))
+        self.clear_output_btn = RoundedButton(
+            _hdr,
+            text="清空",
+            style="Toolbar.TButton",
+            command=self._safe(self._clear_output),
+            width=4,
+        )
+        self.clear_output_btn.pack(side="left", padx=(0, 4))
+
+        # —— 产品协议（从顶栏红框移来）——
+        ttk.Separator(_hdr, orient="vertical").pack(side="left", fill="y", padx=8, pady=2)
+        self._proto_label = ttk.Label(_hdr, text="产品协议：", style="TLabelframe.Label")
+        self._proto_label.pack(side="left", padx=(0, 4))
+        self.product_combo = ttk.Combobox(
+            _hdr, textvariable=self.product_var, width=18, state="readonly"
+        )
+        self.product_combo.pack(side="left", padx=(0, 6))
+        _enable_full_combobox(self.product_combo)
+        self.product_combo.bind("<<ComboboxSelected>>", self._on_product_change)
+        self._import_btn = RoundedButton(
+            _hdr, text="导入Word协议", style="Toolbar.TButton",
+            command=self._safe(self._import_docx),
+        )
+        self._import_btn.pack(side="left", padx=(0, 4))
+        self._view_proto_btn = RoundedButton(
+            _hdr, text="查看协议", style="Toolbar.TButton",
+            command=self._safe(self._show_protocol),
+        )
+        self._view_proto_btn.pack(side="left", padx=(0, 4))
+
+        realtime_frame = ttk.LabelFrame(parent, labelwidget=_hdr, padding=6)
         realtime_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
         realtime_frame.columnconfigure(0, weight=1)
         realtime_frame.rowconfigure(0, weight=1)
@@ -2102,7 +2124,8 @@ class ProtocolParserApp:
         self.protocol_frame = ttk.LabelFrame(parent, text="协议参数", padding=8)
         self.protocol_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))
         self.protocol_frame.columnconfigure(1, weight=1)
-        self.protocol_frame.columnconfigure(3, weight=1)
+
+        # 第 0 行：命令 + 方向
         ttk.Label(self.protocol_frame, text="命令:").grid(row=0, column=0, sticky="w", pady=(0, 4))
         self.tx_cmd_label_var = tk.StringVar(value="")
         self.cmd_combo = ttk.Combobox(
@@ -2114,7 +2137,8 @@ class ProtocolParserApp:
         _enable_full_combobox(self.cmd_combo)
         self.cmd_combo.grid(row=0, column=1, sticky="ew", pady=(0, 4))
         self.cmd_combo.bind("<<ComboboxSelected>>", self._on_send_cmd_selected)
-        ttk.Label(self.protocol_frame, text="方向:").grid(row=0, column=2, sticky="e")
+
+        ttk.Label(self.protocol_frame, text="方向:").grid(row=0, column=2, sticky="e", padx=(8, 0))
         dir_combo = ttk.Combobox(
             self.protocol_frame,
             textvariable=self.tx_direction_var,
@@ -2123,9 +2147,23 @@ class ProtocolParserApp:
             width=12,
         )
         _enable_full_combobox(dir_combo)
-        dir_combo.grid(row=0, column=3, sticky="w", pady=3)
+        dir_combo.grid(row=0, column=3, sticky="w", pady=(0, 4))
 
-        ttk.Label(self.protocol_frame, text="字段 JSON:").grid(row=1, column=0, sticky="nw", pady=3)
+        # 第 1 行：快捷动作
+        ttk.Label(self.protocol_frame, text="快捷动作:").grid(row=1, column=0, sticky="w", pady=(0, 4))
+        self.tx_quick_var = tk.StringVar(value="")
+        self.quick_combo = ttk.Combobox(
+            self.protocol_frame,
+            textvariable=self.tx_quick_var,
+            width=28,
+            state="readonly",
+        )
+        self.quick_combo.grid(row=1, column=1, columnspan=3, sticky="ew", pady=(0, 4))
+        self.quick_combo.bind("<<ComboboxSelected>>", self._safe(self._on_quick_action_selected))
+        self._quick_action_map: dict[str, dict] = {}
+
+        # 第 2 行：字段 JSON
+        ttk.Label(self.protocol_frame, text="字段 JSON:").grid(row=2, column=0, sticky="nw", pady=3)
         self.fields_text = tk.Text(
             self.protocol_frame,
             height=4,
@@ -2137,10 +2175,9 @@ class ProtocolParserApp:
             highlightcolor="#E0E0E0",
             bd=1,
         )
-        self.fields_text.grid(row=1, column=1, columnspan=3, sticky="nsew", pady=3)
-        self.protocol_frame.rowconfigure(1, weight=1)
+        self.fields_text.grid(row=2, column=1, columnspan=3, sticky="nsew", pady=3)
+        self.protocol_frame.rowconfigure(2, weight=1)
         self.protocol_frame.columnconfigure(1, weight=1)
-        # 双向同步 StringVar 和 Text（避免复杂 trace，每次发送时从 text 读）
         self.fields_text.insert("1.0", self.tx_fields_var.get())
 
         # Raw 内容（共用 1 个帧，通过 mode 显示不同的 placeholder）
@@ -2183,6 +2220,12 @@ class ProtocolParserApp:
             side="left", padx=(0, 8)
         )
 
+        ttk.Checkbutton(
+            row_a,
+            text="自动追加校验",
+            variable=self.tx_auto_crc8_var,
+        ).pack(side="left", padx=(0, 8))
+
         # 第二行：发送一次 + 开始循环（单独一行，避免被裁）
         row_b = ttk.Frame(act)
         row_b.grid(row=1, column=0, sticky="ew", pady=(0, 4))
@@ -2217,10 +2260,13 @@ class ProtocolParserApp:
         for c in (cfg.get("commands") or []):
             if not isinstance(c, dict):
                 continue
-            code = c.get("code", c.get("id", c.get("cmd")))
+            code = c.get("cmd_code", c.get("code", c.get("id", c.get("cmd"))))
             name = c.get("name") or c.get("title") or ""
             try:
-                code_i = int(code, 0) if isinstance(code, str) else int(code)
+                if isinstance(code, str):
+                    code_i = int(code, 0)
+                else:
+                    code_i = int(code)
             except Exception:
                 continue
             label = f"0x{code_i:02X}  {name}".strip() if name else f"0x{code_i:02X}"
@@ -2242,6 +2288,122 @@ class ProtocolParserApp:
                 self.tx_cmd_code_var.set("0x20")
         except Exception:
             pass
+        try:
+            self._refresh_quick_actions()
+        except Exception:
+            pass
+
+    def _refresh_quick_actions(self) -> None:
+        """根据当前协议 attributes 生成「照明打开/关闭」等快捷动作。"""
+        labels: list[str] = []
+        self._quick_action_map = {}
+        attrs = (self.cfg or {}).get("attributes") or {}
+        if not isinstance(attrs, dict):
+            attrs = {}
+
+        for aid, meta in attrs.items():
+            if not isinstance(meta, dict):
+                continue
+            name = meta.get("cn_name") or meta.get("name") or str(aid)
+            try:
+                typeid_i = int(meta.get("typeid", 0))
+            except Exception:
+                typeid_i = 0
+            enum_map = meta.get("enum") or {}
+            if not isinstance(enum_map, dict):
+                enum_map = {}
+
+            if enum_map:
+                for ek, ev in enum_map.items():
+                    try:
+                        val = int(str(ek), 0)
+                    except Exception:
+                        continue
+                    label = f"{name} → {ev}"
+                    labels.append(label)
+                    self._quick_action_map[label] = {
+                        "attrid": aid,
+                        "value": val,
+                        "typeid": typeid_i,
+                    }
+            else:
+                rng = meta.get("range")
+                is_bool = typeid_i == 0 or rng in ([0, 1], "[0,1]")
+                if is_bool:
+                    for val, ev in ((0, "关闭"), (1, "打开")):
+                        label = f"{name} → {ev}"
+                        labels.append(label)
+                        self._quick_action_map[label] = {
+                            "attrid": aid,
+                            "value": val,
+                            "typeid": typeid_i,
+                        }
+                else:
+                    label = f"{name} → 写入"
+                    labels.append(label)
+                    self._quick_action_map[label] = {
+                        "attrid": aid,
+                        "value": 1,
+                        "typeid": typeid_i,
+                    }
+
+        try:
+            if hasattr(self, "quick_combo") and self.quick_combo is not None:
+                self.quick_combo["values"] = labels
+                self.tx_quick_var.set("")
+        except Exception:
+            pass
+
+    def _on_quick_action_selected(self, _event=None) -> None:
+        """快捷动作：切到「命令下发」并填入对应属性字段 JSON。"""
+        label = (self.tx_quick_var.get() or "").strip()
+        info = (self._quick_action_map or {}).get(label)
+        if not info:
+            return
+
+        try:
+            self.send_mode_var.set("protocol")
+            self._on_send_mode_change()
+        except Exception:
+            pass
+
+        target_code = 0x01
+        chosen_label = None
+        for lb, code in (self._send_cmd_map or {}).items():
+            if code == target_code or "命令下发" in str(lb):
+                chosen_label = lb
+                break
+        if chosen_label:
+            try:
+                self.tx_cmd_label_var.set(chosen_label)
+                self.cmd_combo.set(chosen_label)
+                self._on_send_cmd_selected()
+            except Exception:
+                self.tx_cmd_code_var.set("0x01")
+        else:
+            self.tx_cmd_code_var.set("0x01")
+
+        try:
+            self.tx_direction_var.set("模组发送")
+        except Exception:
+            pass
+
+        import json
+        payload = {
+            "msg_id": 0,
+            "attrs": [
+                [info["attrid"], info["value"], info["typeid"]]
+            ],
+        }
+        text = json.dumps(payload, ensure_ascii=False)
+        try:
+            self.fields_text.delete("1.0", "end")
+            self.fields_text.insert("1.0", text)
+            self.tx_fields_var.set(text)
+        except Exception:
+            pass
+
+        self._set_status(f"已填入快捷动作: {label}")
 
     def _on_send_cmd_selected(self, _event=None) -> None:
         label = (self.tx_cmd_label_var.get() or "").strip()
@@ -2328,9 +2490,40 @@ class ProtocolParserApp:
             elif mode == "raw_hex":
                 s = self._current_raw_text().strip()
                 if not s:
-                    messagebox.showwarning("提示", "请输入 HEX 内容（例如：1A 2B 3C）")
+                    messagebox.showwarning("提示", "请输入 HEX 内容（例如：A5 A5 03 23 00 01 01）")
                     return
-                self.collector.send_raw(s, as_text=False)
+                from protocol_parser.parser import calc_checksum
+                s_clean = (
+                    s.replace(" ", "").replace("\n", "").replace("\r", "").replace("\t", "")
+                )
+                if s_clean.lower().startswith("0x"):
+                    s_clean = s_clean[2:]
+                if len(s_clean) % 2 == 1:
+                    s_clean = "0" + s_clean
+                try:
+                    payload = bytes.fromhex(s_clean)
+                except Exception as e:
+                    raise ValueError(f"HEX 格式非法：{e}") from e
+
+                if self.tx_auto_crc8_var.get():
+                    # 与协议组帧一致：默认 sum；有配置则用 frame.checksum.algorithm
+                    cs_algo = "sum"
+                    cs_len = 1
+                    try:
+                        cs_cfg = (self.cfg or {}).get("frame", {}).get("checksum") or {}
+                        if isinstance(cs_cfg, dict):
+                            cs_algo = str(cs_cfg.get("algorithm") or "sum").lower()
+                            cs_len = int(cs_cfg.get("length") or 1)
+                    except Exception:
+                        pass
+                    if cs_algo not in ("none", ""):
+                        cs_bytes = calc_checksum(payload, cs_algo)
+                        if len(cs_bytes) < cs_len:
+                            cs_bytes = b"\x00" * (cs_len - len(cs_bytes)) + cs_bytes
+                        elif len(cs_bytes) > cs_len:
+                            cs_bytes = cs_bytes[-cs_len:]
+                        payload = payload + cs_bytes
+                self.collector.send(payload)
             else:  # raw_ascii
                 s = self._current_raw_text()
                 if not s:
@@ -2585,6 +2778,24 @@ class ProtocolParserApp:
         scroll.pack(fill="y", side="right")
         text.configure(yscrollcommand=scroll.set)
 
+    def _toggle_hex_format_btn(self) -> None:
+        """HEX / ASCII 切换按钮。"""
+        self.hex_format_var.set(not bool(self.hex_format_var.get()))
+        self._sync_hex_btn_style()
+        try:
+            self._on_hex_format_change()
+        except Exception:
+            pass
+
+    def _sync_hex_btn_style(self) -> None:
+        if not hasattr(self, "hex_btn") or self.hex_btn is None:
+            return
+        if bool(self.hex_format_var.get()):
+            self.hex_btn.configure(text="HEX 格式", style="Primary.TButton", width=10)
+        else:
+            self.hex_btn.configure(text="ASCII 格式", style="Toolbar.TButton", width=10)
+
+
     def _on_hex_format_change(self) -> None:
         """HEX/ASCII 切换：ASCII 模式下禁用发送方选择，HEX 模式下恢复可用。"""
         hex_checked = bool(self.hex_format_var.get())
@@ -2606,6 +2817,56 @@ class ProtocolParserApp:
         self.rx_frame_count = 0
         self.tx_frame_count = 0
         self.stats_var.set("RX 0  TX 0  错误 0  缓冲 0B")
+
+    def _toggle_view_mode(self) -> None:
+        """在「协议解析模式」与「原始数据模式」之间切换。"""
+        cur = self.view_mode_var.get()
+        if cur == "protocol":
+            self.view_mode_var.set("raw")
+        else:
+            self.view_mode_var.set("protocol")
+        self._apply_view_mode()
+
+    def _apply_view_mode(self) -> None:
+        """按当前 view_mode 更新按钮文案、顶栏协议控件、采集是否解析。"""
+        mode = self.view_mode_var.get()
+        is_proto = mode == "protocol"
+
+        # 按钮显示当前模式名称
+        try:
+            if hasattr(self, "view_mode_btn") and self.view_mode_btn is not None:
+                self.view_mode_btn.configure(
+                    text="协议解析模式" if is_proto else "原始数据模式",
+                    style="CompactPrimary.TButton" if is_proto else "CompactDanger.TButton",
+                )
+        except Exception:
+            pass
+
+        # 协议相关控件显隐
+        for w in (
+            getattr(self, "_proto_label", None),
+            getattr(self, "product_combo", None),
+            getattr(self, "_import_btn", None),
+            getattr(self, "_view_proto_btn", None),
+        ):
+            if w is None:
+                continue
+            try:
+                if is_proto:
+                    w.pack(side="left", padx=(0, 4))  # 或按上面各自 padx
+                else:
+                    w.pack_forget()
+            except Exception:
+                pass
+
+        # 采集中：动态切换是否做协议解析（SerialCollector.raw_mode）
+        try:
+            if self.collector is not None:
+                self.collector.raw_mode = not is_proto
+        except Exception:
+            pass
+
+        self._set_status("协议解析模式" if is_proto else "原始数据模式（不解析）")
 
     def _on_topmost_change(self) -> None:
         """窗口置顶状态变化时同步到窗口属性并更新按钮样式。"""
@@ -2851,17 +3112,19 @@ class ProtocolParserApp:
 
         dlg = tk.Toplevel(self.root)
         dlg.title("添加串口")
-        dlg.geometry("380x200")
+        _dlg_w, _dlg_h = 520, 240
+        dlg.geometry(f"{_dlg_w}x{_dlg_h}")
         dlg.resizable(False, False)
         dlg.transient(self.root)
         dlg.grab_set()
 
-        x = self.root.winfo_x() + (self.root.winfo_width() - 380) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 200) // 2
+        x = self.root.winfo_x() + (self.root.winfo_width() - _dlg_w) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - _dlg_h) // 2
         dlg.geometry(f"+{x}+{y}")
 
         frm = ttk.Frame(dlg, padding=16)
         frm.pack(fill="both", expand=True)
+        frm.columnconfigure(1, weight=1)
 
         ttk.Label(frm, text="串口:").grid(row=0, column=0, sticky="w", pady=4)
         port_display_list = []
@@ -2872,12 +3135,28 @@ class ProtocolParserApp:
             else:
                 port_display_list.append(p["device"])
 
+        import re
+        def _com_sort_key(item: str):
+            m = re.match(r"^COM(\d+)", str(item), re.I)
+            if m:
+                return (0, int(m.group(1)))
+            return (1, str(item).lower())
+        port_display_list.sort(key=_com_sort_key)
+
         port_var = tk.StringVar()
-        port_combo = ttk.Combobox(frm, textvariable=port_var, values=port_display_list, width=30, state="readonly")
+        port_combo = ttk.Combobox(frm, textvariable=port_var, values=port_display_list, width=48, state="readonly")
         _enable_full_combobox(port_combo)
         port_combo.grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=4)
         if port_display_list:
             port_combo.current(0)
+
+        import re
+        def _com_sort_key(item: str):
+            m = re.match(r"^COM(\d+)", str(item), re.I)
+            if m:
+                return (0, int(m.group(1)))
+            return (1, str(item).lower())
+        port_display_list.sort(key=_com_sort_key)
 
         ttk.Label(frm, text="波特率:").grid(row=1, column=0, sticky="w", pady=4)
         baudrate_var = tk.StringVar(value="115200")
@@ -2961,15 +3240,23 @@ class ProtocolParserApp:
         """
         ports = SerialCollector.list_ports()
         display_list = []
-        devices = []
         for p in ports:
             dev = p.get("device", "")
-            devices.append(dev)
             desc = p.get("description", "")
             if desc and desc != dev:
                 display_list.append(f"{dev} - {desc}")
             else:
                 display_list.append(dev)
+
+        import re
+        def _com_sort_key(item: str):
+            m = re.match(r"^COM(\d+)", str(item), re.I)
+            if m:
+                return (0, int(m.group(1)))
+            return (1, str(item).lower())
+
+        display_list.sort(key=_com_sort_key)
+        devices = [d.split(" - ")[0].strip() for d in display_list]
 
         changed = devices != getattr(self, "_last_port_devices", None)
         self._last_port_devices = devices
@@ -2982,6 +3269,14 @@ class ProtocolParserApp:
             self.port_combo["values"] = display_list
         except Exception:
             return changed
+
+        if changed:
+            try:
+                self._sync_port_combo_popdown(display_list)
+            except Exception:
+                pass
+            if not silent:
+                self._set_status(f"串口列表已更新（{len(display_list)} 个）")
 
         if not display_list:
             if cur:
@@ -3023,6 +3318,56 @@ class ProtocolParserApp:
             # 热插拔：轻提示，不打扰
             self._set_status(f"串口列表已更新（{len(ports)} 个）")
         return changed
+
+    def _sync_port_combo_popdown(self, display_list: list) -> None:
+        """串口列表变化时：强制收起下拉并刷新 values。
+        ttk 展开中的 Listbox 无法可靠热更新，收起后再打开即为最新。
+        """
+        combo = getattr(self, "port_combo", None)
+        if combo is None:
+            return
+        # 1) 尽量关掉已展开的下拉
+        try:
+            combo.tk.call("ttk::combobox::Unpost", combo)
+        except Exception:
+            try:
+                combo.event_generate("<Escape>")
+            except Exception:
+                pass
+        try:
+            combo.event_generate("<FocusOut>")
+        except Exception:
+            pass
+
+        # 2) 写入新列表
+        try:
+            combo["values"] = list(display_list)
+        except Exception:
+            return
+
+        # 3) 尽量保留当前选中项
+        cur = (self.port_var.get() or "").strip()
+        cur_dev = cur.split(" - ")[0].strip() if cur else ""
+        if not display_list:
+            return
+        keep_idx = -1
+        if cur_dev:
+            for i, disp in enumerate(display_list):
+                if (
+                    disp == cur
+                    or disp == cur_dev
+                    or disp.startswith(cur_dev + " ")
+                    or disp.startswith(cur_dev + "-")
+                ):
+                    keep_idx = i
+                    break
+        try:
+            if keep_idx >= 0:
+                combo.current(keep_idx)
+            elif not cur:
+                combo.current(0)
+        except Exception:
+            pass
 
     def _start_port_watch(self) -> None:
         """启动串口热插拔轮询（启动时先刷一次，之后定时扫）。"""
@@ -3211,7 +3556,7 @@ class ProtocolParserApp:
                 on_frame=on_frame,
                 on_error=on_error,
                 on_raw=on_raw,
-                raw_mode=is_ascii,
+                raw_mode=(is_ascii or self.view_mode_var.get() == "raw"),
                 on_tx_sent=on_tx_sent,
             )
             self.collector.start()
