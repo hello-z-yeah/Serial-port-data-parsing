@@ -41,7 +41,7 @@ class SessionSnapshot:
 
     # 串口配置
     port: str = ""
-    baudrate: int = 115200
+    baudrate: int = 9600
     bytesize: int = 8
     stopbits: float = 1.0
 

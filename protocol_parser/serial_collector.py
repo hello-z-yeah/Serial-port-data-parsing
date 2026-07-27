@@ -148,7 +148,7 @@ class SerialCollector:
 
     cfg: dict
     port: str
-    baudrate: int = 115200
+    baudrate: int = 9600
     bytesize: int = 8
     stopbits: float = 1.0  # 允许 1.5（之前是 int，兼容 GUI 下拉"1 / 1.5 / 2"）
     direction: str | None = None

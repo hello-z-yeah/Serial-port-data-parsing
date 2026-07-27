@@ -354,6 +354,20 @@ class ThemeManager:
         ttk_style.configure("Danger.TButton", padding=(8, 3), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
         ttk_style.map("Danger.TButton",
                       background=[("active", "#A5211C"), ("pressed", "#A5211C"), ("disabled", border)])
+        ttk_style.configure(
+            "Success.TButton",
+            padding=(8, 3),
+            relief="flat",
+            background=palette["success"],   # light: #0F7B0F  dark: #54C361
+            foreground="#FFFFFF",
+            font=("Microsoft YaHei UI", 10, "bold"),
+            borderwidth=0,
+        )
+        ttk_style.map(
+            "Success.TButton",
+            background=[("active", "#0A5A0A"), ("pressed", "#0A5A0A"), ("disabled", border)],
+            foreground=[("disabled", text_dis)],
+        )
         # 紧凑型切换按钮（置顶、保存原始数据等）
         ttk_style.configure("CompactPrimary.TButton", padding=(6, 2), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
         ttk_style.map("CompactPrimary.TButton",
@@ -682,6 +696,8 @@ class RoundedButton(tk.Canvas):
             "Danger.TButton":      (error,   "#A5211C",    "#FFFFFF"),
             "CompactPrimary.TButton": (primary, primary_hover, "#FFFFFF"),
             "CompactDanger.TButton":  (error,   "#A5211C",    "#FFFFFF"),
+            # 深绿 HEX
+            "Success.TButton":     ("#0F7B0F", "#0A5A0A", "#FFFFFF"),
         }
 
     @classmethod
@@ -996,7 +1012,7 @@ def _bind_text_widget_menu(widget, readonly: bool = False) -> None:
 
 
 class ProtocolParserApp:
-    def __init__(self, root: tk.Tk, monitor_port: str | None = None, monitor_baud: int = 115200):
+    def __init__(self, root: tk.Tk, monitor_port: str | None = None, monitor_baud: int = 9600):
         self.root = root
         self.root.title(f"串口协议解析工具 v{VERSION}")
         # ============================================================
@@ -1126,7 +1142,7 @@ class ProtocolParserApp:
 
         # 串口相关
         self.port_var = tk.StringVar()
-        self.baudrate_var = tk.StringVar(value="115200")  # 改成StringVar支持手动输入自定义波特率
+        self.baudrate_var = tk.StringVar(value="9600")  # 改成StringVar支持手动输入自定义波特率
         self.bytesize_var = tk.IntVar(value=8)
         self.stopbits_var = tk.IntVar(value=1)
         self.collector: SerialCollector | None = None
@@ -1738,12 +1754,12 @@ class ProtocolParserApp:
     def _build_serial_config_panel(self, parent: tk.Misc) -> None:
         theme = self.theme
 
-        # 标题行：左「串口配置」+ 右四按钮（与标题同一行）
+        # 标题控件（稍后作为 LabelFrame 的 labelwidget，整块只占 serial_frame 的 row=0）
         _cfg_hdr = ttk.Frame(parent)
+
         ttk.Label(_cfg_hdr, text="串口配置", style="TLabelframe.Label").pack(
             side="left", padx=(0, 12)
         )
-
         self.send_panel_btn = RoundedButton(
             _cfg_hdr, text="打开指令发送界面", style="Toolbar.TButton",
             command=self._safe(self._toggle_send_panel),
@@ -1761,49 +1777,30 @@ class ProtocolParserApp:
             command=self._safe(self._choose_log),
         ).pack(side="left", padx=(0, 4))
 
+        # 中间拉开，右侧贴右
         ttk.Frame(_cfg_hdr).pack(side="left", expand=True, fill="x")
-
-        # 右侧：发送方 + HEX + 自动滚动（与「串口配置」同一行）
-        ttk.Frame(_cfg_hdr, width=12).pack(side="left")  # 小间距；若要贴最右可再加 expand
-
-        ttk.Label(_cfg_hdr, text="发送方：", style="TLabelframe.Label").pack(side="left")
-        sender_frame = ttk.Frame(_cfg_hdr)
-        sender_frame.pack(side="left", padx=(4, 12))
-        self.sender_module_rb = ttk.Radiobutton(
-            sender_frame, text="模组发送", variable=self.serial_sender_var,
-            value="模组发送", style="TRadiobutton",
-        )
-        self.sender_module_rb.pack(side="left", padx=(0, 8))
-        self.sender_mcu_rb = ttk.Radiobutton(
-            sender_frame, text="MCU发送", variable=self.serial_sender_var,
-            value="MCU发送", style="TRadiobutton",
-        )
-        self.sender_mcu_rb.pack(side="left")
 
         _auto_chk = ttk.Checkbutton(
             _cfg_hdr, text="自动滚动", variable=self.autoscroll_var, style="TCheckbutton",
         )
-        _auto_chk.pack(side="left")
+        _auto_chk.pack(side="left", padx=(0, 8))
         Tooltip(_auto_chk, "有新报文时自动滚动到底部；关闭后可方便回看历史。", theme)
 
-        # 置顶：标题栏最右侧
         try:
             self.topmost_btn = RoundedButton(
                 _cfg_hdr, text="置顶", style="CompactPrimary.TButton",
                 command=self._safe(self._toggle_topmost_btn), width=4,
             )
-            self.topmost_btn.pack(side="left", padx=(8, 0))
+            self.topmost_btn.pack(side="left", padx=(2, 0))
             Tooltip(self.topmost_btn, "窗口始终置顶 / 取消置顶。", theme)
             self.topmost_chk = self.topmost_btn
         except Exception:
             self.topmost_btn = None
             self.topmost_chk = None
 
-        ttk.Frame(_cfg_hdr).pack(side="left", expand=True, fill="x")
-
+        # 整块只占 parent 的 row=0（row=1 留给实时数据 content_row，不要动）
         frame = ttk.LabelFrame(parent, labelwidget=_cfg_hdr, padding=(12, 10))
-        frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
-        # 串口配置面板整体按 grid 展开：每行 1 列，权重=0（fixed height，不参与挤压）
+        frame.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
         frame.columnconfigure(0, weight=1)
 
         def _hint(parent: tk.Misc, text_: str) -> ttk.Label:
@@ -1863,17 +1860,17 @@ class ProtocolParserApp:
             command=self._safe(self._toggle_hex_format_btn),
             width=10,
         )
-        self.hex_btn.grid(row=0, column=198, sticky="e", padx=(8, 4))
+        self.hex_btn.grid(row=0, column=198, sticky="e", padx=(4, 4))
         Tooltip(self.hex_btn, "在 HEX / ASCII 显示之间切换。", theme)
         self.hex_chk = self.hex_btn  # 兼容旧引用
         self._sync_hex_btn_style()
 
         # 收起/展开
         self.serial_config_toggle_btn = RoundedButton(
-            row1, text="收起 ▲", width=5, style="Toolbar.TButton",
+            row1, text="收起 ▲", width=7, style="CompactPrimary.TButton",
             command=self._safe(self._toggle_serial_config_panel),
         )
-        self.serial_config_toggle_btn.grid(row=0, column=199, sticky="e", padx=(6, 2))
+        self.serial_config_toggle_btn.grid(row=0, column=199, sticky="e", padx=(4, 4))
         Tooltip(
             self.serial_config_toggle_btn,
             "收起/展开串口配置高级选项（保存原始数据等）。",
@@ -1884,8 +1881,9 @@ class ProtocolParserApp:
         self.start_btn = RoundedButton(
             row1, text="● 开始监控", style="Primary.TButton",
             command=self._safe(self._toggle_serial),
+            width=12,
         )
-        self.start_btn.grid(row=0, column=200, sticky="e", padx=(0, 4))
+        self.start_btn.grid(row=0, column=200, sticky="e", padx=(4, 4))
         Tooltip(
             self.start_btn,
             "开始监控（绿灯）/ 停止监控（灰）。\n快捷键：F5 开始 / Shift+F5 停止。",
@@ -1934,6 +1932,8 @@ class ProtocolParserApp:
 
         # 根据持久化/默认折叠状态应用显示
         self._apply_serial_config_collapsed()
+        self._view_mode_locked = False
+        self._on_hex_format_change()
 
     def _toggle_serial_config_panel(self) -> None:
         """切换串口配置面板的折叠/展开状态。"""
@@ -1969,7 +1969,8 @@ class ProtocolParserApp:
 
         try:
             self.serial_config_toggle_btn.config(
-                text="展开 ▼" if collapsed else "收起 ▲"
+                text="展开 ▼" if collapsed else "收起 ▲",
+                style="CompactPrimary.TButton" if collapsed else "CompactDanger.TButton",
             )
         except Exception:
             pass
@@ -2020,6 +2021,17 @@ class ProtocolParserApp:
             command=self._safe(self._show_protocol),
         )
         self._view_proto_btn.pack(side="left", padx=(0, 4))
+
+        self.sender_btn = RoundedButton(
+            _hdr,
+            text="模组发送",
+            style="Primary.TButton",
+            command=self._safe(self._toggle_sender_btn),
+            width=8,
+        )
+        self.sender_btn.pack(side="left", padx=(4, 4))
+        Tooltip(self.sender_btn, "切换发送方：模组发送 / MCU发送（仅 HEX 格式有效）。", theme)
+        self._sync_sender_btn_style()
 
         realtime_frame = ttk.LabelFrame(parent, labelwidget=_hdr, padding=6)
         realtime_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
@@ -2791,25 +2803,61 @@ class ProtocolParserApp:
         if not hasattr(self, "hex_btn") or self.hex_btn is None:
             return
         if bool(self.hex_format_var.get()):
-            # HEX：蓝色主按钮
-            self.hex_btn.configure(text="HEX 格式", style="Primary.TButton", width=10)
+            # HEX：绿色主按钮
+            self.hex_btn.configure(text="HEX 格式", style="Success.TButton", width=10)
         else:
             # ASCII：红色
             self.hex_btn.configure(text="ASCII 格式", style="Danger.TButton", width=10)
 
 
     def _on_hex_format_change(self) -> None:
-        """HEX/ASCII 切换：ASCII 模式下禁用发送方选择，HEX 模式下恢复可用。"""
+        """HEX/ASCII 切换：
+        - ASCII：禁用发送方；强制「原始数据模式」；禁止切到协议解析
+        - HEX：恢复发送方；允许在协议解析 / 原始数据之间切换
+        """
         hex_checked = bool(self.hex_format_var.get())
+        is_ascii = not hex_checked
+
+        # 发送方：仅 HEX 可用
         try:
             state_txt = "normal" if hex_checked else "disabled"
-            for item in (self.sender_module_rb, self.sender_mcu_rb):
-                try:
-                    item.configure(state=state_txt)
-                except Exception:
-                    pass
+            # 发送方按钮：仅 HEX 可点
+            self._sender_locked = is_ascii
+            if hasattr(self, "sender_btn") and self.sender_btn is not None:
+                if is_ascii:
+                    self.sender_btn.configure(style="Toolbar.TButton")  # 灰显
+                else:
+                    self._sync_sender_btn_style()
         except Exception:
             pass
+
+        if is_ascii:
+            # 强制原始数据模式
+            try:
+                self.view_mode_var.set("raw")
+            except Exception:
+                pass
+            try:
+                self._apply_view_mode()
+            except Exception:
+                pass
+            # 按钮不可点（视觉 + 逻辑）
+            try:
+                if hasattr(self, "view_mode_btn") and self.view_mode_btn is not None:
+                    self.view_mode_btn.configure(
+                        text="原始数据模式",
+                        style="Toolbar.TButton",  # 灰显
+                    )
+                    self._view_mode_locked = True
+            except Exception:
+                self._view_mode_locked = True
+        else:
+            # HEX：解锁模式切换
+            self._view_mode_locked = False
+            try:
+                self._apply_view_mode()  # 按当前 view_mode 恢复按钮样式
+            except Exception:
+                pass
 
     def _clear_output(self) -> None:
         """清空输出与统计。"""
@@ -2822,6 +2870,9 @@ class ProtocolParserApp:
 
     def _toggle_view_mode(self) -> None:
         """在「协议解析模式」与「原始数据模式」之间切换。"""
+        # ASCII 格式下锁定为原始数据，不允许切协议解析
+        if getattr(self, "_view_mode_locked", False) or (not bool(self.hex_format_var.get())):
+            return
         cur = self.view_mode_var.get()
         if cur == "protocol":
             self.view_mode_var.set("raw")
@@ -2839,7 +2890,8 @@ class ProtocolParserApp:
             if hasattr(self, "view_mode_btn") and self.view_mode_btn is not None:
                 self.view_mode_btn.configure(
                     text="协议解析模式" if is_proto else "原始数据模式",
-                    style="CompactPrimary.TButton" if is_proto else "CompactDanger.TButton",
+                    # style="CompactPrimary.TButton" if is_proto else "CompactDanger.TButton",
+                    style="CompactDanger.TButton" if is_proto else "Success.TButton",
                 )
         except Exception:
             pass
@@ -2850,6 +2902,7 @@ class ProtocolParserApp:
             getattr(self, "product_combo", None),
             getattr(self, "_import_btn", None),
             getattr(self, "_view_proto_btn", None),
+            getattr(self, "sender_btn", None),  # 新增
         ):
             if w is None:
                 continue
@@ -3161,7 +3214,7 @@ class ProtocolParserApp:
         port_display_list.sort(key=_com_sort_key)
 
         ttk.Label(frm, text="波特率:").grid(row=1, column=0, sticky="w", pady=4)
-        baudrate_var = tk.StringVar(value="115200")
+        baudrate_var = tk.StringVar(value="9600")
         baud_combo = ttk.Combobox(
             frm, textvariable=baudrate_var,
             values=[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000, 3000000, 4000000, 5000000, 6000000],
@@ -3569,7 +3622,7 @@ class ProtocolParserApp:
 
         self.is_collecting = True
         try:
-            self.start_btn.configure(text="✓ 停止监控", style="Danger.TButton")
+            self.start_btn.configure(text="✓ 停止监控", style="Danger.TButton", width=12)
         except Exception:
             self.start_btn.configure(text="停止监控")
         mode_label = "ASCII" if is_ascii else "HEX"
@@ -3600,6 +3653,29 @@ class ProtocolParserApp:
                 direction = "response"
         self.collector.direction = direction
         self._set_status(f"已切换发送方: {self.serial_sender_var.get()}")
+
+    def _toggle_sender_btn(self) -> None:
+        """模组发送 ↔ MCU发送。"""
+        if getattr(self, "_sender_locked", False):
+            return
+        cur = self.serial_sender_var.get()
+        if cur == "模组发送":
+            self.serial_sender_var.set("MCU发送")
+        else:
+            self.serial_sender_var.set("模组发送")
+        self._sync_sender_btn_style()
+        try:
+            self._on_serial_sender_change()
+        except Exception:
+            pass
+
+    def _sync_sender_btn_style(self) -> None:
+        if not hasattr(self, "sender_btn") or self.sender_btn is None:
+            return
+        if self.serial_sender_var.get() == "模组发送":
+            self.sender_btn.configure(text="模组发送", style="Success.TButton", width=8)
+        else:
+            self.sender_btn.configure(text="MCU发送", style="Danger.TButton", width=8)
 
     def _on_hex_format_sync_collector(self, *args) -> None:
         """HEX格式勾选变化，更新UI显示/隐藏发送方，并同步raw_mode/direction给collector。"""
@@ -3776,7 +3852,7 @@ class ProtocolParserApp:
             pass
         self.save_raw_count = 0
         try:
-            self.start_btn.configure(text="○ 开始监控", style="Primary.TButton")
+            self.start_btn.configure(text="○ 开始监控", style="Primary.TButton", width=12)
         except Exception:
             self.start_btn.configure(text="开始监控")
         self._set_status("已停止")
@@ -4192,13 +4268,13 @@ def main():
     args, _unknown = ap.parse_known_args()
 
     monitor_port = None
-    monitor_baud = 115200
+    monitor_baud = 9600
     if args.monitor is not None:
         monitor_port = args.monitor[0]
         try:
             monitor_baud = int(args.monitor[1])
         except Exception:
-            monitor_baud = 115200
+            monitor_baud = 9600
 
 # Windows 高 DPI：先声明感知，再创建窗口，避免字体被拉伸发虚
     if sys.platform == "win32":

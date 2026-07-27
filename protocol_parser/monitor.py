@@ -418,7 +418,7 @@ def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
 def run_serial_mode(
     cfg: dict,
     port: str,
-    baudrate: int = 115200,
+    baudrate: int = 9600,
     detail: bool = False,
     logger: ResultLogger | None = None,
 ) -> int:

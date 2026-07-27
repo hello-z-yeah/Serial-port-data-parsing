@@ -329,7 +329,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_serial = sub.add_parser("serial", help="串口实时采集并解析")
     p_serial.add_argument("--product", required=True, help="产品名称")
     p_serial.add_argument("--port", required=True, help="串口名称（如 COM3）")
-    p_serial.add_argument("--baudrate", type=int, default=115200, help="波特率（默认 115200）")
+    p_serial.add_argument("--baudrate", type=int, default=9600, help="波特率（默认 9600")
     p_serial.add_argument("--detail", action="store_true", help="详细输出模式（默认紧凑）")
     p_serial.add_argument("--log", default=None, help="保存日志到文件")
     p_serial.add_argument("--log-mode", choices=["compact", "detail"], default="compact", help="日志格式（默认紧凑）")
