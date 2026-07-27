@@ -2,7 +2,7 @@
 Author: 侯泽钰 houzeyu@xiaojiang.cc
 Date: 2026-07-20 12:36:35
 LastEditors: 侯泽钰 houzeyu@xiaojiang.cc
-LastEditTime: 2026-07-27 11:12:54
+LastEditTime: 2026-07-27 14:03:42
 FilePath: \Serial-port-data-parsing\protocol_parser\__init__.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
@@ -38,7 +38,7 @@ from .monitor import ResultLogger, run_paste_mode, run_serial_mode, list_serial_
 from .cli import find_protocol_file
 
 # 版本号（三位语义化）。发新版只改这里：主版本.次版本.修订号
-VERSION: str = "1.1.1"
+VERSION: str = "1.1.2"
 # 发布用 GitHub 仓库（owner/repo）
 UPDATER_GITHUB_REPO: str = "hello-z-yeah/Serial-port-data-parsing"
 
