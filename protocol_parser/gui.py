@@ -737,8 +737,12 @@ class RoundedButton(tk.Canvas):
         text_w = f.measure(text) if text else 0
         # width 参数作为最小字符宽度，但始终保证能容纳实际文本
         base_w = max((width * char_w) if width else 0, text_w)
-        pad_x = 14 if style.startswith("Compact") else 18
-        pad_y = 4 if style.startswith("Compact") else 5
+        if style.startswith("Compact"):
+            pad_x, pad_y = 10, 4
+        elif style.startswith("Toolbar"):
+            pad_x, pad_y = 8, 3   # 工具条按钮更扁更窄
+        else:
+            pad_x, pad_y = 14, 5
         self._pad_x = pad_x
         self._pad_y = pad_y
         cw = base_w + pad_x * 2
@@ -1780,12 +1784,6 @@ class ProtocolParserApp:
         # 中间拉开，右侧贴右
         ttk.Frame(_cfg_hdr).pack(side="left", expand=True, fill="x")
 
-        _auto_chk = ttk.Checkbutton(
-            _cfg_hdr, text="自动滚动", variable=self.autoscroll_var, style="TCheckbutton",
-        )
-        _auto_chk.pack(side="left", padx=(0, 8))
-        Tooltip(_auto_chk, "有新报文时自动滚动到底部；关闭后可方便回看历史。", theme)
-
         try:
             self.topmost_btn = RoundedButton(
                 _cfg_hdr, text="置顶", style="CompactPrimary.TButton",
@@ -1867,7 +1865,7 @@ class ProtocolParserApp:
 
         # 收起/展开
         self.serial_config_toggle_btn = RoundedButton(
-            row1, text="收起 ▲", width=7, style="CompactPrimary.TButton",
+            row1, text="收起 ▲", width=4, style="Primary.TButton",
             command=self._safe(self._toggle_serial_config_panel),
         )
         self.serial_config_toggle_btn.grid(row=0, column=199, sticky="e", padx=(4, 4))
@@ -1970,7 +1968,7 @@ class ProtocolParserApp:
         try:
             self.serial_config_toggle_btn.config(
                 text="展开 ▼" if collapsed else "收起 ▲",
-                style="CompactPrimary.TButton" if collapsed else "CompactDanger.TButton",
+                style="Primary.TButton" if collapsed else "Danger.TButton",
             )
         except Exception:
             pass
@@ -1997,9 +1995,20 @@ class ProtocolParserApp:
             text="清空",
             style="Toolbar.TButton",
             command=self._safe(self._clear_output),
-            width=4,
+            width=3,
         )
         self.clear_output_btn.pack(side="left", padx=(0, 4))
+
+        self.autoscroll_btn = RoundedButton(
+            _hdr,
+            text="自动滚动",
+            style="Success.TButton",
+            command=self._safe(self._toggle_autoscroll_btn),
+            width=6,
+        )
+        self.autoscroll_btn.pack(side="left", padx=(0, 4))
+        Tooltip(self.autoscroll_btn, "有新报文时自动滚动到底部；关闭后可方便回看历史。", theme)
+        self._sync_autoscroll_btn_style()
 
         # —— 产品协议（从顶栏红框移来）——
         ttk.Separator(_hdr, orient="vertical").pack(side="left", fill="y", padx=8, pady=2)
@@ -2017,8 +2026,9 @@ class ProtocolParserApp:
         )
         self._import_btn.pack(side="left", padx=(0, 4))
         self._view_proto_btn = RoundedButton(
-            _hdr, text="查看协议", style="Toolbar.TButton",
+            _hdr, text="查看协议", style="Toolbar.TButton", 
             command=self._safe(self._show_protocol),
+            width=5,
         )
         self._view_proto_btn.pack(side="left", padx=(0, 4))
 
@@ -2027,7 +2037,7 @@ class ProtocolParserApp:
             text="模组发送",
             style="Primary.TButton",
             command=self._safe(self._toggle_sender_btn),
-            width=8,
+            width=4,
         )
         self.sender_btn.pack(side="left", padx=(4, 4))
         Tooltip(self.sender_btn, "切换发送方：模组发送 / MCU发送（仅 HEX 格式有效）。", theme)
@@ -3676,6 +3686,21 @@ class ProtocolParserApp:
             self.sender_btn.configure(text="模组发送", style="Success.TButton", width=8)
         else:
             self.sender_btn.configure(text="MCU发送", style="Danger.TButton", width=8)
+
+    def _toggle_autoscroll_btn(self) -> None:
+        """自动滚动开/关。"""
+        self.autoscroll_var.set(not bool(self.autoscroll_var.get()))
+        self._sync_autoscroll_btn_style()
+
+    def _sync_autoscroll_btn_style(self) -> None:
+        if not hasattr(self, "autoscroll_btn") or self.autoscroll_btn is None:
+            return
+        if bool(self.autoscroll_var.get()):
+            # 开启：绿
+            self.autoscroll_btn.configure(text="自动滚动", style="Success.TButton", width=8)
+        else:
+            # 关闭：灰
+            self.autoscroll_btn.configure(text="手动滚动", style="Toolbar.TButton", width=8)
 
     def _on_hex_format_sync_collector(self, *args) -> None:
         """HEX格式勾选变化，更新UI显示/隐藏发送方，并同步raw_mode/direction给collector。"""
