@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from queue import Queue, Empty
 import time
 from collections import deque
 import tkinter as tk
@@ -1195,6 +1196,10 @@ class ProtocolParserApp:
         self.save_raw_max_size = max(1, self.raw_auto_split_mb_var.get()) * 1024 * 1024
         self.save_raw_count = 0
         self._save_raw_active = False
+        self._save_raw_as_ascii = True
+        self._save_q: Queue = Queue(maxsize=5000)
+        self._save_writer_thread = None
+        self._save_writer_stop = threading.Event()
         self._save_raw_buf: list[str] = []
         self._save_raw_buf_bytes: int = 0
         self._save_raw_last_flush: float = 0.0
@@ -3823,8 +3828,129 @@ class ProtocolParserApp:
         self._on_save_raw_toggle()
         # trace_add 会自动触发 _update_save_raw_btn_style()
 
+    def _write_raw_data(self, data: bytes, ts: float, prefix: str = "") -> None:
+        """接收侧只入队，禁止 write/flush、禁止读 Tk 变量。"""
+        if not self._save_raw_active:
+            return
+        try:
+            self._save_q.put_nowait((ts, prefix, data))
+        except Exception:
+            pass
+
+    def _start_save_writer(self) -> None:
+        self._stop_save_writer()
+        self._save_writer_stop.clear()
+        try:
+            while True:
+                self._save_q.get_nowait()
+        except Exception:
+            pass
+        self._save_writer_thread = threading.Thread(
+            target=self._save_writer_loop, daemon=True, name="save-raw-writer"
+        )
+        self._save_writer_thread.start()
+
+    def _stop_save_writer(self) -> None:
+        self._save_writer_stop.set()
+        t = self._save_writer_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=1.5)
+        self._save_writer_thread = None
+        # 排空队列（丢掉旧 None / 残留数据）
+        try:
+            while True:
+                self._save_q.get_nowait()
+        except Exception:
+            pass
+
+    def _save_writer_loop(self) -> None:
+        """后台写盘：8KB 或 100ms 批量写；禁止每包 flush。"""
+        buf: list[str] = []
+        buf_n = 0
+        last = time.time()
+        BATCH_N = 8 * 1024    # 8KB
+        BATCH_T = 0.1         # 100ms
+
+        def flush() -> None:
+            nonlocal buf, buf_n, last
+            if not buf:
+                last = time.time()
+                return
+            f = self.save_raw_file
+            if not f:
+                buf, buf_n = [], 0
+                last = time.time()
+                return
+            try:
+                s = "".join(buf)
+                f.write(s)          # 批量写
+                f.flush()   # 必须有：否则中途打开 .dat 是空的
+                # 不在这里高频 flush；停止保存时 close 会带落盘
+                self.save_raw_current_size += len(s)
+            except Exception as e:
+                try:
+                    self._ui_queue.append(("serial_error", (f"保存错误: {e}",)))
+                except Exception:
+                    pass
+            buf, buf_n = [], 0
+            last = time.time()
+            # 50MB 分包 → 回主线程换文件
+            try:
+                if self.save_raw_current_size >= self.save_raw_max_size:
+                    self.save_raw_count += 1
+                    self.root.after(0, self._safe(self._open_save_raw_file))
+            except Exception:
+                pass
+
+        while not self._save_writer_stop.is_set():
+            try:
+                item = self._save_q.get(timeout=0.1)
+            except Empty:
+                if buf and (time.time() - last) >= BATCH_T:
+                    flush()
+                continue
+            if item is None:
+                continue   # 忽略毒丸，不退出
+            ts, prefix, data = item
+            try:
+                ts_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                if self._save_raw_as_ascii:
+                    text = data.decode("utf-8", errors="replace")
+                    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+                        if line.strip():
+                            s = f"[{ts_str}] {prefix}{line}\n"
+                            buf.append(s)
+                            buf_n += len(s)
+                else:
+                    hex_str = " ".join(f"{b:02X}" for b in data)
+                    s = f"[{ts_str}] {prefix}{hex_str}\n"
+                    buf.append(s)
+                    buf_n += len(s)
+            except Exception:
+                continue
+            if buf_n >= BATCH_N or (time.time() - last) >= BATCH_T:
+                flush()
+
+        # Event 置位后：把剩余缓冲写完
+        flush()
+        f = self.save_raw_file
+        if f:
+            try:
+                f.flush()
+            except Exception:
+                pass
+
+        flush()
+        # 停止时再 flush 一次文件
+        f = self.save_raw_file
+        if f:
+            try:
+                f.flush()
+            except Exception:
+                pass
+
     def _open_save_raw_file(self) -> None:
-        """打开原始数据保存文件。"""
+        """主线程：打开文件并启动写线程。"""
         self._close_save_raw_file()
         save_dir = Path(self.save_raw_path_var.get())
         if not save_dir.exists():
@@ -3835,10 +3961,7 @@ class ProtocolParserApp:
                 self.save_raw_enabled_var.set(False)
                 return
 
-        filename = self.save_raw_filename_var.get().strip()
-        if not filename:
-            filename = "serial_data"
-
+        filename = self.save_raw_filename_var.get().strip() or "serial_data"
         if self.save_raw_count > 0:
             filepath = save_dir / f"{filename}_{self.save_raw_count:03d}.dat"
         else:
@@ -3847,81 +3970,27 @@ class ProtocolParserApp:
         try:
             self.save_raw_file = open(filepath, "w", encoding="utf-8")
             self.save_raw_current_size = 0
+            self._save_raw_as_ascii = not bool(self.hex_format_var.get())
             self._save_raw_active = True
+            self._start_save_writer()   # 内部会排空队列再启动
             self._set_status(f"正在保存原始数据: {filepath}")
         except Exception as e:
             messagebox.showerror("文件错误", f"无法打开文件: {e}")
             self.save_raw_enabled_var.set(False)
+            self._save_raw_active = False
 
     def _close_save_raw_file(self) -> None:
-        """关闭原始数据保存文件。"""
-        try:
-            self._flush_save_raw_buf()
-        except Exception:
-            pass
+        """主线程：停写线程并关闭文件。"""
         self._save_raw_active = False
+        self._stop_save_writer()
         if self.save_raw_file:
             try:
+                self.save_raw_file.flush()
                 self.save_raw_file.close()
             except Exception:
                 pass
             self.save_raw_file = None
             self.save_raw_current_size = 0
-
-    def _write_raw_data(self, data: bytes, ts: float, prefix: str = "") -> None:
-        """只追加到内存缓冲；满 16KB 或超过 0.5s 才真正写盘。"""
-        if not self._save_raw_active or not self.save_raw_file:
-            return
-        try:
-            if not self.save_raw_enabled_var.get():
-                return
-        except Exception:
-            return
-
-        try:
-            ts_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            is_ascii = not bool(self.hex_format_var.get())
-            parts: list[str] = []
-            if is_ascii:
-                text = data.decode("utf-8", errors="replace")
-                for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-                    if line.strip():
-                        parts.append(f"[{ts_str}] {prefix}{line}\n")
-            else:
-                hex_str = " ".join(f"{b:02X}" for b in data)
-                parts.append(f"[{ts_str}] {prefix}{hex_str}\n")
-            if not parts:
-                return
-
-            s = "".join(parts)
-            self._save_raw_buf.append(s)
-            self._save_raw_buf_bytes += len(s)
-
-            now = time.time()
-            if self._save_raw_last_flush <= 0:
-                self._save_raw_last_flush = now
-
-            need = (
-                self._save_raw_buf_bytes >= self._SAVE_RAW_BATCH_BYTES
-                or (now - self._save_raw_last_flush) >= self._SAVE_RAW_BATCH_SEC
-            )
-            if need:
-                self._flush_save_raw_buf()
-
-            if self.save_raw_current_size >= self.save_raw_max_size:
-                self._flush_save_raw_buf()
-                self.save_raw_count += 1
-                self._open_save_raw_file()
-        except Exception as e:
-            try:
-                self._ui_queue.append(("serial_error", (f"保存错误: {e}",)))
-            except Exception:
-                pass
-            try:
-                self.save_raw_enabled_var.set(False)
-            except Exception:
-                pass
-            self._close_save_raw_file()
 
     def _flush_save_raw_buf(self) -> None:
         buf = getattr(self, "_save_raw_buf", None)
@@ -4293,6 +4362,7 @@ class ProtocolParserApp:
             for i in range(0, len(tokens), 16):
                 parts.append(f"[{ts_str}] {' '.join(tokens[i:i+16])}\n")
         else:
+            ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
             text = data.decode("utf-8", errors="replace")
             for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
                 if not line:
@@ -4300,7 +4370,7 @@ class ProtocolParserApp:
                 printable = "".join(
                     ch if (32 <= ord(ch) < 127 or ch == "\t") else "." for ch in line
                 )
-                parts.append(printable + "\n")
+                parts.append(f"[{ts_str}] {printable}\n")
         if parts:
             self._enqueue_display_text("".join(parts))
 
