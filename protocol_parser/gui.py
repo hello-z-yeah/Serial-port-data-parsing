@@ -1042,8 +1042,6 @@ class ProtocolParserApp:
             pass
         RoundedButton.init_styles(self.theme)
         self.root.configure(bg=self.theme.get("app_bg"))
-        # 显示模式变量
-        self.view_mode_var = tk.StringVar(value="protocol")  # protocol | raw
 
 
         # ============================================================
@@ -1197,6 +1195,11 @@ class ProtocolParserApp:
         self.save_raw_max_size = max(1, self.raw_auto_split_mb_var.get()) * 1024 * 1024
         self.save_raw_count = 0
         self._save_raw_active = False
+        self._save_raw_buf: list[str] = []
+        self._save_raw_buf_bytes: int = 0
+        self._save_raw_last_flush: float = 0.0
+        self._SAVE_RAW_BATCH_BYTES = 32768   # 16KB 再写
+        self._SAVE_RAW_BATCH_SEC = 1.0       # 或最多 0.5 秒写一次
         # 每当 raw 自动分割 MB 数调整，同步更新 save_raw_max_size
         self.raw_auto_split_mb_var.trace_add("write", lambda *_a: self._refresh_max_raw_size())
 
@@ -1211,7 +1214,12 @@ class ProtocolParserApp:
         self._tx_cycle_job: str | None = None
         self.tx_auto_crc8_var = tk.BooleanVar(value=False)
         # 显示缓冲区限制（防止内存溢出）
-        self.max_display_lines = 50000
+        self.max_display_lines = 3000 # 原 50000，trim 会极卡
+        self._disp_buf: list[str] = []          # 待刷到 Text 的文本
+        self._disp_line_count = 0
+        self._disp_flush_job = None
+        self._DISP_FLUSH_MS = 150
+        self.max_display_lines = 2000
 
         # 主布局
         self._build_ui()
@@ -1232,6 +1240,52 @@ class ProtocolParserApp:
             self._apply_monitor_args()
 
     # ---------- 错误上报：friendly 弹窗 + error.log，绝不裸抛堆栈 ----------
+    def _enqueue_display_text(self, text: str) -> None:
+        """只入显示缓冲，不直接操作 Text（串口再快也不卡 UI）。"""
+        if not text:
+            return
+        self._disp_buf.append(text)
+        # 缓冲过大时丢最旧，保最新
+        if len(self._disp_buf) > 400:
+            self._disp_buf = self._disp_buf[-200:]
+        if self._disp_flush_job is None:
+            self._disp_flush_job = self.root.after(
+                self._DISP_FLUSH_MS, self._safe(self._flush_display_buf)
+            )
+
+    def _flush_display_buf(self) -> None:
+        # return   # ← 临时加：完全不往 Text 画
+        """定时把缓冲一次性写入 Text。"""
+        self._disp_flush_job = None
+        if not self._disp_buf:
+            return
+        text = "".join(self._disp_buf)
+        self._disp_buf.clear()
+        self._disp_line_count = 0
+        try:
+            self.serial_text.configure(state="normal")
+            # 行数粗控，避免每次 index() 扫全表
+            add_lines = text.count("\n")
+            if self._disp_line_count + add_lines > self.max_display_lines:
+                cut = (self._disp_line_count + add_lines) - self.max_display_lines
+                cut = max(cut, self.max_display_lines // 5)
+                try:
+                    self.serial_text.delete("1.0", f"{cut}.0")
+                    self._disp_line_count = max(0, self._disp_line_count - cut)
+                except Exception:
+                    pass
+            self.serial_text.insert("end", text, "field")
+            self._disp_line_count += add_lines
+            if self.autoscroll_var.get():
+                self.serial_text.see("end")
+            self.serial_text.configure(state="disabled")
+        except Exception:
+            pass
+        # 若刷新期间又有新数据，继续约一次
+        if self._disp_buf and self._disp_flush_job is None:
+            self._disp_flush_job = self.root.after(
+                self._DISP_FLUSH_MS, self._safe(self._flush_display_buf)
+            )
 
     def _report_error(
         self,
@@ -2925,13 +2979,20 @@ class ProtocolParserApp:
                 pass
 
         # 采集中：动态切换是否做协议解析（SerialCollector.raw_mode）
-        try:
-            if self.collector is not None:
-                self.collector.raw_mode = not is_proto
-        except Exception:
-            pass
+        self._sync_collector_raw_mode()
 
         self._set_status("协议解析模式" if is_proto else "原始数据模式（不解析）")
+
+    def _sync_collector_raw_mode(self) -> None:
+            """ASCII 或「原始数据模式」→ 不解析；仅 HEX + 协议解析模式才解析。"""
+            if not getattr(self, "collector", None):
+                return
+            try:
+                is_ascii = not bool(self.hex_format_var.get())
+                is_raw_view = self.view_mode_var.get() == "raw"
+                self.collector.raw_mode = is_ascii or is_raw_view
+            except Exception:
+                pass
 
     def _on_topmost_change(self) -> None:
         """窗口置顶状态变化时同步到窗口属性并更新按钮样式。"""
@@ -3625,6 +3686,7 @@ class ProtocolParserApp:
                 on_tx_sent=on_tx_sent,
             )
             self.collector.start()
+            self._sync_collector_raw_mode()
         except Exception as e:  # noqa: BLE001
             self._report_error("串口打开失败", e)
             self._set_status("就绪")
@@ -3707,8 +3769,8 @@ class ProtocolParserApp:
         self._on_hex_format_change()
         if not self.collector:
             return
+        self._sync_collector_raw_mode()
         is_ascii = not bool(self.hex_format_var.get())
-        self.collector.raw_mode = is_ascii
         # 同步 direction：ASCII不用direction
         direction = None
         if not is_ascii:
@@ -3793,6 +3855,10 @@ class ProtocolParserApp:
 
     def _close_save_raw_file(self) -> None:
         """关闭原始数据保存文件。"""
+        try:
+            self._flush_save_raw_buf()
+        except Exception:
+            pass
         self._save_raw_active = False
         if self.save_raw_file:
             try:
@@ -3803,7 +3869,7 @@ class ProtocolParserApp:
             self.save_raw_current_size = 0
 
     def _write_raw_data(self, data: bytes, ts: float, prefix: str = "") -> None:
-        """写入原始数据到文件，超过50MB自动分割。prefix 可写"TX "来区分发送。"""
+        """只追加到内存缓冲；满 16KB 或超过 0.5s 才真正写盘。"""
         if not self._save_raw_active or not self.save_raw_file:
             return
         try:
@@ -3815,35 +3881,77 @@ class ProtocolParserApp:
         try:
             ts_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             is_ascii = not bool(self.hex_format_var.get())
+            parts: list[str] = []
             if is_ascii:
                 text = data.decode("utf-8", errors="replace")
-                lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-                total = 0
-                for line in lines:
+                for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
                     if line.strip():
-                        full = f"[{ts_str}] {prefix}{line}\n"
-                        self.save_raw_file.write(full)
-                        total += len(full)
-                self.save_raw_file.flush()
-                self.save_raw_current_size += total
+                        parts.append(f"[{ts_str}] {prefix}{line}\n")
             else:
                 hex_str = " ".join(f"{b:02X}" for b in data)
-                line = f"[{ts_str}] {prefix}{hex_str}\n"
-                self.save_raw_file.write(line)
-                self.save_raw_file.flush()
-                self.save_raw_current_size += len(line)
+                parts.append(f"[{ts_str}] {prefix}{hex_str}\n")
+            if not parts:
+                return
+
+            s = "".join(parts)
+            self._save_raw_buf.append(s)
+            self._save_raw_buf_bytes += len(s)
+
+            now = time.time()
+            if self._save_raw_last_flush <= 0:
+                self._save_raw_last_flush = now
+
+            need = (
+                self._save_raw_buf_bytes >= self._SAVE_RAW_BATCH_BYTES
+                or (now - self._save_raw_last_flush) >= self._SAVE_RAW_BATCH_SEC
+            )
+            if need:
+                self._flush_save_raw_buf()
 
             if self.save_raw_current_size >= self.save_raw_max_size:
+                self._flush_save_raw_buf()
                 self.save_raw_count += 1
                 self._open_save_raw_file()
         except Exception as e:
-            if self._save_raw_active and self.save_raw_file:
-                try:
-                    self._report_error("保存错误", e)
-                    self.save_raw_enabled_var.set(False)
-                except Exception:
-                    pass
-                self._close_save_raw_file()
+            try:
+                self._ui_queue.append(("serial_error", (f"保存错误: {e}",)))
+            except Exception:
+                pass
+            try:
+                self.save_raw_enabled_var.set(False)
+            except Exception:
+                pass
+            self._close_save_raw_file()
+
+    def _flush_save_raw_buf(self) -> None:
+        buf = getattr(self, "_save_raw_buf", None)
+        if not buf or not self.save_raw_file:
+            return
+        try:
+            data = "".join(buf)
+            self.save_raw_file.write(data)
+            # 不每包 flush；这里最多 200ms 一次
+            self.save_raw_file.flush()
+            self.save_raw_current_size += len(data)
+        except Exception:
+            raise
+        finally:
+            delay = 50 if self._ui_queue else 100
+            self.root.after(delay, self._process_ui_queue)
+
+    def _flush_save_raw_buf(self) -> None:
+        if not self._save_raw_buf or not self.save_raw_file:
+            self._save_raw_buf = []
+            self._save_raw_buf_bytes = 0
+            self._save_raw_last_flush = time.time()
+            return
+        data = "".join(self._save_raw_buf)
+        self._save_raw_buf.clear()
+        self._save_raw_buf_bytes = 0
+        self._save_raw_last_flush = time.time()
+        self.save_raw_file.write(data)
+        self.save_raw_file.flush()  # 仅在批量时 flush 一次
+        self.save_raw_current_size += len(data)
 
     def _stop_serial(self) -> None:
         """停止串口监控。"""
@@ -3885,30 +3993,53 @@ class ProtocolParserApp:
     # ---------- UI 队列处理 ----------
 
     def _process_ui_queue(self) -> None:
-        """处理 UI 队列。最外层统一兜底，不允许堆栈冒泡到 Tk mainloop。"""
+        MAX_PER_TICK = 80
+        MAX_QUEUE = 1500
         try:
-            while self._ui_queue:
-                kind, args = self._ui_queue.popleft()
+            q = self._ui_queue
+            while len(q) > MAX_QUEUE:
+                q.popleft()
+
+            raw_buf = bytearray()
+            raw_ts = time.time()
+            n = 0
+            while q and n < MAX_PER_TICK:
+                kind, args = q.popleft()
+                n += 1
                 try:
-                    if kind == "serial_frame":
+                    if kind == "serial_raw":
+                        data, ts = args
+                        raw_buf.extend(data)
+                        raw_ts = ts
+                    elif kind == "serial_frame":
+                        if raw_buf:
+                            self._display_raw_data(bytes(raw_buf), raw_ts)
+                            raw_buf.clear()
                         self.rx_frame_count += 1
                         self._display_serial_frame(*args)
-                    elif kind == "serial_raw":
-                        self._display_raw_data(*args)
                     elif kind == "serial_tx":
+                        if raw_buf:
+                            self._display_raw_data(bytes(raw_buf), raw_ts)
+                            raw_buf.clear()
                         self._display_serial_tx(*args)
                     elif kind == "serial_error":
+                        if raw_buf:
+                            self._display_raw_data(bytes(raw_buf), raw_ts)
+                            raw_buf.clear()
                         self._display_serial_error(*args)
-                except Exception as e:  # noqa: BLE001
-                    # 单条消息失败不影响其他消息，只弹友好提示 + 日志
+                except Exception as e:
                     self._report_error(f"UI 处理失败（{kind}）", e)
-        except Exception as e:  # noqa: BLE001  顶层：死循环绝对不能崩
+
+            if raw_buf:
+                self._display_raw_data(bytes(raw_buf), raw_ts)
+        except Exception as e:
             try:
                 _log_error_to_disk(e)
             except Exception:
                 pass
         finally:
-            self.root.after(100, self._process_ui_queue)
+            delay = 20 if self._ui_queue else 80
+            self.root.after(delay, self._process_ui_queue)
 
     def _format_raw_display_serial(self, raw_hex: str) -> str:
         """串口原始数据显示格式转换。"""
@@ -4154,34 +4285,24 @@ class ProtocolParserApp:
         self._stop_serial()
 
     def _display_raw_data(self, data: bytes, ts: float) -> None:
-        """显示原始数据：ASCII 模式按文本显示；HEX 模式按十六进制字符串显示。"""
-        self.serial_text.configure(state="normal")
-        self._trim_display()
-        ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
         is_hex_mode = bool(self.hex_format_var.get())
+        parts: list[str] = []
         if is_hex_mode:
-            # HEX 模式：把原始字节转成 "41 42 43" 形式，按行宽 16 字节折行显示
-            hex_str = " ".join(f"{b:02X}" for b in data)
-            # 按 16 字节（48 字符 + 15 空格 = 47 字符）折行
-            tokens = hex_str.split(" ")
-            chunk_size = 16
-            for i in range(0, len(tokens), chunk_size):
-                chunk = " ".join(tokens[i:i + chunk_size])
-                self.serial_text.insert("end", f"[{ts_str}] ", "ts")
-                self.serial_text.insert("end", f"{chunk}\n", "raw")
+            ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
+            tokens = [f"{b:02X}" for b in data]
+            for i in range(0, len(tokens), 16):
+                parts.append(f"[{ts_str}] {' '.join(tokens[i:i+16])}\n")
         else:
-            # ASCII 模式：直接按文本显示（不可打印字符替换为 .）
             text = data.decode("utf-8", errors="replace")
-            lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-            for line in lines:
-                if line == "":
+            for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+                if not line:
                     continue
-                printable = "".join(ch if (32 <= ord(ch) < 127 or ch in ("\t",)) else "." for ch in line)
-                self.serial_text.insert("end", f"[{ts_str}] ", "ts")
-                self.serial_text.insert("end", f"{printable}\n", "field")
-        if self.autoscroll_var.get():
-            self.serial_text.see("end")
-        self.serial_text.configure(state="disabled")
+                printable = "".join(
+                    ch if (32 <= ord(ch) < 127 or ch == "\t") else "." for ch in line
+                )
+                parts.append(printable + "\n")
+        if parts:
+            self._enqueue_display_text("".join(parts))
 
     def _trim_display(self) -> None:
         """清理显示缓冲区，防止内存溢出。"""
