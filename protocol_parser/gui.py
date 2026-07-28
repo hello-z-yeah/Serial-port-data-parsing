@@ -3706,7 +3706,7 @@ class ProtocolParserApp:
         # 无协议时状态栏追加提示，告知用户当前为通用串口模式（原始数据直显）
         proto_tag = " (无协议·通用模式)" if no_protocol else ""
 
-        if self.save_raw_enabled_var.get():
+        if self.save_raw_enabled_var.get() and not self._save_raw_active:
             self._open_save_raw_file()
             self._set_status(f"监控中: {port} @ {baudrate} ({mode_label}){proto_tag} - 保存原始数据")
         else:
@@ -3794,7 +3794,8 @@ class ProtocolParserApp:
         if path:
             self.save_raw_path_var.set(path)
             if self.save_raw_enabled_var.get() and self.is_collecting:
-                self._open_save_raw_file()
+                if not self._save_raw_active:
+                    self._open_save_raw_file()
 
     def _on_save_raw_toggle(self) -> None:
         """切换保存原始数据开关。"""
@@ -3806,7 +3807,7 @@ class ProtocolParserApp:
                     self._update_save_raw_btn_style()
                     return
                 self.save_raw_path_var.set(path)
-            if self.is_collecting:
+            if self.is_collecting and not self._save_raw_active:
                 self._open_save_raw_file()
                 self._set_status(f"原始数据保存开启: {self.save_raw_path_var.get()}")
         else:
@@ -3826,10 +3827,9 @@ class ProtocolParserApp:
         """点击保存原始数据按钮时切换状态。"""
         self.save_raw_enabled_var.set(not self.save_raw_enabled_var.get())
         self._on_save_raw_toggle()
-        # trace_add 会自动触发 _update_save_raw_btn_style()
 
     def _write_raw_data(self, data: bytes, ts: float, prefix: str = "") -> None:
-        """接收侧只入队，禁止 write/flush、禁止读 Tk 变量。"""
+        """串口线程只入队，禁止写文件、禁止读 Tk 变量。"""
         if not self._save_raw_active:
             return
         try:
@@ -3856,7 +3856,6 @@ class ProtocolParserApp:
         if t is not None and t.is_alive():
             t.join(timeout=1.5)
         self._save_writer_thread = None
-        # 排空队列（丢掉旧 None / 残留数据）
         try:
             while True:
                 self._save_q.get_nowait()
@@ -3864,12 +3863,12 @@ class ProtocolParserApp:
             pass
 
     def _save_writer_loop(self) -> None:
-        """后台写盘：8KB 或 100ms 批量写；禁止每包 flush。"""
+        """后台写盘：8KB 或 100ms 批量写 + flush。"""
         buf: list[str] = []
         buf_n = 0
         last = time.time()
-        BATCH_N = 8 * 1024    # 8KB
-        BATCH_T = 0.1         # 100ms
+        BATCH_N = 8 * 1024
+        BATCH_T = 0.1
 
         def flush() -> None:
             nonlocal buf, buf_n, last
@@ -3883,9 +3882,8 @@ class ProtocolParserApp:
                 return
             try:
                 s = "".join(buf)
-                f.write(s)          # 批量写
-                f.flush()   # 必须有：否则中途打开 .dat 是空的
-                # 不在这里高频 flush；停止保存时 close 会带落盘
+                f.write(s)
+                f.flush()
                 self.save_raw_current_size += len(s)
             except Exception as e:
                 try:
@@ -3894,11 +3892,10 @@ class ProtocolParserApp:
                     pass
             buf, buf_n = [], 0
             last = time.time()
-            # 50MB 分包 → 回主线程换文件
             try:
                 if self.save_raw_current_size >= self.save_raw_max_size:
                     self.save_raw_count += 1
-                    self.root.after(0, self._safe(self._open_save_raw_file))
+                    self.root.after(0, self._safe(self._rotate_save_raw_file))
             except Exception:
                 pass
 
@@ -3910,7 +3907,7 @@ class ProtocolParserApp:
                     flush()
                 continue
             if item is None:
-                continue   # 忽略毒丸，不退出
+                continue
             ts, prefix, data = item
             try:
                 ts_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -3931,17 +3928,7 @@ class ProtocolParserApp:
             if buf_n >= BATCH_N or (time.time() - last) >= BATCH_T:
                 flush()
 
-        # Event 置位后：把剩余缓冲写完
         flush()
-        f = self.save_raw_file
-        if f:
-            try:
-                f.flush()
-            except Exception:
-                pass
-
-        flush()
-        # 停止时再 flush 一次文件
         f = self.save_raw_file
         if f:
             try:
@@ -3950,8 +3937,10 @@ class ProtocolParserApp:
                 pass
 
     def _open_save_raw_file(self) -> None:
-        """主线程：打开文件并启动写线程。"""
-        self._close_save_raw_file()
+        """开始/继续存储。已在存储则不重新打开，避免截断文件。"""
+        if self._save_raw_active and self.save_raw_file is not None:
+            return
+
         save_dir = Path(self.save_raw_path_var.get())
         if not save_dir.exists():
             try:
@@ -3968,19 +3957,49 @@ class ProtocolParserApp:
             filepath = save_dir / f"{filename}.dat"
 
         try:
-            self.save_raw_file = open(filepath, "w", encoding="utf-8")
-            self.save_raw_current_size = 0
+            # 追加模式：不会清空已有内容
+            self.save_raw_file = open(filepath, "a", encoding="utf-8")
+            try:
+                self.save_raw_current_size = filepath.stat().st_size
+            except Exception:
+                self.save_raw_current_size = 0
             self._save_raw_as_ascii = not bool(self.hex_format_var.get())
             self._save_raw_active = True
-            self._start_save_writer()   # 内部会排空队列再启动
+            self._start_save_writer()
             self._set_status(f"正在保存原始数据: {filepath}")
         except Exception as e:
             messagebox.showerror("文件错误", f"无法打开文件: {e}")
             self.save_raw_enabled_var.set(False)
             self._save_raw_active = False
+            self.save_raw_file = None
+
+    def _rotate_save_raw_file(self) -> None:
+        """超过大小限制时换新文件（主线程）。"""
+        self._close_save_raw_file()
+        save_dir = Path(self.save_raw_path_var.get())
+        try:
+            save_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        filename = self.save_raw_filename_var.get().strip() or "serial_data"
+        filepath = save_dir / f"{filename}_{self.save_raw_count:03d}.dat"
+        try:
+            self.save_raw_file = open(filepath, "w", encoding="utf-8")
+            self.save_raw_current_size = 0
+            self._save_raw_as_ascii = not bool(self.hex_format_var.get())
+            self._save_raw_active = True
+            self._start_save_writer()
+            self._set_status(f"原始数据已分割，新文件: {filepath}")
+        except Exception as e:
+            try:
+                self._ui_queue.append(("serial_error", (f"分割文件失败: {e}",)))
+            except Exception:
+                pass
+            self.save_raw_enabled_var.set(False)
+            self._save_raw_active = False
 
     def _close_save_raw_file(self) -> None:
-        """主线程：停写线程并关闭文件。"""
+        """停止存储：停写线程并关闭文件。"""
         self._save_raw_active = False
         self._stop_save_writer()
         if self.save_raw_file:
@@ -3990,7 +4009,6 @@ class ProtocolParserApp:
             except Exception:
                 pass
             self.save_raw_file = None
-            self.save_raw_current_size = 0
 
     def _flush_save_raw_buf(self) -> None:
         buf = getattr(self, "_save_raw_buf", None)
@@ -4384,14 +4402,21 @@ class ProtocolParserApp:
     # ---------- 日志 ----------
 
     def _choose_log(self) -> None:
-        """选择日志文件。"""
-        if self.log_file:
-            if messagebox.askyesno("日志", "已开启日志记录，要关闭吗？"):
-                self.log_file.close()
-                self.log_file = None
-                self.log_path = None
-                self._set_status("日志已关闭")
+        """把实时数据区当前内容导出到用户选择的文件（一次性，不影响原始数据存储）。"""
+        try:
+            if hasattr(self, "_flush_display_buf"):
+                self._flush_display_buf()
+        except Exception:
+            pass
+
+        try:
+            content = self.serial_text.get("1.0", "end-1c")
+        except Exception:
+            content = ""
+        if not content.strip():
+            messagebox.showinfo("保存日志", "当前实时数据为空，没有可保存的内容。")
             return
+
         path = filedialog.asksaveasfilename(
             defaultextension=".log",
             filetypes=[("日志文件", "*.log"), ("文本文件", "*.txt"), ("所有文件", "*.*")],
@@ -4400,13 +4425,16 @@ class ProtocolParserApp:
         if not path:
             return
         try:
-            self.log_path = Path(path)
-            self.log_file = self.log_path.open("a", encoding="utf-8")
-            self.log_file.write(f"\n===== 开始记录 {datetime.now().isoformat(timespec='seconds')} =====\n")
-            self.log_file.flush()
-            self._set_status(f"日志已开启: {path}")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"===== 导出时间 {datetime.now().isoformat(timespec='seconds')} =====\n")
+                f.write(content)
+                if not content.endswith("\n"):
+                    f.write("\n")
+                f.write(f"===== 结束（约 {content.count(chr(10)) + 1} 行） =====\n")
+            self._set_status(f"日志已保存: {path}")
+            messagebox.showinfo("保存日志", f"已保存到:\n{path}")
         except Exception as e:
-            messagebox.showerror("日志文件错误", str(e))
+            messagebox.showerror("保存失败", str(e))
 
     def _write_log(self, result: ParseResult, ts: float | None = None, direction: str = "RX") -> None:
         """写入日志。"""
