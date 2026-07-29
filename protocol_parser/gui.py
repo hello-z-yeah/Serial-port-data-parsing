@@ -29,7 +29,6 @@ if __package__ in (None, ""):
 
 from protocol_parser import (  # noqa: E402
     VERSION,
-    UPDATER_GITHUB_REPO,
     ParseResult,
     ProtocolError,
     classify_protocol_error,
@@ -47,15 +46,6 @@ from protocol_parser.session_snapshot import (  # noqa: E402
     load_snapshot,
     save_snapshot,
 )
-from protocol_parser.updater import (  # noqa: E402
-    UpdateInfo,
-    check_update as _updater_check,
-    download_exe as _updater_download,
-    verify_sha256 as _updater_verify,
-    prepare_update_and_quit as _updater_apply,
-    compute_sha256 as _updater_sha,
-)
-
 
 # ---------- 资源/数据路径（兼容 PyInstaller 单文件模式） ----------
 
@@ -370,17 +360,25 @@ class ThemeManager:
             foreground=[("disabled", text_dis)],
         )
         # 紧凑型切换按钮（置顶、保存原始数据等）
-        ttk_style.configure("CompactPrimary.TButton", padding=(6, 2), relief="flat", background=primary, foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
+        ttk_style.configure(
+            "CompactPrimary.TButton",
+            padding=(8, 3),
+            relief="flat",
+            background=primary,
+            foreground="#FFFFFF",
+            font=("Microsoft YaHei UI", 10, "bold"),
+            borderwidth=0,
+        )
         ttk_style.map("CompactPrimary.TButton",
                       background=[("active", primary_hover), ("pressed", primary_hover), ("disabled", border)],
                       foreground=[("disabled", text_dis)])
-        ttk_style.configure("CompactDanger.TButton", padding=(6, 2), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
+        ttk_style.configure("CompactDanger.TButton", padding=(8, 3), relief="flat", background=palette["error"], foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"), borderwidth=0)
         ttk_style.map("CompactDanger.TButton",
                       background=[("active", "#A5211C"), ("pressed", "#A5211C"), ("disabled", border)])
 
         # Entry / Combobox / Spinbox
         for s in ("TEntry", "TSpinbox", "TCombobox"):
-            ttk_style.configure(s, fieldbackground=surface, foreground=text, bordercolor=border, lightcolor=border, darkcolor=border, arrowsize=14)
+            ttk_style.configure(s, fieldbackground=surface, foreground=text, bordercolor=border, lightcolor=border, darkcolor=border, arrowsize=20)
             ttk_style.map(s,
                           fieldbackground=[("readonly", card_bg), ("disabled", app_bg)],
                           foreground=[("readonly", text), ("disabled", text_dis)],
@@ -400,8 +398,30 @@ class ThemeManager:
         ttk_style.configure("Toolbar.TCheckbutton", background=app_bg, foreground=text)
         ttk_style.configure("Toolbar.TRadiobutton", background=app_bg, foreground=text)
         ttk_style.configure("Toolbar.TLabel", background=app_bg, foreground=text)
-        ttk_style.configure("Toolbar.TButton", padding=(4, 2), font=("Microsoft YaHei UI", 10))
-
+        ttk_style.configure(
+            "Toolbar.TButton",
+            padding=(8, 3),
+            font=("Microsoft YaHei UI", 10, "bold"),
+        )
+        # 浅描边按钮（发送操作区用）
+        ttk_style.configure(
+            "Outline.TButton",
+            padding=(8, 3),
+            relief="solid",
+            borderwidth=1,
+            background=surface,
+            foreground=text,
+            bordercolor=border,
+            lightcolor=border,
+            darkcolor=border,
+            font=("Microsoft YaHei UI", 10),
+        )
+        ttk_style.map(
+            "Outline.TButton",
+            background=[("active", card_bg), ("pressed", border), ("disabled", app_bg)],
+            foreground=[("disabled", text_dis)],
+            bordercolor=[("active", primary), ("pressed", primary)],
+        )
         # PanedWindow：左右分栏之间的"分隔条"加宽，让左右大卡片之间更有层差感
         try:
             ttk_style.configure("TPanedwindow", background=app_bg, sashwidth=8, sashrelief="flat")
@@ -425,7 +445,45 @@ class ThemeManager:
         # StatusBar
         ttk_style.configure("Status.TFrame", background=palette["card_bg"] if self.style == "win11" else app_bg, relief="flat")
         ttk_style.configure("Status.TLabel", background=palette["card_bg"] if self.style == "win11" else app_bg, foreground=text_2)
-
+        
+        _send_font = ("Microsoft YaHei UI", 8)
+        # 紧凑按钮样式
+        ttk_style.configure(
+            "Send.TButton",
+            padding=(6, 1),
+            font=("Microsoft YaHei UI", 9),
+        )
+        _send_pad = (6, 2)
+        ttk_style.configure(
+            "SendOutline.TButton",
+            padding=_send_pad,
+            relief="solid",
+            borderwidth=1,
+            background=surface,
+            foreground=text,
+            bordercolor=border,
+            font=("Microsoft YaHei UI", 9),
+        )
+        ttk_style.map(
+            "SendOutline.TButton",
+            background=[("active", primary), ("pressed", primary_hover)],
+            foreground=[("active", "#FFFFFF"), ("pressed", "#FFFFFF")],
+        )
+        ttk_style.configure(
+            "SendSuccess.TButton",
+            padding=_send_pad,                 # 与关态相同
+            relief="solid",
+            borderwidth=1,                     # 与关态相同
+            background=palette["success"],
+            foreground="#FFFFFF",
+            bordercolor=palette["success"],
+            font=("Microsoft YaHei UI", 9),    # 开：变小
+        )
+        ttk_style.map(
+            "SendSuccess.TButton",
+            background=[("active", "#0A5A0A"), ("pressed", "#0A5A0A")],
+            foreground=[("active", "#FFFFFF"), ("pressed", "#FFFFFF")],
+        )
 
 # ---------- 通用：半透明气泡 Tooltip（替代括号小字说明） ----------
 
@@ -687,18 +745,19 @@ class RoundedButton(tk.Canvas):
         primary = theme.get("primary")
         primary_hover = theme.get("primary_hover")
         error = theme.get("error")
+        success = theme.get("success")   # ← 补这一行
         surface = theme.get("surface")
         text = theme.get("text")
 
         cls._STYLE_MAP = {
-            "TButton":             (surface, primary,    text),
-            "Toolbar.TButton":     (surface, primary,    text),
-            "Primary.TButton":     (primary, primary_hover, "#FFFFFF"),
-            "Danger.TButton":      (error,   "#A5211C",    "#FFFFFF"),
+            "TButton":                (surface, primary, text),
+            "Toolbar.TButton":        (surface, primary, text),
+            "Outline.TButton":        (surface, primary, text),
+            "Primary.TButton":        (primary, primary_hover, "#FFFFFF"),
+            "Success.TButton":        (success, "#0A5A0A", "#FFFFFF"),
+            "Danger.TButton":         (error, "#A5211C", "#FFFFFF"),
             "CompactPrimary.TButton": (primary, primary_hover, "#FFFFFF"),
-            "CompactDanger.TButton":  (error,   "#A5211C",    "#FFFFFF"),
-            # 深绿 HEX
-            "Success.TButton":     ("#0F7B0F", "#0A5A0A", "#FFFFFF"),
+            "CompactDanger.TButton":  (error, "#A5211C", "#FFFFFF"),
         }
 
     @classmethod
@@ -724,9 +783,9 @@ class RoundedButton(tk.Canvas):
         self._width_chars = width
 
         if font is None:
-            font = ("Microsoft YaHei UI", 8)
+            font = ("Microsoft YaHei UI", 10, "bold")
         elif isinstance(font, str):
-            font = (font, 8)
+            font = (font, 10, "bold")
         self._font_tuple = font
         
         bg_normal, _, fg = self._colors()
@@ -739,11 +798,11 @@ class RoundedButton(tk.Canvas):
         # width 参数作为最小字符宽度，但始终保证能容纳实际文本
         base_w = max((width * char_w) if width else 0, text_w)
         if style.startswith("Compact"):
-            pad_x, pad_y = 10, 4
+            pad_x, pad_y = 12, 5
         elif style.startswith("Toolbar"):
-            pad_x, pad_y = 8, 3   # 工具条按钮更扁更窄
+            pad_x, pad_y = 12, 5   # 与「关闭指令库」视觉高度接近
         else:
-            pad_x, pad_y = 14, 5
+            pad_x, pad_y = 12, 5
         self._pad_x = pad_x
         self._pad_y = pad_y
         cw = base_w + pad_x * 2
@@ -1048,7 +1107,7 @@ class ProtocolParserApp:
         # ============================================================
         #  窗口尺寸：统一约束 + 按上次会话恢复
         # ============================================================
-        _MIN_W, _MIN_H = 1730, 800
+        _MIN_W, _MIN_H = 1330, 800 
         try:
             self.root.minsize(_MIN_W, _MIN_H)
         except Exception:
@@ -1133,8 +1192,6 @@ class ProtocolParserApp:
             except Exception:
                 pass
 
-        # ---- 菜单栏：关于 / 检查更新 ----
-        self._build_menu_bar()
 
         self.cfg: dict | None = None
         self.product_var = tk.StringVar()
@@ -1218,16 +1275,32 @@ class ProtocolParserApp:
         self.tx_interval_ms_var = tk.IntVar(value=1000)
         self._tx_cycle_job: str | None = None
         self.tx_auto_crc8_var = tk.BooleanVar(value=False)
+        self.tx_crc_algo_var = tk.StringVar(value="ADD8")
+            # ---------- 指令库 ----------
+        self.CMDLIB_MAX = 40  # HEX / ASCII 各自上限
+        self.cmdlib_visible = True
+        self._cmdlib_mode = tk.StringVar(value="hex")  # hex | ascii
+        self._cmdlib_hex: list[dict] = []
+        self._cmdlib_ascii: list[dict] = []
+        self._cmdlib_cycle_hex: list[dict] = []
+        self._cmdlib_cycle_ascii: list[dict] = []
+        self._cmdlib_cycle_on = False
+        self._cmdlib_cycle_job = None
+        self._cmdlib_cycle_idx = 0
         # 显示缓冲区限制（防止内存溢出）
-        self.max_display_lines = 3000 # 原 50000，trim 会极卡
+        self.max_display_lines = 10000 # 原 50000，trim 会极卡
         self._disp_buf: list[str] = []          # 待刷到 Text 的文本
         self._disp_line_count = 0
         self._disp_flush_job = None
         self._DISP_FLUSH_MS = 150
-        self.max_display_lines = 2000
 
         # 主布局
         self._build_ui()
+        try:
+            self._cmdlib_load()
+            self._cmdlib_refresh_list()
+        except Exception:
+            pass
         # 设置左右分栏初始比例（右侧约 30%）——仅当面板默认显示时才在启动后恢复宽度
         self._load_protocols()
 
@@ -1259,38 +1332,45 @@ class ProtocolParserApp:
             )
 
     def _flush_display_buf(self) -> None:
-        # return   # ← 临时加：完全不往 Text 画
-        """定时把缓冲一次性写入 Text。"""
+        """定时把缓冲一次性写入 Text，并按 max_display_lines 裁剪。"""
         self._disp_flush_job = None
         if not self._disp_buf:
             return
         text = "".join(self._disp_buf)
         self._disp_buf.clear()
-        self._disp_line_count = 0
         try:
             self.serial_text.configure(state="normal")
-            # 行数粗控，避免每次 index() 扫全表
-            add_lines = text.count("\n")
-            if self._disp_line_count + add_lines > self.max_display_lines:
-                cut = (self._disp_line_count + add_lines) - self.max_display_lines
-                cut = max(cut, self.max_display_lines // 5)
+            self.serial_text.insert("end", text, "field")
+            # 用真实行数裁剪（不要每次把 _disp_line_count 清 0）
+            try:
+                line_count = int(self.serial_text.index("end-1c").split(".")[0])
+            except Exception:
+                line_count = 0
+            if line_count > self.max_display_lines:
+                cut = line_count - self.max_display_lines
+                cut = max(cut, self.max_display_lines // 10)
                 try:
-                    self.serial_text.delete("1.0", f"{cut}.0")
-                    self._disp_line_count = max(0, self._disp_line_count - cut)
+                    self.serial_text.delete("1.0", f"{cut + 1}.0")
                 except Exception:
                     pass
-            self.serial_text.insert("end", text, "field")
-            self._disp_line_count += add_lines
+                try:
+                    line_count = int(self.serial_text.index("end-1c").split(".")[0])
+                except Exception:
+                    line_count = max(0, line_count - cut)
+            self._disp_line_count = line_count
             if self.autoscroll_var.get():
                 self.serial_text.see("end")
             self.serial_text.configure(state="disabled")
         except Exception:
             pass
-        # 若刷新期间又有新数据，继续约一次
         if self._disp_buf and self._disp_flush_job is None:
             self._disp_flush_job = self.root.after(
                 self._DISP_FLUSH_MS, self._safe(self._flush_display_buf)
             )
+        try:
+            self._update_stats_bar()
+        except Exception:
+            pass
 
     def _report_error(
         self,
@@ -1351,242 +1431,30 @@ class ProtocolParserApp:
         return _wrapper
 
     # ---------- UI 构建 ----------
-    def _build_menu_bar(self) -> None:
-        """已移除「关于 / 检查更新」菜单项。"""
+
+    def _set_status(self, msg: str) -> None:
+        """状态栏左侧：固定信息 + 可选提示。"""
         try:
-            self.root.config(menu="")
+            self._update_left_status(tip=msg or "")
+        except Exception:
+            self.status_var.set(msg or "")
+        try:
+            self.root.update_idletasks()
         except Exception:
             pass
 
-    def _menu_about(self) -> None:
-        body = (
-            f"串口协议解析工具\n"
-            f"当前版本：v{VERSION}\n"
-            f"发布仓库：github.com/{UPDATER_GITHUB_REPO}\n\n"
-            f"—— 功能特性 ——\n"
-            "· 串口实时监控（HEX / ASCII）\n"
-            "· 导入 Word 协议文档，中文属性名和枚举解析\n"
-            "· 每个串口独立窗口进程，支持 6M / 自定义波特率\n"
-            "· 在线更新（菜单栏 → 检查更新）"
-        )
-        messagebox.showinfo(f"关于（v{VERSION}）", body, parent=self.root)
-
-    def _menu_check_update(self) -> None:
-        """手动菜单触发：检查更新 Toplevel（可后台线程下载，带进度条，可取消）。"""
-        win = tk.Toplevel(self.root)
-        win.title("检查更新")
-        win.geometry("520x300")
-        win.transient(self.root)
-        win.grab_set()
-        win.resizable(False, False)
-
-        ttk.Label(win, text=f"当前版本：v{VERSION}", font=("Microsoft YaHei", 10, "bold")).pack(
-            anchor="w", padx=14, pady=(14, 2)
-        )
-        latest_var = tk.StringVar(value="最新版本：检查中…")
-        ttk.Label(win, textvariable=latest_var).pack(anchor="w", padx=14, pady=(0, 6))
-
-        notes_txt = tk.Text(win, height=8, wrap="word", state="disabled")
-        notes_txt.pack(fill="both", expand=True, padx=14, pady=2)
-        _bind_text_widget_menu(notes_txt, readonly=True)
-
-        prog = ttk.Progressbar(win, orient="horizontal", mode="determinate")
-        prog.pack(fill="x", padx=14, pady=(6, 4))
-        prog_var = tk.StringVar(value="")
-        ttk.Label(win, textvariable=prog_var, anchor="w").pack(fill="x", padx=14)
-
-        btns = ttk.Frame(win)
-        btns.pack(fill="x", padx=14, pady=10)
-        check_btn = RoundedButton(btns, text="立即检查", command=lambda: self._dlg_check_now())
-        check_btn.pack(side="right")
-        update_btn = RoundedButton(btns, text="下载并更新", state="disabled")
-        update_btn.pack(side="right", padx=8)
-        close_btn = RoundedButton(btns, text="关闭", command=win.destroy)
-        close_btn.pack(side="right")
-
-        state: dict = {
-            "info": None,
-            "cancel": False,
-            "worker_thread": None,
-        }
-
-        def _set_status(s: str) -> None:
-            def _inner():
-                prog_var.set(s)
-
-            self.root.after(0, _inner)
-
-        def _set_notes(html: str) -> None:
-            def _inner():
-                notes_txt.config(state="normal")
-                notes_txt.delete("1.0", "end")
-                notes_txt.insert("1.0", html)
-                notes_txt.config(state="disabled")
-
-            self.root.after(0, _inner)
-
-        def _progress(dl: int, total: int) -> None:
-            if state["cancel"]:
-                # 无法中断 urllib 但至少不更新 UI
-                return
-            pct = int((dl / total) * 100) if total else 0
-            dl_mb = dl / (1024 * 1024)
-            total_mb = total / (1024 * 1024) if total else 0
-            def _inner():
-                prog.config(maximum=total if total else 100, value=dl if total else pct)
-                if total:
-                    prog_var.set(f"下载中：{pct:>3}%  ({dl_mb:5.1f} / {total_mb:5.1f} MB)")
-                else:
-                    prog_var.set(f"下载中…({dl_mb:5.1f} MB)")
-
-            self.root.after(0, _inner)
-
-        def _apply_update(path: str, sha_expected: str) -> None:
-            _set_status("正在校验文件…")
-            try:
-                sha_actual = _updater_sha(path)
-            except Exception as e:
-                self._report_error("更新失败", e, parent=win)
-                return
-            if sha_expected and sha_actual != sha_expected.lower():
-                msg = (
-                    "SHA256 校验不通过，已中止更新。\n"
-                    f"期望: {sha_expected}\n实际: {sha_actual}"
-                )
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
-                try:
-                    messagebox.showerror("更新失败", msg, parent=win)
-                except Exception:
-                    print(f"[更新失败] {msg}", file=sys.stderr)
-                _set_status("已取消（校验失败）")
-                update_btn.config(state="disabled")
-                return
-            ok = messagebox.askyesno(
-                "即将更新",
-                "下载完成，即将关闭当前程序并覆盖更新。\n确认立即更新吗？（更新后会自动重新启动，并尽量恢复当前的串口/协议配置）",
-                parent=win,
-            )
-            if not ok:
-                return
-
-            # 更新前：先保存偏好
-            try:
-                self._save_preferences()
-            except Exception:
-                pass
-
-            try:
-                _updater_apply(path, snapshot_path=None)  # 内部会 os._exit(0)
-            except Exception as e:
-                friendly, _ = classify_protocol_error(e)
-                log_path = _log_error_to_disk(e)
-                body = f"无法应用更新：{friendly}\n请手动关闭程序后，将新 EXE 覆盖到原位置。\n临时文件: {path}"
-                if log_path is not None:
-                    body += f"\n日志: {log_path}"
-                try:
-                    messagebox.showerror("更新失败", body, parent=win)
-                except Exception:
-                    print(f"[更新失败] {body}", file=sys.stderr)
-
-        def _download_worker(info: UpdateInfo) -> None:
-            try:
-                _set_status("开始下载新版本…")
-                # 临时下载目录：和旧 EXE 同目录，保证 update bat 同分区原子 move
-                if getattr(sys, "frozen", False):
-                    base_dir = Path(sys.executable).resolve().parent
-                else:
-                    base_dir = Path(__file__).resolve().parent.parent
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                dst = base_dir / f"Serial-port-data-parsing_update_{ts}.exe.tmp"
-                try:
-                    _updater_download(info.download_url, str(dst), progress_cb=_progress, timeout=3600.0)
-                except Exception as e:
-                    if state["cancel"]:
-                        _set_status("已取消下载")
-                    else:
-                        _log_error_to_disk(e)
-                        friendly, _ = classify_protocol_error(e)
-                        _set_status(f"下载失败：{friendly}")
-                        self.root.after(
-                            0,
-                            lambda: self._report_error("下载失败", e, parent=win),
-                        )
-                    return
-                _apply_update(str(dst), info.sha256_expected)
-            except Exception as e:  # noqa: BLE001  后台线程绝对不能裸抛
-                _log_error_to_disk(e)
-                friendly, _ = classify_protocol_error(e)
-                _set_status(f"更新失败：{friendly}")
-                self.root.after(
-                    0,
-                    lambda: self._report_error("更新失败", e, parent=win),
-                )
-
-        def _start_download() -> None:
-            info: UpdateInfo | None = state["info"]
-            if not info or not info.has_new:
-                return
-            if state["worker_thread"] and state["worker_thread"].is_alive():
-                return
-            state["cancel"] = False
-            update_btn.config(state="disabled", text="下载中…")
-            t = threading.Thread(target=_download_worker, args=(info,), daemon=True)
-            state["worker_thread"] = t
-            t.start()
-
-        def _check_worker() -> None:
-            try:
-                _set_status("正在访问 GitHub Releases…")
-                info = _updater_check(VERSION, UPDATER_GITHUB_REPO, timeout=15.0)
-            except Exception as e:
-                info = UpdateInfo(has_new=False, current_version=VERSION)
-                _log_error_to_disk(e)
-                _set_status("检查失败")
-                self.root.after(
-                    0,
-                    lambda: self._report_error("检查更新失败", e, parent=win),
-                )
-                return
-            state["info"] = info
-
-            def _apply():
-                if info.has_new:
-                    latest_var.set(f"最新版本：{info.latest_version}  ✨ 发现新版本")
-                    notes = f"更新说明：\n{info.release_notes or '（暂无更新说明）'}\n\n"
-                    notes += f"下载地址：\n{info.download_url}\n"
-                    if info.sha256_expected:
-                        notes += f"\nSHA256: {info.sha256_expected}\n"
-                    _set_notes(notes)
-                    update_btn.config(state="normal", text="下载并更新")
-                    _set_status("点击「下载并更新」开始更新")
-                else:
-                    latest_var.set(f"最新版本：{info.latest_version or '（检查不到）'}")
-                    _set_notes("当前已是最新版本，无需更新。")
-                    update_btn.config(state="disabled")
-                    _set_status("当前已是最新版本")
-
-            self.root.after(0, _apply)
-
-        def _check_now() -> None:
-            if state["worker_thread"] and state["worker_thread"].is_alive():
-                return
-            latest_var.set("最新版本：检查中…")
-            _set_notes("")
-            t = threading.Thread(target=_check_worker, daemon=True)
-            state["worker_thread"] = t
-            t.start()
-
-        self._dlg_check_now = _check_now  # type: ignore[attr-defined]
-        update_btn.config(command=_start_download)
-
-        # 打开窗口立即触发一次「检查中…」（由用户手动触发，符合模式 A：不启动就不检查）
-        # 这里不自动检查，用户点「立即检查」才开始
-        latest_var.set("最新版本：请点击「立即检查」")
-        _set_status("尚未开始检查")
-        _set_notes("")
+    def _update_left_status(self, tip: str = "") -> None:
+        port_disp = (self.port_var.get() or "").strip()
+        port = port_disp.split(" - ")[0].strip() if port_disp else "未选串口"
+        baud = (self.baudrate_var.get() or "").strip() or "-"
+        if getattr(self, "_save_raw_active", False):
+            save_s = "存储中"
+        elif hasattr(self, "save_raw_enabled_var") and bool(self.save_raw_enabled_var.get()):
+            save_s = "待存储"
+        else:
+            save_s = "未存储"
+        base = f"{port}  |  {baud}  |  {save_s}"
+        self.status_var.set(f"{base}  ·  {tip}" if tip else base)
 
     def _build_ui(self) -> None:
         # ============================================================
@@ -1670,32 +1538,58 @@ class ProtocolParserApp:
         self.serial_frame.configure(padding=(0, 0, 0, 4))
 
         self._build_serial_config_panel(self.serial_frame)
+        self._adapt_serial_w = None
+        self.root.bind("<Configure>", self._safe(self._adapt_serial_row_widths), add="+")
+        self.root.after(80, self._safe(self._adapt_serial_row_widths))
 
-        # 下方：实时数据（左，自适应） + 指令发送（右，固定宽度，不可拖）
-        self.SEND_PANEL_WIDTH = 600
+        # 下方：日志（上）+ 指令发送（底，整宽横条）
+        self.SEND_PANEL_HEIGHT = 180
 
         self.content_row = ttk.Frame(self.serial_frame)
         self.content_row.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
-        self.content_row.columnconfigure(0, weight=1)   # 左侧拉伸
-        self.content_row.columnconfigure(1, weight=0)   # 右侧固定
-        self.content_row.rowconfigure(0, weight=1)
+        self.content_row.columnconfigure(0, weight=1)
+        self.content_row.columnconfigure(1, weight=0)
+        self.content_row.rowconfigure(0, weight=0)
+        self.content_row.rowconfigure(1, weight=1)
+        self.content_row.rowconfigure(2, weight=0)
 
-        # 左侧：实时数据
+        # 第 0 行：工具条
+        self.rt_toolbar_host = ttk.Frame(self.content_row)
+        self.rt_toolbar_host.grid(
+            row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(4, 0)
+        )
+
+        # 第 1 行左：日志
         self.realtime_container = ttk.Frame(self.content_row)
-        self.realtime_container.grid(row=0, column=0, sticky="nsew")
+        self.realtime_container.grid(row=1, column=0, sticky="nsew")
         self.realtime_container.columnconfigure(0, weight=1)
         self.realtime_container.rowconfigure(0, weight=1)
-        self.realtime_container.configure(padding=(4, 4, 2, 0))
-        self._build_serial_panel(self.realtime_container)
+        self.realtime_container.configure(padding=(4, 0, 2, 0))
 
-        # 右侧：固定宽度外壳（grid_propagate=False 锁死宽度）
-        self.send_outer = tk.Frame(
+        # 第 1 行右：指令库（默认隐藏，不要 grid）
+        self.cmdlib_outer = tk.Frame(
             self.content_row,
-            width=self.SEND_PANEL_WIDTH,
+            width=560,  # 指令库宽度
             bg=self.theme.get("app_bg"),
             highlightthickness=0,
         )
-        self.send_outer.grid(row=0, column=1, sticky="ns")
+        self.cmdlib_outer.grid_propagate(False)
+        self.cmdlib_outer.columnconfigure(0, weight=1)
+        self.cmdlib_outer.rowconfigure(0, weight=1)
+        self._build_cmd_library_panel(self.cmdlib_outer)
+        self.cmdlib_visible = False
+        # 注意：这里不要 grid，也不要 grid_remove
+
+        # 第 2 行：底部发送（整宽）
+        self.send_outer = tk.Frame(
+            self.content_row,
+            height=self.SEND_PANEL_HEIGHT,
+            bg=self.theme.get("app_bg"),
+            highlightthickness=0,
+        )
+        self.send_outer.grid(
+            row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(4, 6)
+        )
         self.send_outer.grid_propagate(False)
         self.send_outer.columnconfigure(0, weight=1)
         self.send_outer.rowconfigure(0, weight=1)
@@ -1704,28 +1598,34 @@ class ProtocolParserApp:
         self.send_frame.grid(row=0, column=0, sticky="nsew")
         self.send_frame.columnconfigure(0, weight=1)
         self.send_frame.rowconfigure(0, weight=1)
-        self.send_frame.configure(padding=(2, 4, 4, 0))
+        self.send_frame.configure(padding=0)
 
         self.send_panel_inner = ttk.Frame(self.send_frame)
         self.send_panel_inner.grid(row=0, column=0, sticky="nsew")
-        self.send_panel_inner.columnconfigure(0, weight=1)
-        self.send_panel_inner.rowconfigure(2, weight=1)  # 协议/Raw 拉伸
+        self.send_panel_inner.columnconfigure(0, weight=0)
+        self.send_panel_inner.columnconfigure(1, weight=1)
+        self.send_panel_inner.columnconfigure(2, weight=0)
+        self.send_panel_inner.rowconfigure(0, weight=1)
         self._build_send_panel(self.send_panel_inner)
 
-        # 兼容旧引用
+        self._build_serial_panel(self.realtime_container)
+
         self.serial_tab = self.serial_frame
         self.send_tab = self.send_frame
-        self.main_paned = None  # 已不再使用 PanedWindow
-
+        self.main_paned = None
         self.send_frame_visible = False
-        self.send_frame_frac = 0.0  # 不再按比例
+        self.send_frame_frac = 0.0
+
+        try:
+            self.send_outer.grid_remove()
+        except Exception:
+            pass
 
         # 默认隐藏发送面板
         try:
             self.send_outer.grid_remove()
         except Exception:
             pass
-
 
         # ============================================================
         #  row=2: 底部状态栏（fixed）
@@ -1810,6 +1710,7 @@ class ProtocolParserApp:
             self.root.bind("<Shift-F5>", _on_shift_f5)
         except Exception:
             pass
+        self._update_left_status()
 
     # ------------------------------------------------------------
     # 串口配置面板（原「高级设置」中的显示/保存项合并到这里）
@@ -1829,6 +1730,15 @@ class ProtocolParserApp:
         )
         self.send_panel_btn.pack(side="left", padx=(0, 4))
         Tooltip(self.send_panel_btn, "打开或关闭右侧「指令发送」面板。", theme)
+
+        self.cmdlib_panel_btn = RoundedButton(
+            _cfg_hdr,
+            text="打开指令库",
+            style="Toolbar.TButton",
+            command=self._safe(self._toggle_cmdlib_panel),
+            font=("Microsoft YaHei UI", 10, "bold"),
+        )
+        self.cmdlib_panel_btn.pack(side="left", padx=(4, 0))
 
         RoundedButton(
             _cfg_hdr, text="添加串口", style="Toolbar.TButton",
@@ -1863,91 +1773,151 @@ class ProtocolParserApp:
         def _hint(parent: tk.Misc, text_: str) -> ttk.Label:
             return ttk.Label(parent, text=text_, style="Hint.TLabel", font=("Microsoft YaHei UI", 9))
 
-        # ---- 第一行：串口 / 波特率 / 数据位 / 停止位 / 展开 / 开始监控 ----
+        # ---- 第一行：左侧可压缩参数 + 右侧固定三按钮 ----
         row1_wrap = ttk.Frame(frame, style="Card.TFrame")
         row1_wrap.grid(row=0, column=0, sticky="ew", pady=(0, 3))
         row1 = ttk.Frame(row1_wrap, style="Card.TFrame")
         row1.pack(fill="x", padx=2, pady=2)
-        row1.columnconfigure(100, weight=1)
 
-        ttk.Label(row1, text="串口：", style="Card.TLabel").grid(row=0, column=0, sticky="w")
-        # 串口选择框
-        self.port_combo = ttk.Combobox(row1, textvariable=self.port_var, width=40, state="readonly")
-        self.port_combo.grid(row=0, column=1, sticky="w", padx=(4, 2))
-        _enable_full_combobox(self.port_combo)
-        # 监控中切换串口：自动停止当前串口并连接新选中的串口
-        self.port_combo.bind("<<ComboboxSelected>>", self._safe(self._on_port_change_while_collecting), add="+")
-        refresh_ports_btn = RoundedButton(row1, text="刷新", width=6,
-                                          command=self._safe(self._refresh_ports), style="Toolbar.TButton")
-        refresh_ports_btn.grid(row=0, column=2, sticky="w", padx=(0, 8))
-        Tooltip(refresh_ports_btn, "重新扫描本机可用串口。", theme)
-
-        ttk.Label(row1, text="波特率：", style="Card.TLabel").grid(row=0, column=10, sticky="w")
-        self.baudrate_combo = ttk.Combobox(
-            row1, textvariable=self.baudrate_var, width=11, state="normal",
-            values=[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
-                    1000000, 1500000, 2000000, 3000000, 4000000, 5000000, 6000000],
-        )
-        _enable_full_combobox(self.baudrate_combo)
-        self.baudrate_combo.grid(row=0, column=11, sticky="w", padx=(4, 2))
-        self.baudrate_combo.bind("<<ComboboxSelected>>", self._safe(self._on_serial_param_change_while_collecting), add="+")
-        self.baudrate_combo.bind("<Return>", self._safe(self._on_serial_param_change_while_collecting), add="+")
-        self.baudrate_combo.bind("<FocusOut>", self._safe(self._on_serial_param_change_while_collecting), add="+")
-
-        ttk.Label(row1, text="数据位：", style="Card.TLabel").grid(row=0, column=20, sticky="w", padx=(8, 0))
-        bytesize_combo = ttk.Combobox(
-            row1, textvariable=self.bytesize_var, values=[5, 6, 7, 8], width=5, state="readonly"
-        )
-        bytesize_combo.grid(row=0, column=21, sticky="w", padx=(4, 8))
-        _enable_full_combobox(bytesize_combo)
-        bytesize_combo.bind("<<ComboboxSelected>>", self._safe(self._on_serial_param_change_while_collecting), add="+")
-
-        ttk.Label(row1, text="停止位：", style="Card.TLabel").grid(row=0, column=30, sticky="w")
-        stopbits_combo = ttk.Combobox(
-            row1, textvariable=self.stopbits_var, values=[1, 1.5, 2], width=5, state="readonly"
-        )
-        stopbits_combo.grid(row=0, column=31, sticky="w", padx=(4, 8))
-        _enable_full_combobox(stopbits_combo)
-        stopbits_combo.bind("<<ComboboxSelected>>", self._safe(self._on_serial_param_change_while_collecting), add="+")
+        # ----- 右侧固定（先 pack，窄窗优先显示）-----
+        right = ttk.Frame(row1, style="Card.TFrame")
+        right.pack(side="right", padx=(8, 0))
 
         self.hex_btn = RoundedButton(
-            row1,
+            right,
             text="HEX 格式",
-            style="Primary.TButton",
+            style="Success.TButton",
             command=self._safe(self._toggle_hex_format_btn),
             width=10,
         )
-        self.hex_btn.grid(row=0, column=198, sticky="e", padx=(4, 4))
+        self.hex_btn.pack(side="left", padx=(0, 4))
         Tooltip(self.hex_btn, "在 HEX / ASCII 显示之间切换。", theme)
-        self.hex_chk = self.hex_btn  # 兼容旧引用
+        self.hex_chk = self.hex_btn
         self._sync_hex_btn_style()
 
-        # 收起/展开
         self.serial_config_toggle_btn = RoundedButton(
-            row1, text="收起 ▲", width=4, style="Primary.TButton",
+            right,
+            text="收起 ▲",
+            width=7,
+            style="Primary.TButton",
             command=self._safe(self._toggle_serial_config_panel),
         )
-        self.serial_config_toggle_btn.grid(row=0, column=199, sticky="e", padx=(4, 4))
+        self.serial_config_toggle_btn.pack(side="left", padx=(0, 4))
         Tooltip(
             self.serial_config_toggle_btn,
             "收起/展开串口配置高级选项（保存原始数据等）。",
             theme,
         )
 
-        # 开始监控（必须先创建，再 grid）
         self.start_btn = RoundedButton(
-            row1, text="● 开始监控", style="Primary.TButton",
+            right,
+            text="● 开始监控",
+            style="Primary.TButton",
             command=self._safe(self._toggle_serial),
             width=12,
         )
-        self.start_btn.grid(row=0, column=200, sticky="e", padx=(4, 4))
+        self.start_btn.pack(side="left")
         Tooltip(
             self.start_btn,
             "开始监控（绿灯）/ 停止监控（灰）。\n快捷键：F5 开始 / Shift+F5 停止。",
             theme,
         )
 
+        # ----- 左侧可压缩（串口 / 刷新 / 波特率 / 数据位 / 停止位）-----
+        left = ttk.Frame(row1, style="Card.TFrame")
+        left.pack(side="left", fill="x", expand=True)
+
+        ttk.Label(left, text="串口：", style="Card.TLabel").pack(side="left")
+        self.port_combo = ttk.Combobox(
+            left, textvariable=self.port_var, width=28, state="readonly"  # 原 20
+        )
+        self.port_combo.pack(side="left", padx=(4, 2))
+        _enable_full_combobox(self.port_combo)
+        self.port_combo.bind(
+            "<<ComboboxSelected>>",
+            self._safe(self._on_port_change_while_collecting),
+            add="+",
+        )
+
+        refresh_ports_btn = RoundedButton(
+            left,
+            text="刷新",
+            width=4,
+            command=self._safe(self._refresh_ports),
+            style="Toolbar.TButton",
+        )
+        refresh_ports_btn.pack(side="left", padx=(0, 8))
+        Tooltip(refresh_ports_btn, "重新扫描本机可用串口。", theme)
+
+        ttk.Label(left, text="波特率：", style="Card.TLabel").pack(side="left")
+        self.baudrate_combo = ttk.Combobox(
+            left,
+            textvariable=self.baudrate_var,
+            width=8,
+            state="normal",
+            values=[
+                9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
+                1000000, 1500000, 2000000, 3000000, 4000000, 5000000, 6000000,
+            ],
+        )
+        self.baudrate_combo.pack(side="left", padx=(4, 8))
+        _enable_full_combobox(self.baudrate_combo)
+        self.baudrate_combo.bind(
+            "<<ComboboxSelected>>",
+            self._safe(self._on_serial_param_change_while_collecting),
+            add="+",
+        )
+        self.baudrate_combo.bind(
+            "<Return>",
+            self._safe(self._on_serial_param_change_while_collecting),
+            add="+",
+        )
+        self.baudrate_combo.bind(
+            "<FocusOut>",
+            self._safe(self._on_serial_param_change_while_collecting),
+            add="+",
+        )
+
         self._serial_config_detail_row = None
+
+        # ---- 第二行：数据位 / 停止位 / 文件名（跟随「收起」）----
+        row2_wrap = ttk.Frame(frame, style="Card.TFrame")
+        row2_wrap.grid(row=1, column=0, sticky="ew", pady=(0, 2))
+        self._serial_config_bits_row = row2_wrap
+        row2 = ttk.Frame(row2_wrap, style="Card.TFrame")
+        row2.pack(fill="x", padx=2, pady=2)
+
+        ttk.Label(row2, text="数据位：", style="Card.TLabel").pack(side="left")
+        self.bytesize_combo = ttk.Combobox(
+            row2, textvariable=self.bytesize_var, values=[5, 6, 7, 8],
+            width=3, state="readonly",
+        )
+        self.bytesize_combo.pack(side="left", padx=(4, 12))
+        _enable_full_combobox(self.bytesize_combo)
+        self.bytesize_combo.bind(
+            "<<ComboboxSelected>>",
+            self._safe(self._on_serial_param_change_while_collecting),
+            add="+",
+        )
+
+        ttk.Label(row2, text="停止位：", style="Card.TLabel").pack(side="left")
+        self.stopbits_combo = ttk.Combobox(
+            row2, textvariable=self.stopbits_var, values=[1, 1.5, 2],
+            width=3, state="readonly",
+        )
+        self.stopbits_combo.pack(side="left", padx=(4, 16))
+        _enable_full_combobox(self.stopbits_combo)
+        self.stopbits_combo.bind(
+            "<<ComboboxSelected>>",
+            self._safe(self._on_serial_param_change_while_collecting),
+            add="+",
+        )
+
+        # 文件名（原 row3b，挪到本行右侧）
+        ttk.Label(row2, text="文件名：", style="Card.TLabel").pack(side="left")
+        raw_name = ttk.Entry(row2, textvariable=self.save_raw_filename_var, width=26)
+        raw_name.pack(side="left", padx=(4, 8))
+        _hint(row2, "(.dat 格式，超过 50MB 自动分割)").pack(side="left")
 
         # ---- 第三/第四行：保存原始数据（拆为两行，避免窄窗口时路径/文件名被裁剪隐藏） ----
         #  row3a：☑保存原始数据   路径：[Entry 伸缩 weight=1]  [选择]
@@ -1973,24 +1943,67 @@ class ProtocolParserApp:
         RoundedButton(row3a, text="选择", width=6, style="Toolbar.TButton",
                       command=self._safe(self._choose_save_raw_path)).grid(row=0, column=3, sticky="w", padx=(0, 4))
 
-        row3b_wrap = ttk.Frame(frame, style="Card.TFrame")
-        row3b_wrap.grid(row=3, column=0, sticky="ew", pady=(0, 2))
-        self._serial_config_raw_row_b = row3b_wrap
-        row3b = ttk.Frame(row3b_wrap, style="Card.TFrame")
-        row3b.pack(fill="x", padx=2, pady=(0, 4))
-        # 保持与上面 "保存原始数据 checkbox" 的文字对齐：前面放一个等宽空白（宽度≈checkbox）
-        row3b.columnconfigure(0, minsize=112)   # 与「☑保存原始数据 + 20px pad」对齐
-
-        ttk.Label(row3b, text="", style="Card.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(row3b, text="文件名：", style="Card.TLabel").grid(row=0, column=1, sticky="w")
-        raw_name = ttk.Entry(row3b, textvariable=self.save_raw_filename_var, width=26)
-        raw_name.grid(row=0, column=2, sticky="w", padx=(4, 10))
-        _hint(row3b, "(.dat 格式，超过 50MB 自动分割)").grid(row=0, column=3, sticky="w")
-
         # 根据持久化/默认折叠状态应用显示
         self._apply_serial_config_collapsed()
         self._view_mode_locked = False
         self._on_hex_format_change()
+
+    def _adapt_serial_row_widths(self, event=None) -> None:
+        """仅波特率随窗口变窄缩小；串口宽度固定。"""
+        if event is not None and getattr(event, "widget", None) is not self.root:
+            return
+        try:
+            win_w = int(self.root.winfo_width())
+        except Exception:
+            return
+        if win_w < 200:
+            return
+        last = getattr(self, "_adapt_serial_w", None)
+        if last is not None and abs(last - win_w) < 8:
+            return
+        self._adapt_serial_w = win_w
+
+        if win_w >= 1400:
+            baud_w = 8
+        elif win_w >= 1200:
+            baud_w = 8
+        elif win_w >= 1100:
+            baud_w = 8
+        else:
+            baud_w = 8
+
+        try:
+            if getattr(self, "baudrate_combo", None) is not None:
+                self.baudrate_combo.configure(width=baud_w)
+            # 注意：不要再 configure port_combo
+        except Exception:
+            pass
+
+    def _toggle_cmdlib_panel(self) -> None:
+        if self.cmdlib_visible:
+            try:
+                self.cmdlib_outer.grid_remove()
+                self.cmdlib_visible = False
+            except Exception:
+                pass
+            self.cmdlib_visible = False
+            try:
+                self.cmdlib_panel_btn.configure(text="打开指令库", style="Toolbar.TButton")
+            except Exception:
+                pass
+            self._set_status("已隐藏指令库")
+        else:
+            try:
+                self.cmdlib_outer.grid(row=1, column=1, sticky="nsew", padx=(4, 6), pady=0)
+                self.cmdlib_visible = True
+            except Exception:
+                pass
+            self.cmdlib_visible = True
+            try:
+                self.cmdlib_panel_btn.configure(text="关闭指令库", style="Danger.TButton")
+            except Exception:
+                pass
+            self._set_status("已显示指令库")
 
     def _toggle_serial_config_panel(self) -> None:
         """切换串口配置面板的折叠/展开状态。"""
@@ -2010,8 +2023,8 @@ class ProtocolParserApp:
 
         for attr in (
             "_serial_config_detail_row",
+            "_serial_config_bits_row",
             "_serial_config_raw_row_a",
-            "_serial_config_raw_row_b",
         ):
             w = getattr(self, attr, None)
             if w is None:
@@ -2039,7 +2052,10 @@ class ProtocolParserApp:
 
         # 实时数据分组
         # 标题栏：实时数据 + 模式按钮 + 清空
-        _hdr = ttk.Frame(parent)
+        # 工具条放到整宽 host；没有 host 时退回 parent
+        _hdr_parent = getattr(self, "rt_toolbar_host", parent)
+        _hdr = ttk.Frame(_hdr_parent)
+        _hdr.pack(fill="x")
         ttk.Label(_hdr, text="实时数据", style="TLabelframe.Label").pack(side="left", padx=(0, 8))
         self.view_mode_btn = RoundedButton(
             _hdr,
@@ -2096,14 +2112,22 @@ class ProtocolParserApp:
             text="模组发送",
             style="Primary.TButton",
             command=self._safe(self._toggle_sender_btn),
-            width=4,
+            width=5,
         )
         self.sender_btn.pack(side="left", padx=(4, 4))
         Tooltip(self.sender_btn, "切换发送方：模组发送 / MCU发送（仅 HEX 格式有效）。", theme)
         self._sync_sender_btn_style()
 
-        realtime_frame = ttk.LabelFrame(parent, labelwidget=_hdr, padding=6)
-        realtime_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        # 标题已在整宽工具条；不用 LabelFrame，避免空标题占一行
+        border = theme.get("card_border") or theme.get("border")
+        realtime_frame = tk.Frame(
+            parent,
+            bg=card_bg,
+            highlightthickness=1,
+            highlightbackground=border,
+            highlightcolor=border,
+        )
+        realtime_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=(0, 6))
         realtime_frame.columnconfigure(0, weight=1)
         realtime_frame.rowconfigure(0, weight=1)
 
@@ -2186,87 +2210,533 @@ class ProtocolParserApp:
             return
         self.font_size_var.set(new_size)
 
+    # ========================= 指令库 =========================
+    def _cmdlib_path(self, name: str) -> Path:
+        return user_data_path("cmdlib") / f"{name}.json"
+
+    def _cmdlib_load(self) -> None:
+        import json
+        def _load(name: str) -> list:
+            p = self._cmdlib_path(name)
+            try:
+                if p.exists():
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                    if isinstance(data, list):
+                        return data[: self.CMDLIB_MAX]
+            except Exception:
+                pass
+            return []
+        self._cmdlib_hex = _load("hex_cmds")
+        self._cmdlib_ascii = _load("ascii_cmds")
+        self._cmdlib_cycle_hex = _load("cycle_hex")
+        self._cmdlib_cycle_ascii = _load("cycle_ascii")
+
+    def _cmdlib_save_list(self, name: str, items: list) -> None:
+        import json
+        p = self._cmdlib_path(name)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _cmdlib_current_list(self) -> list[dict]:
+        return self._cmdlib_hex if self._cmdlib_mode.get() == "hex" else self._cmdlib_ascii
+
+    def _cmdlib_set_current_list(self, items: list[dict]) -> None:
+        items = items[: self.CMDLIB_MAX]
+        if self._cmdlib_mode.get() == "hex":
+            self._cmdlib_hex = items
+            self._cmdlib_save_list("hex_cmds", items)
+        else:
+            self._cmdlib_ascii = items
+            self._cmdlib_save_list("ascii_cmds", items)
+
+    def _build_cmd_library_panel(self, parent: tk.Misc) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=0)
+        parent.rowconfigure(1, weight=1)
+
+        bar = ttk.Frame(parent)
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, 4), padx=2)
+
+        ttk.Label(bar, text="指令库", style="TLabelframe.Label").pack(side="left", padx=(0, 6))
+
+        self.cmdlib_mode_btn = ttk.Button(
+            bar, text="HEX", width=6, style="Success.TButton",
+            command=self._safe(self._cmdlib_toggle_mode_btn),
+        )
+        self.cmdlib_mode_btn.pack(side="left", padx=2)
+
+        self.cmdlib_cycle_btn = ttk.Button(
+            bar, text="循环发送", width=8, style="SendOutline.TButton",
+            command=self._safe(self._cmdlib_toggle_cycle),
+        )
+        self.cmdlib_cycle_btn.pack(side="left", padx=(6, 2))
+
+        ttk.Button(
+            bar, text="配置循环", width=8, style="SendOutline.TButton",
+            command=self._safe(self._cmdlib_open_cycle_config),
+        ).pack(side="left", padx=2)
+
+        ttk.Button(
+            bar, text="＋", width=3, style="SendOutline.TButton",
+            command=self._safe(self._cmdlib_add_item),
+        ).pack(side="right", padx=2)
+
+        wrap = ttk.Frame(parent)
+        wrap.grid(row=1, column=0, sticky="nsew")
+        wrap.columnconfigure(0, weight=1)
+        wrap.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(wrap, highlightthickness=0, bg=self.theme.get("app_bg"))
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+
+        self._cmdlib_list = ttk.Frame(canvas)
+        self._cmdlib_canvas = canvas
+        self._cmdlib_canvas_win = canvas.create_window((0, 0), window=self._cmdlib_list, anchor="nw")
+
+        def _on_cfg(_e=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            try:
+                canvas.itemconfigure(self._cmdlib_canvas_win, width=max(canvas.winfo_width(), 1))
+            except Exception:
+                pass
+        self._cmdlib_list.bind("<Configure>", _on_cfg)
+        canvas.bind("<Configure>", _on_cfg)
+
+        self._cmdlib_load()
+        self._cmdlib_refresh_list()
+        self._cmdlib_set_mode(self._cmdlib_mode.get() or "hex")
+    
+    def _cmdlib_toggle_mode_btn(self) -> None:
+        """同一个按钮：HEX ↔ ASCII。"""
+        cur = self._cmdlib_mode.get()
+        self._cmdlib_set_mode("ascii" if cur == "hex" else "hex")
+
+    def _cmdlib_set_mode(self, mode: str) -> None:
+        if mode not in ("hex", "ascii"):
+            return
+        self._cmdlib_mode.set(mode)
+        try:
+            if mode == "hex":
+                self.cmdlib_mode_btn.configure(
+                    text="HEX",
+                    style="Success.TButton",   # 绿
+                )
+            else:
+                self.cmdlib_mode_btn.configure(
+                    text="ASCII",
+                    style="Danger.TButton",    # 红
+                )
+        except Exception:
+            pass
+        if self._cmdlib_cycle_on:
+            self._cmdlib_stop_cycle()
+        self._cmdlib_refresh_list()
+
+    def _cmdlib_refresh_list(self) -> None:
+        if not hasattr(self, "_cmdlib_list"):
+            return
+        for w in self._cmdlib_list.winfo_children():
+            w.destroy()
+
+        items = self._cmdlib_current_list()
+        self._cmdlib_list.columnconfigure(0, weight=1)
+
+        if not items:
+            ttk.Label(
+                self._cmdlib_list,
+                text="暂无指令，点击右上角 ＋ 添加（最多 40 条）",
+                foreground="#6B7280",
+            ).grid(row=0, column=0, sticky="w", padx=8, pady=12)
+        else:
+            ROW_H = 35  # 统一行高，可改 28～32
+            for i, item in enumerate(items):
+                row = ttk.Frame(self._cmdlib_list)
+                row.grid(row=i, column=0, sticky="ew", pady=3, padx=4)
+                row.columnconfigure(0, weight=1)
+                row.rowconfigure(0, weight=0)
+
+                # 左：只读内容
+                left = ttk.Frame(row, height=ROW_H)
+                left.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+                left.grid_propagate(False)
+                left.columnconfigure(0, weight=1)
+                left.rowconfigure(0, weight=1)
+                ent = ttk.Entry(left)
+                ent.insert(0, item.get("payload", ""))
+                ent.configure(state="readonly")
+                ent.grid(row=0, column=0, sticky="nsew")
+
+                # 中：名称（发送）
+                mid = ttk.Frame(row, height=ROW_H, width=100)
+                mid.grid(row=0, column=1, sticky="ns", padx=(0, 4))
+                mid.grid_propagate(False)
+                mid.columnconfigure(0, weight=1)
+                mid.rowconfigure(0, weight=1)
+                name = item.get("name") or f"指令{i + 1}"
+                ttk.Button(
+                    mid,
+                    text=name,
+                    style="Primary.TButton",
+                    command=self._safe(lambda it=item: self._cmdlib_send_one(it)),
+                ).grid(row=0, column=0, sticky="nsew")
+
+                # 右：修改
+                right = ttk.Frame(row, height=ROW_H, width=56)
+                right.grid(row=0, column=2, sticky="ns")
+                right.grid_propagate(False)
+                right.columnconfigure(0, weight=1)
+                right.rowconfigure(0, weight=1)
+                ttk.Button(
+                    right,
+                    text="修改",
+                    style="SendOutline.TButton",
+                    command=self._safe(lambda it=item: self._cmdlib_edit_item(it)),
+                ).grid(row=0, column=0, sticky="nsew")
+
+        try:
+            self._cmdlib_list.update_idletasks()
+            self._cmdlib_canvas.configure(scrollregion=self._cmdlib_canvas.bbox("all"))
+        except Exception:
+            pass
+
+    def _cmdlib_send_one(self, item: dict) -> None:
+        if not (self.collector and self.collector.running):
+            messagebox.showwarning("提示", "请先开始监控")
+            return
+        payload = (item.get("payload") or "").strip()
+        if not payload:
+            return
+        try:
+            if self._cmdlib_mode.get() == "hex":
+                s = (
+                    payload.replace(" ", "")
+                    .replace("\n", "")
+                    .replace("\r", "")
+                    .replace("\t", "")
+                )
+                if s.lower().startswith("0x"):
+                    s = s[2:]
+                if not s or len(s) % 2:
+                    raise ValueError("HEX 长度必须为偶数")
+                data = bytes.fromhex(s)
+
+                # 与底部「自动追加校验位」绑定
+                if bool(self.tx_auto_crc8_var.get()):
+                    from protocol_parser.parser import calc_checksum
+                    algo = (self.tx_crc_algo_var.get() or "ADD8").strip()
+                    cs_bytes = calc_checksum(data, algo)
+                    if cs_bytes:
+                        data = data + cs_bytes
+            else:
+                data = payload.encode("utf-8", errors="replace")
+
+            self.collector.send(data)
+            self.tx_frame_count = getattr(self, "tx_frame_count", 0) + 1
+            tip = f"指令库已发送: {item.get('name', '')}"
+            if self._cmdlib_mode.get() == "hex" and bool(self.tx_auto_crc8_var.get()):
+                tip += f"（已追加 {self.tx_crc_algo_var.get() or 'ADD8'}）"
+            self._set_status(tip)
+            try:
+                self._update_stats_bar()
+            except Exception:
+                pass
+        except Exception as e:
+            messagebox.showerror("发送失败", str(e))
+
+    def _cmdlib_add_item(self) -> None:
+        if len(self._cmdlib_current_list()) >= self.CMDLIB_MAX:
+            messagebox.showwarning("上限", f"当前库最多 {self.CMDLIB_MAX} 条指令")
+            return
+        self._cmdlib_edit_item(None)
+
+    def _cmdlib_edit_item(self, item: dict | None) -> None:
+        import uuid
+        top = tk.Toplevel(self.root)
+        top.title("修改指令" if item else "新增指令")
+        top.transient(self.root)
+        top.grab_set()
+
+        ttk.Label(top, text="指令名称:").grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        name_var = tk.StringVar(value=(item or {}).get("name", ""))
+        ttk.Entry(top, textvariable=name_var, width=36).grid(row=0, column=1, padx=8, pady=6)
+
+        ttk.Label(top, text="指令内容:").grid(row=1, column=0, sticky="nw", padx=8, pady=6)
+        txt = tk.Text(top, width=42, height=6)
+        txt.grid(row=1, column=1, padx=8, pady=6)
+        txt.insert("1.0", (item or {}).get("payload", ""))
+
+        is_hex = self._cmdlib_mode.get() == "hex"
+        ttk.Label(
+            top, text="HEX：仅十六进制（可空格）" if is_hex else "ASCII：任意文本"
+        ).grid(row=2, column=1, sticky="w", padx=8)
+
+        def _ok():
+            name = name_var.get().strip() or "未命名"
+            payload = txt.get("1.0", "end-1c").strip()
+            if is_hex:
+                s = payload.replace(" ", "").replace("\n", "").replace("\r", "")
+                try:
+                    if not s or len(s) % 2:
+                        raise ValueError
+                    bytes.fromhex(s)
+                except Exception:
+                    messagebox.showerror("格式错误", "HEX 指令格式不正确", parent=top)
+                    return
+            items = list(self._cmdlib_current_list())
+            if item is None:
+                if len(items) >= self.CMDLIB_MAX:
+                    messagebox.showwarning("上限", f"最多 {self.CMDLIB_MAX} 条", parent=top)
+                    return
+                items.append({"id": uuid.uuid4().hex, "name": name, "payload": payload})
+            else:
+                for it in items:
+                    if it.get("id") == item.get("id"):
+                        it["name"] = name
+                        it["payload"] = payload
+                        break
+            self._cmdlib_set_current_list(items)
+            self._cmdlib_refresh_list()
+            top.destroy()
+
+        bf = ttk.Frame(top)
+        bf.grid(row=3, column=0, columnspan=2, pady=10)
+        ttk.Button(bf, text="保存", command=_ok).pack(side="left", padx=6)
+        ttk.Button(bf, text="取消", command=top.destroy).pack(side="left")
+        if item is not None:
+            def _del():
+                if not messagebox.askyesno("删除", "删除该指令？", parent=top):
+                    return
+                items = [x for x in self._cmdlib_current_list() if x.get("id") != item.get("id")]
+                self._cmdlib_set_current_list(items)
+                # 同步清掉循环配置里的引用
+                for attr, fname in (
+                    ("_cmdlib_cycle_hex", "cycle_hex"),
+                    ("_cmdlib_cycle_ascii", "cycle_ascii"),
+                ):
+                    seq = [s for s in getattr(self, attr) if s.get("id") != item.get("id")]
+                    setattr(self, attr, seq)
+                    self._cmdlib_save_list(fname, seq)
+                self._cmdlib_refresh_list()
+                top.destroy()
+            ttk.Button(bf, text="删除", command=_del).pack(side="left", padx=6)
+
+    def _cmdlib_toggle_cycle(self) -> None:
+        if self._cmdlib_cycle_on:
+            self._cmdlib_stop_cycle()
+            return
+        seq = self._cmdlib_cycle_hex if self._cmdlib_mode.get() == "hex" else self._cmdlib_cycle_ascii
+        if not seq:
+            messagebox.showinfo("提示", "请先在「配置循环发送」中勾选指令")
+            return
+        if not (self.collector and self.collector.running):
+            messagebox.showwarning("提示", "请先开始监控")
+            return
+        self._cmdlib_cycle_on = True
+        self._cmdlib_cycle_idx = 0
+        try:
+            self.cmdlib_cycle_btn.configure(style="SendSuccess.TButton")
+        except Exception:
+            pass
+        self._cmdlib_cycle_tick()
+
+    def _cmdlib_stop_cycle(self) -> None:
+        self._cmdlib_cycle_on = False
+        if self._cmdlib_cycle_job is not None:
+            try:
+                self.root.after_cancel(self._cmdlib_cycle_job)
+            except Exception:
+                pass
+            self._cmdlib_cycle_job = None
+        try:
+            self.cmdlib_cycle_btn.configure(style="SendOutline.TButton")
+        except Exception:
+            pass
+
+    def _cmdlib_cycle_tick(self) -> None:
+        if not self._cmdlib_cycle_on:
+            return
+        seq = self._cmdlib_cycle_hex if self._cmdlib_mode.get() == "hex" else self._cmdlib_cycle_ascii
+        if not seq:
+            self._cmdlib_stop_cycle()
+            return
+        step = seq[self._cmdlib_cycle_idx % len(seq)]
+        pool = {x.get("id"): x for x in self._cmdlib_current_list()}
+        item = pool.get(step.get("id"))
+        if item:
+            self._cmdlib_send_one(item)
+        delay = max(10, int(step.get("delay_ms", 1000) or 1000))
+        self._cmdlib_cycle_idx = (self._cmdlib_cycle_idx + 1) % len(seq)
+        self._cmdlib_cycle_job = self.root.after(delay, self._cmdlib_cycle_tick)
+
+    def _cmdlib_open_cycle_config(self) -> None:
+        items = self._cmdlib_current_list()
+        if not items:
+            messagebox.showinfo("提示", "当前指令库为空，请先添加指令")
+            return
+        is_hex = self._cmdlib_mode.get() == "hex"
+        seq = list(self._cmdlib_cycle_hex if is_hex else self._cmdlib_cycle_ascii)
+        seq_map = {s.get("id"): s for s in seq}
+
+        top = tk.Toplevel(self.root)
+        top.title("配置循环发送")
+        top.geometry("560x420")
+        top.transient(self.root)
+        top.grab_set()
+
+        ttk.Label(
+            top, text="勾选参与循环的指令，并设置间隔(ms)；列表顺序即发送顺序"
+        ).pack(anchor="w", padx=8, pady=6)
+
+        body = ttk.Frame(top)
+        body.pack(fill="both", expand=True, padx=8, pady=4)
+        vars_on: dict[str, tk.BooleanVar] = {}
+        vars_ms: dict[str, tk.StringVar] = {}
+        for it in items:
+            iid = it.get("id")
+            on = tk.BooleanVar(value=iid in seq_map)
+            ms = tk.StringVar(value=str((seq_map.get(iid) or {}).get("delay_ms", 1000)))
+            vars_on[iid] = on
+            vars_ms[iid] = ms
+            r = ttk.Frame(body)
+            r.pack(fill="x", pady=2)
+            ttk.Checkbutton(r, variable=on).pack(side="left")
+            ttk.Label(r, text=it.get("name", ""), width=14).pack(side="left")
+            ttk.Label(r, text=(it.get("payload") or "")[:28], width=28).pack(side="left")
+            ttk.Label(r, text="ms").pack(side="right")
+            ttk.Entry(r, textvariable=ms, width=8).pack(side="right")
+
+        def _save():
+            new_seq = []
+            for it in items:
+                iid = it.get("id")
+                if not vars_on[iid].get():
+                    continue
+                try:
+                    d = max(10, int(vars_ms[iid].get()))
+                except Exception:
+                    d = 1000
+                new_seq.append({"id": iid, "delay_ms": d})
+            if is_hex:
+                self._cmdlib_cycle_hex = new_seq
+                self._cmdlib_save_list("cycle_hex", new_seq)
+            else:
+                self._cmdlib_cycle_ascii = new_seq
+                self._cmdlib_save_list("cycle_ascii", new_seq)
+            top.destroy()
+            self._set_status(f"循环配置已保存（{len(new_seq)} 条）")
+
+        bf = ttk.Frame(top)
+        bf.pack(pady=8)
+        ttk.Button(bf, text="保存", command=_save).pack(side="left", padx=6)
+        ttk.Button(bf, text="取消", command=top.destroy).pack(side="left")
+
     def _build_send_panel(self, parent: tk.Misc) -> None:
-        """构建"指令发送"Tab。"""
+        """底部横条：左模式竖排 | 中输入 | 右操作。"""
+        parent.columnconfigure(0, weight=0)
+        parent.columnconfigure(1, weight=1)
+        parent.columnconfigure(2, weight=0)
+        parent.rowconfigure(0, weight=1)
 
-        # 模式选择（分段按钮：选中绿色）
-        mode_row = ttk.LabelFrame(parent, text="发送模式", padding=8)
-        mode_row.grid(row=1, column=0, sticky="we", pady=(0, 8))
-        mode_row.columnconfigure(0, weight=1)
+        # ===== 左：指令发送模式（竖排等分）=====
+        mode_box = ttk.LabelFrame(parent, text="指令发送模式", padding=4)
+        mode_box.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        mode_box.columnconfigure(0, weight=1)
+        mode_box.rowconfigure(0, weight=1)
 
-        seg = ttk.Frame(mode_row)
-        seg.pack(fill="x")
-        self._send_mode_seg = seg
-        for c in range(3):
-            seg.columnconfigure(c, weight=1, uniform="sendmode")
+        self._send_mode_seg = ttk.Frame(mode_box)
+        self._send_mode_seg.grid(row=0, column=0, sticky="nsew")
+        self._send_mode_seg.columnconfigure(0, weight=1)
 
-        self._send_mode_btns: dict[str, RoundedButton] = {}
-        for col, (value, label) in enumerate((
+        self._send_mode_btns = {}
+        for row, (value, label) in enumerate((
             ("protocol", "协议模式"),
             ("raw_hex", "HEX"),
             ("raw_ascii", "ASCII"),
         )):
-            b = RoundedButton(
-                seg,
+            self._send_mode_seg.rowconfigure(row, weight=1, uniform="sendmode")
+            b = ttk.Button(
+                self._send_mode_seg,
                 text=label,
-                style="Toolbar.TButton",
-                width=12,
+                style="SendOutline.TButton",
+                width=10,                      # 锁宽度
                 command=self._safe(lambda v=value: self._set_send_mode(v)),
             )
-            b.grid(row=0, column=col, sticky="ew", padx=1)
+            b.grid(row=row, column=0, sticky="nsew", padx=1, pady=1)
             self._send_mode_btns[value] = b
-
         self._sync_send_mode_btn_style()
-        seg.bind("<Configure>", self._safe(self._layout_send_mode_seg), add="+")
-        self.root.after(50, self._safe(self._layout_send_mode_seg))
 
-        # 协议模式内容
-        self.protocol_frame = ttk.LabelFrame(parent, text="协议参数", padding=8)
-        self.protocol_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))
+        # ===== 中：协议参数 / HEX·ASCII 输入 =====
+        center = ttk.Frame(parent)
+        center.grid(row=0, column=1, sticky="nsew", padx=(0, 6))
+        center.columnconfigure(0, weight=1)
+        center.rowconfigure(0, weight=1)
+
+        # --- 协议参数 ---
+                # 协议参数：左 命令/快捷/方向，右 字段 JSON 大框
+        self.protocol_frame = ttk.LabelFrame(center, text="协议参数", padding=6)
+        self.protocol_frame.grid(row=0, column=0, sticky="nsew")
+        self.protocol_frame.columnconfigure(0, weight=0)
         self.protocol_frame.columnconfigure(1, weight=1)
+        self.protocol_frame.rowconfigure(0, weight=1)
 
-        # 第 0 行：命令 + 方向
-        ttk.Label(self.protocol_frame, text="命令:").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        left = ttk.Frame(self.protocol_frame)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))  # 用 nsew 拉满高度
+        left.columnconfigure(1, weight=1)
+        for r in range(3):
+            left.rowconfigure(r, weight=1, uniform="protoleft")
+
+        COMBO_W = 16  # 原 22，可再试 14～18
+
+        # 命令
+        ttk.Label(left, text="命令:").grid(row=0, column=0, sticky="w", padx=(0, 4))
         self.tx_cmd_label_var = tk.StringVar(value="")
         self.cmd_combo = ttk.Combobox(
-            self.protocol_frame,
-            textvariable=self.tx_cmd_label_var,
-            state="readonly",
-            width=28,
+            left, textvariable=self.tx_cmd_label_var,
+            state="readonly", width=COMBO_W,
         )
-        _enable_full_combobox(self.cmd_combo)
-        self.cmd_combo.grid(row=0, column=1, sticky="ew", pady=(0, 4))
+        try:
+            _enable_full_combobox(self.cmd_combo)
+        except Exception:
+            pass
+        self.cmd_combo.grid(row=0, column=1, sticky="ew")
         self.cmd_combo.bind("<<ComboboxSelected>>", self._on_send_cmd_selected)
 
-        ttk.Label(self.protocol_frame, text="方向:").grid(row=0, column=2, sticky="e", padx=(8, 0))
-        dir_combo = ttk.Combobox(
-            self.protocol_frame,
-            textvariable=self.tx_direction_var,
-            values=["模组发送", "MCU发送"],
-            state="readonly",
-            width=12,
-        )
-        _enable_full_combobox(dir_combo)
-        dir_combo.grid(row=0, column=3, sticky="w", pady=(0, 4))
-
-        # 第 1 行：快捷动作
-        ttk.Label(self.protocol_frame, text="快捷动作:").grid(row=1, column=0, sticky="w", pady=(0, 4))
+        # 快捷动作
+        ttk.Label(left, text="快捷动作:").grid(row=1, column=0, sticky="w", padx=(0, 4))
         self.tx_quick_var = tk.StringVar(value="")
         self.quick_combo = ttk.Combobox(
-            self.protocol_frame,
-            textvariable=self.tx_quick_var,
-            width=28,
-            state="readonly",
+            left, textvariable=self.tx_quick_var,
+            width=COMBO_W, state="readonly",
         )
-        self.quick_combo.grid(row=1, column=1, columnspan=3, sticky="ew", pady=(0, 4))
+        self.quick_combo.grid(row=1, column=1, sticky="ew")
         self.quick_combo.bind("<<ComboboxSelected>>", self._safe(self._on_quick_action_selected))
-        self._quick_action_map: dict[str, dict] = {}
+        self._quick_action_map = {}
 
-        # 第 2 行：字段 JSON
-        ttk.Label(self.protocol_frame, text="字段 JSON:").grid(row=2, column=0, sticky="nw", pady=3)
+        # 方向
+        ttk.Label(left, text="方向:").grid(row=2, column=0, sticky="w", padx=(0, 4))
+        dir_combo = ttk.Combobox(
+            left, textvariable=self.tx_direction_var,
+            values=["模组发送", "MCU发送"], state="readonly", width=COMBO_W,
+        )
+        try:
+            _enable_full_combobox(dir_combo)
+        except Exception:
+            pass
+        dir_combo.grid(row=2, column=1, sticky="ew")
+
+        # 右侧：字段 JSON 大输入框（占满剩余宽高）
+        right = ttk.Frame(self.protocol_frame)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+
+        ttk.Label(right, text="字段 JSON:").grid(row=0, column=0, sticky="w", pady=(0, 2))
         self.fields_text = tk.Text(
-            self.protocol_frame,
-            height=4,
+            right,
+            height=5,
             font=self.serial_font,
             relief="solid",
             borderwidth=1,
@@ -2275,84 +2745,119 @@ class ProtocolParserApp:
             highlightcolor="#E0E0E0",
             bd=1,
         )
-        self.fields_text.grid(row=2, column=1, columnspan=3, sticky="nsew", pady=3)
-        self.protocol_frame.rowconfigure(2, weight=1)
-        self.protocol_frame.columnconfigure(1, weight=1)
-        self.fields_text.insert("1.0", self.tx_fields_var.get())
+        self.fields_text.grid(row=1, column=0, sticky="nsew")
+        try:
+            self.fields_text.insert("1.0", self.tx_fields_var.get())
+        except Exception:
+            pass
 
-        # Raw 内容（共用 1 个帧，通过 mode 显示不同的 placeholder）
-        # HEX / ASCII 共用输入区（标题随模式变，不再单独占一行提示）
-        self.raw_frame = ttk.LabelFrame(parent, text="HEX格式发送", padding=8)
-        self.raw_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))
-        self.raw_frame.columnconfigure(0, weight=1)
-        self.raw_frame.rowconfigure(0, weight=1)
-
-        # 保留对象，供模式切换改文案；不 grid，不占高度
-        self.raw_hint = ttk.Label(self.raw_frame, text="")
-
-        self.raw_text = tk.Text(
-            self.raw_frame,
-            height=6,
-            font=self.serial_font,
-            relief="solid",
-            borderwidth=1,
-            highlightthickness=1,
-            highlightbackground="#C0C0C0",
-            highlightcolor="#C0C0C0",
-            bd=1,
+        # HEX 输入
+        self.raw_hex_frame = ttk.LabelFrame(center, text="HEX格式发送", padding=6)
+        self.raw_hex_frame.grid(row=0, column=0, sticky="nsew")
+        self.raw_hex_frame.columnconfigure(0, weight=1)
+        self.raw_hex_frame.rowconfigure(0, weight=1)
+        self.raw_hex_text = tk.Text(
+            self.raw_hex_frame, height=4, font=self.serial_font,
+            relief="solid", borderwidth=1,
+            highlightthickness=1, highlightbackground="#C0C0C0",
+            highlightcolor="#C0C0C0", bd=1,
         )
-        # 占满整框：row=0, column=0
-        self.raw_text.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+        self.raw_hex_text.grid(row=0, column=0, sticky="nsew")
 
-        # 周期发送 + 操作按钮（两行，避免窄宽度下被裁切）
+        # ASCII 输入（独立内容）
+        self.raw_ascii_frame = ttk.LabelFrame(center, text="ASCII格式发送", padding=6)
+        self.raw_ascii_frame.grid(row=0, column=0, sticky="nsew")
+        self.raw_ascii_frame.columnconfigure(0, weight=1)
+        self.raw_ascii_frame.rowconfigure(0, weight=1)
+        self.raw_ascii_text = tk.Text(
+            self.raw_ascii_frame, height=4, font=self.serial_font,
+            relief="solid", borderwidth=1,
+            highlightthickness=1, highlightbackground="#C0C0C0",
+            highlightcolor="#C0C0C0", bd=1,
+        )
+        self.raw_ascii_text.grid(row=0, column=0, sticky="nsew")
+
+        # 兼容旧代码里可能还写了 self.raw_text / self.raw_frame
+        self.raw_frame = self.raw_hex_frame
+        self.raw_text = self.raw_hex_text
+
+        # ===== 右：发送操作 =====
         act = ttk.LabelFrame(parent, text="发送操作", padding=6)
-        act.grid(row=3, column=0, sticky="ew")
+        act.grid(row=0, column=2, sticky="nsew")
         act.columnconfigure(0, weight=1)
+        act.columnconfigure(1, weight=1)
+        for r in range(3):
+            act.rowconfigure(r, weight=1, uniform="sendact")
 
-        # 第一行：间隔 + 启用循环
-        row_a = ttk.Frame(act)
-        row_a.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        ttk.Label(row_a, text="间隔(ms):").pack(side="left")
-        ivs = ttk.Spinbox(
-            row_a, from_=10, to=3600000, increment=10,
+        # 第 1 行：发送 | 清空输入
+        self.send_once_btn = ttk.Button(
+            act, text="发送", width=10, style="SendOutline.TButton",
+            command=self._safe(self._on_send_once),
+        )
+        self.send_once_btn.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=(0, 4))
+
+        self.clear_send_btn = ttk.Button(
+            act, text="清空输入", width=10, style="SendOutline.TButton",
+            command=self._safe(self._on_clear_send),
+        )
+        self.clear_send_btn.grid(row=0, column=1, sticky="nsew", pady=(0, 4))
+
+        # 第 2 行：自动追加校验位 | 算法
+        self.crc_auto_btn = ttk.Button(
+            act, text="自动追加校验位", width=14, style="SendOutline.TButton",
+            command=self._safe(self._toggle_crc_auto_btn),
+        )
+        self.crc_auto_btn.grid(row=1, column=0, sticky="nsew", padx=(0, 4), pady=(0, 4))
+
+        self.crc_algo_combo = ttk.Combobox(
+            act, textvariable=self.tx_crc_algo_var,
+            values=["ADD8", "0-ADD8", "XOR8", "ADD16",
+                    "ModbusCRC16", "CCITT-CRC16", "CRC32"],
+            width=9, state="readonly",
+        )
+        self.crc_algo_combo.grid(row=1, column=1, sticky="nsew", pady=(0, 4))
+        self.crc_algo_combo.set("ADD8")
+        try:
+            _enable_full_combobox(self.crc_algo_combo)
+        except Exception:
+            pass
+
+        # 第 3 行：自动发送 | 间隔
+        self.tx_cycle_btn = ttk.Button(
+            act, text="自动发送", width=14, style="SendOutline.TButton",
+            command=self._safe(self._on_toggle_cycle_send),
+        )
+        self.tx_cycle_btn.grid(row=2, column=0, sticky="nsew", padx=(0, 4))
+
+        right_iv = ttk.Frame(act)
+        right_iv.grid(row=2, column=1, sticky="nsew")
+        ttk.Label(right_iv, text="间隔(ms)").pack(side="left", padx=(0, 4))
+        ttk.Spinbox(
+            right_iv, from_=10, to=3600000, increment=10,
             textvariable=self.tx_interval_ms_var, width=8,
-        )
-        ivs.pack(side="left", padx=(2, 8))
-        ttk.Checkbutton(row_a, text="启用循环", variable=self.tx_cycle_var).pack(
-            side="left", padx=(0, 8)
-        )
+        ).pack(side="left", fill="y")
 
-        ttk.Checkbutton(
-            row_a,
-            text="自动追加校验",
-            variable=self.tx_auto_crc8_var,
-        ).pack(side="left", padx=(0, 8))
-
-        # 第二行：发送一次 + 开始循环（单独一行，避免被裁）
-        row_b = ttk.Frame(act)
-        row_b.grid(row=1, column=0, sticky="ew", pady=(0, 4))
-        self.send_once_btn = RoundedButton(
-            row_b, text="▶ 发送一次", command=self._safe(self._on_send_once)
-        )
-        self.send_once_btn.pack(side="left", padx=2)
-        self.tx_cycle_btn = RoundedButton(
-            row_b, text="▶ 开始循环", command=self._safe(self._on_toggle_cycle_send)
-        )
-        self.tx_cycle_btn.pack(side="left", padx=2)
-
-        # 第三行：复制 / 清空
-        row_c = ttk.Frame(act)
-        row_c.grid(row=2, column=0, sticky="ew")
-        self.copy_hex_btn = RoundedButton(
-            row_c, text="复制当前帧 HEX", command=self._safe(self._on_copy_hex)
-        )
-        self.copy_hex_btn.pack(side="left", padx=2)
-        self.clear_send_btn = RoundedButton(
-            row_c, text="清空输入", command=self._safe(self._on_clear_send)
-        )
-        self.clear_send_btn.pack(side="left", padx=2)
-
+        self._sync_crc_auto_btn_style()
+        self._sync_tx_cycle_btn_style()
         self._on_send_mode_change()
+        # 删掉 _redraw_send_btns（ttk.Button 不需要）
+        def _redraw_send_btns():
+            for b in list(self._send_mode_btns.values()) + [
+                getattr(self, "send_once_btn", None),
+                getattr(self, "clear_send_btn", None),
+                getattr(self, "crc_auto_btn", None),
+                getattr(self, "tx_cycle_btn", None),
+            ]:
+                if b is None:
+                    continue
+                try:
+                    b.update_idletasks()
+                    b._on_configure()
+                    b._draw()
+                except Exception:
+                    pass
+        self.root.after(80, _redraw_send_btns)
+        self.root.after(250, _redraw_send_btns)
 
     def _refresh_send_cmd_list(self) -> None:
         """根据当前协议刷新发送面板的命令下拉。"""
@@ -2523,47 +3028,17 @@ class ProtocolParserApp:
         self._on_send_mode_change()
 
     def _layout_send_mode_seg(self, event=None) -> None:
-        """三个发送模式按钮均分整行宽度，消除右侧空白。"""
-        seg = getattr(self, "_send_mode_seg", None)
-        btns = getattr(self, "_send_mode_btns", None)
-        if not seg or not btns:
-            return
-        try:
-            w = int(seg.winfo_width())
-        except Exception:
-            return
-        if w < 60:
-            return
-        each = max((w - 8) // 3, 48)
-        for btn in btns.values():
-            try:
-                # RoundedButton.configure(width=) 走 Canvas 像素宽度
-                btn.configure(width=each)
-                # 若文字未居中，强制重绘
-                if hasattr(btn, "_draw"):
-                    btn._draw()
-                # 居中文字
-                if hasattr(btn, "_text_id"):
-                    h = int(btn.cget("height") or 24)
-                    btn.coords(btn._text_id, each / 2, h / 2)
-            except Exception:
-                pass
+        return
 
     def _sync_send_mode_btn_style(self) -> None:
         cur = self.send_mode_var.get()
         for value, btn in getattr(self, "_send_mode_btns", {}).items():
             try:
-                if value == cur:
-                    btn.configure(style="Success.TButton")
-                else:
-                    btn.configure(style="Toolbar.TButton")
+                btn.configure(
+                    style="SendSuccess.TButton" if value == cur else "SendOutline.TButton"
+                )
             except Exception:
                 pass
-        # 换肤后保持均分
-        try:
-            self._layout_send_mode_seg()
-        except Exception:
-            pass
 
     def _on_send_mode_change(self) -> None:
         mode = self.send_mode_var.get()
@@ -2572,16 +3047,37 @@ class ProtocolParserApp:
         except Exception:
             pass
 
+        # 先全部藏起
+        for fr in (
+            getattr(self, "protocol_frame", None),
+            getattr(self, "raw_hex_frame", None),
+            getattr(self, "raw_ascii_frame", None),
+        ):
+            if fr is not None:
+                try:
+                    fr.grid_remove()
+                except Exception:
+                    pass
+
         if mode == "protocol":
-            self.protocol_frame.grid()
-            self.raw_frame.grid_remove()
-        else:
-            self.protocol_frame.grid_remove()
-            self.raw_frame.grid()
-            if mode == "raw_hex":
-                self.raw_frame.configure(text="HEX格式发送")
-            else:  # raw_ascii
-                self.raw_frame.configure(text="ASCII格式发送")
+            try:
+                self.protocol_frame.grid(row=0, column=0, sticky="nsew")
+            except Exception:
+                pass
+        elif mode == "raw_hex":
+            try:
+                self.raw_hex_frame.grid(row=0, column=0, sticky="nsew")
+            except Exception:
+                pass
+            self.raw_frame = self.raw_hex_frame
+            self.raw_text = self.raw_hex_text
+        else:  # raw_ascii
+            try:
+                self.raw_ascii_frame.grid(row=0, column=0, sticky="nsew")
+            except Exception:
+                pass
+            self.raw_frame = self.raw_ascii_frame
+            self.raw_text = self.raw_ascii_text
 
     def _current_fields_text(self) -> str:
         try:
@@ -2590,8 +3086,11 @@ class ProtocolParserApp:
             return ""
 
     def _current_raw_text(self) -> str:
+        mode = self.send_mode_var.get()
         try:
-            return self.raw_text.get("1.0", "end-1c")
+            if mode == "raw_ascii":
+                return self.raw_ascii_text.get("1.0", "end-1c")
+            return self.raw_hex_text.get("1.0", "end-1c")
         except Exception:
             return ""
 
@@ -2665,16 +3164,25 @@ class ProtocolParserApp:
                     raise ValueError(f"HEX 格式非法：{e}") from e
 
                 if self.tx_auto_crc8_var.get():
-                    # 与协议组帧一致：默认 sum；有配置则用 frame.checksum.algorithm
-                    cs_algo = "sum"
+                    from protocol_parser.parser import calc_checksum
+                    label = (self.tx_crc_algo_var.get() or "ADD8").strip()
+                    cs_bytes = calc_checksum(payload, label)
+                    payload = payload + cs_bytes
+                    cs_algo = (self.tx_crc_algo_var.get() or "ADD8").strip().lower()
+                    # 兼容 calc_checksum：ADD8 按 sum 处理
+                    if cs_algo in ("add8", "sum"):
+                        cs_algo = "sum"
                     cs_len = 1
-                    try:
-                        cs_cfg = (self.cfg or {}).get("frame", {}).get("checksum") or {}
-                        if isinstance(cs_cfg, dict):
-                            cs_algo = str(cs_cfg.get("algorithm") or "sum").lower()
-                            cs_len = int(cs_cfg.get("length") or 1)
-                    except Exception:
+                    if cs_algo in ("none", ""):
                         pass
+                    else:
+                        try:
+                            # 仍允许协议配置覆盖长度
+                            cs_cfg = (self.cfg or {}).get("frame", {}).get("checksum") or {}
+                            if isinstance(cs_cfg, dict):
+                                cs_len = int(cs_cfg.get("length") or 1)
+                        except Exception:
+                            cs_len = 1
                     if cs_algo not in ("none", ""):
                         cs_bytes = calc_checksum(payload, cs_algo)
                         if len(cs_bytes) < cs_len:
@@ -2693,6 +3201,29 @@ class ProtocolParserApp:
         except Exception as e:
             self._report_error("发送失败", e)
 
+    def _sync_crc_auto_btn_style(self) -> None:
+        on = bool(self.tx_auto_crc8_var.get())
+        try:
+            self.crc_auto_btn.configure(
+                style="SendSuccess.TButton" if on else "SendOutline.TButton"
+            )
+        except Exception:
+            pass
+
+    def _toggle_crc_auto_btn(self) -> None:
+        self.tx_auto_crc8_var.set(not bool(self.tx_auto_crc8_var.get()))
+        self._sync_crc_auto_btn_style()
+
+    def _sync_tx_cycle_btn_style(self) -> None:
+        on = bool(self.tx_cycle_var.get()) and getattr(self, "_tx_cycle_job", None) is not None
+        try:
+            self.tx_cycle_btn.configure(
+                text="自动发送",
+                style="SendSuccess.TButton" if on else "SendOutline.TButton",
+            )
+        except Exception:
+            pass
+
     def _on_toggle_cycle_send(self) -> None:
         # 正在循环（有 after 任务）→ 停止
         if getattr(self, "_tx_cycle_job", None) is not None:
@@ -2703,7 +3234,7 @@ class ProtocolParserApp:
                 pass
             self._tx_cycle_job = None
             try:
-                self.tx_cycle_btn.configure(text="▶ 开始循环")
+                self._sync_tx_cycle_btn_style()
             except Exception:
                 pass
             self._sync_inputs_to_vars()
@@ -2732,13 +3263,13 @@ class ProtocolParserApp:
             return
 
         self.tx_cycle_var.set(True)
-        try:
-            self.tx_cycle_btn.configure(text="⏹ 停止循环")
-        except Exception:
-            pass
         self._sync_inputs_to_vars()
         self._on_send_once()
         self._schedule_tx_cycle()
+        try:
+            self._sync_tx_cycle_btn_style()
+        except Exception:
+            pass
         self._set_status("循环发送已开始")
 
 
@@ -2757,7 +3288,7 @@ class ProtocolParserApp:
             if not still:
                 self.tx_cycle_var.set(False)
                 try:
-                    self.tx_cycle_btn.configure(text="▶ 开始循环")
+                    self._sync_tx_cycle_btn_style()
                 except Exception:
                     pass
                 self._tx_cycle_job = None
@@ -2771,7 +3302,7 @@ class ProtocolParserApp:
                     pass
                 self.tx_cycle_var.set(False)
                 try:
-                    self.tx_cycle_btn.configure(text="▶ 开始循环")
+                    self._sync_tx_cycle_btn_style()
                 except Exception:
                     pass
                 self._tx_cycle_job = None
@@ -2805,15 +3336,16 @@ class ProtocolParserApp:
             self._report_error("复制失败", e)
 
     def _on_clear_send(self) -> None:
+        mode = self.send_mode_var.get()
         try:
-            self.fields_text.delete("1.0", "end")
+            if mode == "protocol":
+                self.fields_text.delete("1.0", "end")
+            elif mode == "raw_ascii":
+                self.raw_ascii_text.delete("1.0", "end")
+            else:
+                self.raw_hex_text.delete("1.0", "end")
         except Exception:
             pass
-        try:
-            self.raw_text.delete("1.0", "end")
-        except Exception:
-            pass
-        self._sync_inputs_to_vars()
 
     # ---------- 协议加载 ----------
 
@@ -3013,7 +3545,7 @@ class ProtocolParserApp:
         self.serial_text.configure(state="disabled")
         self.rx_frame_count = 0
         self.tx_frame_count = 0
-        self.stats_var.set("RX 0  TX 0  错误 0  缓冲 0B")
+        self._update_stats_bar()
 
     def _toggle_view_mode(self) -> None:
         """在「协议解析模式」与「原始数据模式」之间切换。"""
@@ -3094,7 +3626,7 @@ class ProtocolParserApp:
         # trace_add 会自动触发 _on_topmost_change()
 
     def _toggle_send_panel(self) -> None:
-        """显示/隐藏指令发送面板（固定宽度，不可横向拖动）。"""
+        """显示/隐藏底部指令发送横条。"""
         try:
             if self.send_frame_visible:
                 self.send_outer.grid_remove()
@@ -3105,10 +3637,9 @@ class ProtocolParserApp:
                     pass
                 self._set_status("已隐藏指令发送面板")
             else:
-                self.send_outer.grid(row=0, column=1, sticky="ns")
-                # 再次锁定宽度（某些主题下 grid 后需重设）
+                self.send_outer.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(4, 6))
                 try:
-                    self.send_outer.configure(width=self.SEND_PANEL_WIDTH)
+                    self.send_outer.configure(height=self.SEND_PANEL_HEIGHT)
                     self.send_outer.grid_propagate(False)
                 except Exception:
                     pass
@@ -3321,7 +3852,7 @@ class ProtocolParserApp:
 
         dlg = tk.Toplevel(self.root)
         dlg.title("添加串口")
-        _dlg_w, _dlg_h = 520, 240
+        _dlg_w, _dlg_h = 520, 180
         dlg.geometry(f"{_dlg_w}x{_dlg_h}")
         dlg.resizable(False, False)
         dlg.transient(self.root)
@@ -3638,6 +4169,7 @@ class ProtocolParserApp:
             self._start_serial()
         except Exception as e:  # noqa: BLE001
             self._report_error("切换串口失败", e)
+        self._update_left_status()
 
     def _on_serial_param_change_while_collecting(self, _event=None) -> None:
         """监控中修改波特率/数据位/停止位：按新参数重新连接。"""
@@ -3659,6 +4191,7 @@ class ProtocolParserApp:
             self._start_serial()
         except Exception as e:
             self._report_error("切换串口参数失败", e)
+        self._update_left_status()
 
     def _start_serial(self) -> None:
         """启动串口监控。
@@ -3789,6 +4322,7 @@ class ProtocolParserApp:
             self._set_status(f"监控中: {port} @ {baudrate} ({mode_label}){proto_tag} - 保存原始数据")
         else:
             self._set_status(f"监控中: {port} @ {baudrate} ({mode_label}){proto_tag}")
+        self._update_left_status()
 
     def _on_serial_sender_change(self, *args) -> None:
         """切换发送方（Radiobutton变化会直接改variable，这里主动同步给collector）。"""
@@ -3905,6 +4439,7 @@ class ProtocolParserApp:
         """点击保存原始数据按钮时切换状态。"""
         self.save_raw_enabled_var.set(not self.save_raw_enabled_var.get())
         self._on_save_raw_toggle()
+        self._update_left_status()
 
     def _write_raw_data(self, data: bytes, ts: float, prefix: str = "") -> None:
         """串口线程只入队，禁止写文件、禁止读 Tk 变量。"""
@@ -4050,6 +4585,7 @@ class ProtocolParserApp:
             self.save_raw_enabled_var.set(False)
             self._save_raw_active = False
             self.save_raw_file = None
+        self._update_left_status()
 
     def _rotate_save_raw_file(self) -> None:
         """超过大小限制时换新文件（主线程）。"""
@@ -4087,6 +4623,7 @@ class ProtocolParserApp:
             except Exception:
                 pass
             self.save_raw_file = None
+        self._update_left_status()
 
     def _flush_save_raw_buf(self) -> None:
         buf = getattr(self, "_save_raw_buf", None)
@@ -4119,6 +4656,10 @@ class ProtocolParserApp:
         self.save_raw_current_size += len(data)
 
     def _stop_serial(self) -> None:
+        try:
+            self._cmdlib_stop_cycle()
+        except Exception:
+            pass
         """停止串口监控。"""
         # 先停周期发送（先取消 Tk after 任务，再写标志）
         try:
@@ -4133,7 +4674,9 @@ class ProtocolParserApp:
         self.tx_cycle_var.set(False)
         try:
             if self.tx_cycle_btn:
-                self.tx_cycle_btn.configure(text="▶ 开始循环", state="normal")
+                self.tx_cycle_var.set(False)
+                self._tx_cycle_job = None
+                self._sync_tx_cycle_btn_style()
         except Exception:
             pass
         try:
@@ -4154,6 +4697,7 @@ class ProtocolParserApp:
         except Exception:
             self.start_btn.configure(text="开始监控")
         self._set_status("已停止")
+        self._update_left_status()
 
     # ---------- UI 队列处理 ----------
 
@@ -4354,9 +4898,7 @@ class ProtocolParserApp:
             self._write_log(result, ts, direction="RX")
 
         if self.collector and self.collector.sync:
-            self.stats_var.set(
-                f"RX {self.rx_frame_count}  TX {self.tx_frame_count}  错误 {self.collector.sync.error_count}  缓冲 {self.collector.sync.partial_bytes}B"
-            )
+            self._update_stats_bar()
 
     def _display_serial_tx(self, data_sent: bytes, ts: float) -> None:
         """显示 TX 发送出去的数据。协议帧：
@@ -4435,9 +4977,7 @@ class ProtocolParserApp:
             self.serial_text.see("end")
         self.serial_text.configure(state="disabled")
         if self.collector and self.collector.sync:
-            self.stats_var.set(
-                f"RX {self.rx_frame_count}  TX {self.tx_frame_count}  错误 {self.collector.sync.error_count}  缓冲 {self.collector.sync.partial_bytes}B"
-            )
+            self._update_stats_bar()
 
     def _display_serial_error(self, msg: str) -> None:
         """显示串口错误。"""
@@ -4487,6 +5027,9 @@ class ProtocolParserApp:
 
         try:
             content = self.serial_text.get("1.0", "end-1c")
+            # chars = len(content)
+            # lines = content.count("\n") + (1 if content else 0)
+            # approx_kb = chars / 1024.0
         except Exception:
             content = ""
         if not content.strip():
@@ -4547,9 +5090,38 @@ class ProtocolParserApp:
         return ""
 
     def _set_status(self, msg: str) -> None:
-        """设置状态栏。"""
-        self.status_var.set(msg)
-        self.root.update_idletasks()
+        try:
+            self._update_left_status(tip=msg or "")
+        except Exception:
+            self.status_var.set(msg or "")
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+    def _update_stats_bar(self) -> None:
+        """右下角：RX/TX/错误/串口缓冲 + 显示区行数/大约体积。"""
+        err = 0
+        partial = 0
+        if self.collector and getattr(self.collector, "sync", None):
+            err = getattr(self.collector.sync, "error_count", 0) or 0
+            partial = getattr(self.collector.sync, "partial_bytes", 0) or 0
+
+        lines = 0
+        approx_kb = 0.0
+        try:
+            if hasattr(self, "serial_text") and self.serial_text is not None:
+                lines = int(self.serial_text.index("end-1c").split(".")[0])
+                # 用 get 算字符数更兼容（部分 Tk 的 count 行为不一致）
+                content = self.serial_text.get("1.0", "end-1c")
+                approx_kb = len(content) / 1024.0
+        except Exception:
+            lines = int(getattr(self, "_disp_line_count", 0) or 0)
+
+        self.stats_var.set(
+            f"RX {self.rx_frame_count}  TX {self.tx_frame_count}  "
+            f"错误 {err}  缓冲 {partial}B  |  显示 {lines}行/{approx_kb:.1f}KB"
+        )
 
     def on_close(self) -> None:
         """关闭主窗口。

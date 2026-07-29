@@ -474,24 +474,84 @@ def to_hex(data: bytes) -> str:
 # ---------- 校验算法 ----------
 
 def calc_checksum(data: bytes, algorithm: str) -> bytes:
-    algorithm = algorithm.lower()
-    if algorithm == "sum":
+    """计算校验字节。algorithm 不区分大小写，支持别名。"""
+    algo = (algorithm or "").strip().lower().replace("-", "").replace("_", "")
+
+    # ---- 8 位 ----
+    # ADD8 / sum：字节累加 & 0xFF
+    if algo in ("sum", "add8", "add"):
         return bytes([sum(data) & 0xFF])
-    if algorithm == "xor":
+
+    # 0-ADD8：对 ADD8 取补（(0 - sum) & 0xFF），常见于部分协议
+    if algo in ("0add8", "0-add8", "negadd8", "add8neg"):
+        return bytes([(-sum(data)) & 0xFF])
+
+    # XOR8
+    if algo in ("xor", "xor8"):
         v = 0
         for b in data:
             v ^= b
         return bytes([v & 0xFF])
-    if algorithm == "crc8":
+
+    # CRC8（多项式 0x07，初值 0xFF）
+    if algo == "crc8":
         crc = 0xFF
         for b in data:
             crc ^= b
             for _ in range(8):
-                crc = (crc << 1) ^ 0x07 if crc & 0x80 else crc << 1
-                crc &= 0xFF
+                crc = ((crc << 1) ^ 0x07) & 0xFF if (crc & 0x80) else ((crc << 1) & 0xFF)
         return bytes([crc])
-    raise ChecksumAlgoError(f"不支持的校验算法: {algorithm}")
 
+    # ---- 16 位 ----
+    # ADD16：累加 & 0xFFFF，大端 2 字节
+    if algo in ("add16", "sum16"):
+        s = sum(data) & 0xFFFF
+        return bytes([(s >> 8) & 0xFF, s & 0xFF])
+
+    # Modbus CRC16（poly 0xA001，初值 0xFFFF，低字节在前）
+    if algo in ("modbuscrc16", "modbus", "crc16modbus"):
+        crc = 0xFFFF
+        for b in data:
+            crc ^= b
+            for _ in range(8):
+                if crc & 0x0001:
+                    crc = (crc >> 1) ^ 0xA001
+                else:
+                    crc >>= 1
+        return bytes([crc & 0xFF, (crc >> 8) & 0xFF])  # little-endian
+
+    # CRC16-CCITT（poly 0x1021，初值 0xFFFF，高字节在前）
+    if algo in ("ccittcrc16", "crc16ccitt", "ccitt"):
+        crc = 0xFFFF
+        for b in data:
+            crc ^= (b << 8) & 0xFFFF
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+                else:
+                    crc = (crc << 1) & 0xFFFF
+        return bytes([(crc >> 8) & 0xFF, crc & 0xFF])  # big-endian
+
+    # ---- 32 位 ----
+    # CRC32（IEEE，poly 0xEDB88320，初值 0xFFFFFFFF，结果取反，小端）
+    if algo == "crc32":
+        crc = 0xFFFFFFFF
+        for b in data:
+            crc ^= b
+            for _ in range(8):
+                if crc & 1:
+                    crc = (crc >> 1) ^ 0xEDB88320
+                else:
+                    crc >>= 1
+        crc ^= 0xFFFFFFFF
+        return bytes([
+            crc & 0xFF,
+            (crc >> 8) & 0xFF,
+            (crc >> 16) & 0xFF,
+            (crc >> 24) & 0xFF,
+        ])
+
+    raise ChecksumAlgoError(f"不支持的校验算法: {algorithm}")
 
 # ---------- 帧拆分 ----------
 

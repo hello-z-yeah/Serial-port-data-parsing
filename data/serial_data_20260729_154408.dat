@@ -1,0 +1,1107 @@
+[2026-07-29 15:44:40.737] [509253.960000] [ DEBUG] [15:44:37.960 ] tou: recv=get_down
+[2026-07-29 15:44:40.737] [509253.960000] [ DEBUG] [15:44:37.960 ] tou: send=down none
+[2026-07-29 15:44:40.737] [509253.980000] [  INFO] [509253980]<D> send uart ping..[509253.980000] [  INFO] [509253980]<D> serial sendA5 A5[509253.980000] [  INFO] 03 20 00 01 00 6E 
+[2026-07-29 15:44:40.737] [509254.000000] [  INFO] [509253990]<D> serial recv len [509254.000000] [  INFO] [509254000]<D> serial recv data[509254.000000] [  INFO] A5 03 20 00 01 01 6F 
+[2026-07-29 15:44:40.737] [509254.080000] [ DEBUG] [15:44:38.080 ] tou: recv=get_down
+[2026-07-29 15:44:40.737] [509254.080000] [ DEBUG] [15:44:38.080 ] tou: send=down none
+[2026-07-29 15:44:40.862] [509254.200000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:40.862] [509254.200000] [ DEBUG] [15:44:38.200 ] tou: recv=get_down
+[2026-07-29 15:44:40.862] [509254.200000] [ DEBUG] [15:44:38.200 ] tou: send=down none
+[2026-07-29 15:44:40.987] [509254.330000] [ DEBUG] [15:44:38.330 ] tou: recv=get_down
+[2026-07-29 15:44:40.987] [509254.330000] [ DEBUG] [15:44:38.330 ] tou: send=down none
+[2026-07-29 15:44:41.096] [509254.450000] [ DEBUG] [15:44:38.450 ] tou: recv=get_down
+[2026-07-29 15:44:41.096] [509254.450000] [ DEBUG] [15:44:38.450 ] tou: send=down none
+[2026-07-29 15:44:41.220] [509254.570000] [ DEBUG] [15:44:38.570 ] tou: recv=get_down
+[2026-07-29 15:44:41.220] [509254.570000] [ DEBUG] [15:44:38.570 ] tou: send=down none
+[2026-07-29 15:44:41.466] [509254.690000] [ DEBUG] [15:44:38.690 ] tou: recv=get_down
+[2026-07-29 15:44:41.466] [509254.690000] [ DEBUG] [15:44:38.690 ] tou: send=down none
+[2026-07-29 15:44:41.466] [509254.700000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:41.466] [509254.700000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509254 ts_last 507888
+[2026-07-29 15:44:41.466] [509254.810000] [ DEBUG] [15:44:38.810 ] tou: recv=get_down
+[2026-07-29 15:44:41.466] [509254.810000] [ DEBUG] [15:44:38.810 ] tou: send=down none
+[2026-07-29 15:44:41.590] [509254.930000] [ DEBUG] [15:44:38.930 ] tou: recv=get_down
+[2026-07-29 15:44:41.590] [509254.930000] [ DEBUG] [15:44:38.930 ] tou: send=down none
+[2026-07-29 15:44:41.699] [509255.050000] [ DEBUG] [15:44:39.050 ] tou: recv=get_down
+[2026-07-29 15:44:41.699] [509255.050000] [ DEBUG] [15:44:39.050 ] tou: send=down none
+[2026-07-29 15:44:41.947] [509255.170000] [ DEBUG] [15:44:39.170 ] tou: recv=get_down
+[2026-07-29 15:44:41.947] [509255.170000] [ DEBUG] [15:44:39.170 ] tou: send=down none
+[2026-07-29 15:44:41.947] [509255.210000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:41.947] [509255.290000] [ DEBUG] [15:44:39.290 ] tou: recv=get_down
+[2026-07-29 15:44:41.947] [509255.290000] [ DEBUG] [15:44:39.290 ] tou: send=down none
+[2026-07-29 15:44:43.386] [509256.720000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:43.386] [509256.720000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509256 ts_last 507888
+[2026-07-29 15:44:43.386] [509256.730000] [ DEBUG] [15:44:40.730 ] tou: recv=get_down
+[2026-07-29 15:44:43.386] [509256.730000] [ DEBUG] [15:44:40.730 ] tou: send=down none
+[2026-07-29 15:44:43.510] [509256.850000] [ DEBUG] [15:44:40.850 ] tou: recv=get_down
+[2026-07-29 15:44:43.510] [509256.850000] [ DEBUG] [15:44:40.850 ] tou: send=down none
+[2026-07-29 15:44:43.619] [509256.970000] [ DEBUG] [15:44:40.970 ] tou: recv=get_down
+[2026-07-29 15:44:43.619] [509256.970000] [ DEBUG] [15:44:40.970 ] tou: send=down none
+[2026-07-29 15:44:43.743] [509257.090000] [ DEBUG] [15:44:41.090 ] tou: recv=get_down
+[2026-07-29 15:44:43.743] [509257.090000] [ DEBUG] [15:44:41.090 ] tou: send=down none
+[2026-07-29 15:44:43.976] [509257.210000] [ DEBUG] [15:44:41.210 ] tou: recv=get_down
+[2026-07-29 15:44:43.976] [509257.210000] [ DEBUG] [15:44:41.210 ] tou: send=down none
+[2026-07-29 15:44:43.976] [509257.230000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:43.976] [509257.330000] [ DEBUG] [15:44:41.330 ] tou: recv=get_down
+[2026-07-29 15:44:43.976] [509257.330000] [ DEBUG] [15:44:41.330 ] tou: send=down none
+[2026-07-29 15:44:44.099] [509257.450000] [ DEBUG] [15:44:41.450 ] tou: recv=get_down
+[2026-07-29 15:44:44.099] [509257.450000] [ DEBUG] [15:44:41.450 ] tou: send=down none
+[2026-07-29 15:44:44.608] [509257.570000] [ DEBUG] [15:44:41.570 ] tou: recv=get_down
+[2026-07-29 15:44:44.608] [509257.570000] [ DEBUG] [15:44:41.570 ] tou: send=down none
+[2026-07-29 15:44:44.608] [509257.590000] [  INFO] [15:44:41.590 ] ots: -->kplv sent.
+[2026-07-29 15:44:44.608] [509257.630000] [ DEBUG] [15:44:41.630 ] ots: recvd 8Bytes
+[2026-07-29 15:44:44.608] [509257.630000] [  INFO] [15:44:41.630 ] ots: <--kplv ack.
+[2026-07-29 15:44:44.608] [509257.630000] [ DEBUG] [15:44:41.630 ] ots: event emit[id=11,txt=ots.keeplive,ext_len=0]
+[2026-07-29 15:44:44.608] [509257.640000] [ DEBUG] [15:44:41.640 ] ots: keeplive costtime = 50
+[2026-07-29 15:44:44.608] [509257.640000] [ DEBUG] [15:44:41.640 ] ots: ots.keeplive[11] happened!
+[2026-07-29 15:44:44.608] [509257.700000] [ DEBUG] [15:44:41.700 ] tou: recv=get_down
+[2026-07-29 15:44:44.608] [509257.700000] [ DEBUG] [15:44:41.700 ] tou: send=down none
+[2026-07-29 15:44:44.608] [509257.730000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:44.608] [509257.730000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509257 ts_last 507888
+[2026-07-29 15:44:44.608] [509257.810000] [ DEBUG] [D][rpc_agent] rpc_delegate_up 1106: up req: 58
+[2026-07-29 15:44:44.608] [509257.810000] [ DEBUG] [miio_client_func] ot_agent_recv_handler_one() mask msg = {"id":837872693,"method":"local.query_status","params":""},msg_len = 58, fd = 9
+[2026-07-29 15:44:44.608] [509257.820000] [ DEBUG] [15:44:41.820 ] miio_message: handle_local_msg_state:{"id":837872693,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:44:44.608] [509257.830000] [ DEBUG] [D][rpc_agent] mible_rpc_delegate_down 979: down: 1 67 {"id":837872693,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:44:44.608] [509257.840000] [ DEBUG] [D][] arch_log_handler 990: msg_len=67, msg={"id":837872693,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:44:44.608] [509257.850000] [ DEBUG] [D][] _local_status_msg_parse 873: s_otble_state=3
+[2026-07-29 15:44:44.608] [509257.860000] [ DEBUG] [15:44:41.860 ] tou: recv=get_down
+[2026-07-29 15:44:44.608] [509257.870000] [ DEBUG] [15:44:41.870 ] tou: send=down none
+[2026-07-29 15:44:44.608] [509257.950000] [ DEBUG] [15:44:41.950 ] tou: recv=get_down
+[2026-07-29 15:44:44.608] [509257.950000] [ DEBUG] [15:44:41.950 ] tou: send=down none
+[2026-07-29 15:44:44.717] [509258.060000] [  INFO] [15:44:42.060 ] miio_monitor: work time = 509258s, memory left = 46576
+[2026-07-29 15:44:44.717] [509258.070000] [ DEBUG] [15:44:42.070 ] tou: recv=get_down
+[2026-07-29 15:44:44.717] [509258.070000] [ DEBUG] [15:44:42.070 ] tou: send=down none
+[2026-07-29 15:44:44.963] [509258.190000] [ DEBUG] [15:44:42.190 ] tou: recv=get_down
+[2026-07-29 15:44:44.963] [509258.190000] [ DEBUG] [15:44:42.190 ] tou: send=down none
+[2026-07-29 15:44:44.963] [509258.240000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:44.963] [509258.310000] [ DEBUG] [15:44:42.310 ] tou: recv=get_down
+[2026-07-29 15:44:44.963] [509258.310000] [ DEBUG] [15:44:42.310 ] tou: send=down none
+[2026-07-29 15:44:45.087] [509258.430000] [ DEBUG] [15:44:42.430 ] tou: recv=get_down
+[2026-07-29 15:44:45.087] [509258.430000] [ DEBUG] [15:44:42.430 ] tou: send=down none
+[2026-07-29 15:44:45.211] [509258.550000] [ DEBUG] [15:44:42.550 ] tou: recv=get_down
+[2026-07-29 15:44:45.211] [509258.550000] [ DEBUG] [15:44:42.550 ] tou: send=down none
+[2026-07-29 15:44:45.443] [509258.670000] [ DEBUG] [15:44:42.670 ] tou: recv=get_down
+[2026-07-29 15:44:45.443] [509258.670000] [ DEBUG] [15:44:42.670 ] tou: send=down none
+[2026-07-29 15:44:45.443] [509258.740000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:45.443] [509258.740000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509258 ts_last 507888
+[2026-07-29 15:44:45.443] [509258.790000] [ DEBUG] [15:44:42.790 ] tou: recv=get_down
+[2026-07-29 15:44:45.443] [509258.790000] [ DEBUG] [15:44:42.790 ] tou: send=down none
+[2026-07-29 15:44:45.568] [509258.910000] [ DEBUG] [15:44:42.910 ] tou: recv=get_down
+[2026-07-29 15:44:45.568] [509258.910000] [ DEBUG] [15:44:42.910 ] tou: send=down none
+[2026-07-29 15:44:45.691] [509259.030000] [ DEBUG] [15:44:43.030 ] tou: recv=get_down
+[2026-07-29 15:44:45.691] [509259.030000] [ DEBUG] [15:44:43.030 ] tou: send=down none
+[2026-07-29 15:44:45.921] [509259.150000] [ DEBUG] [15:44:43.150 ] tou: recv=get_down
+[2026-07-29 15:44:45.921] [509259.150000] [ DEBUG] [15:44:43.150 ] tou: send=down none
+[2026-07-29 15:44:45.921] [509259.250000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:45.921] [509259.270000] [ DEBUG] [15:44:43.270 ] tou: recv=get_down
+[2026-07-29 15:44:45.921] [509259.270000] [ DEBUG] [15:44:43.270 ] tou: send=down none
+[2026-07-29 15:44:46.045] [509259.390000] [ DEBUG] [15:44:43.390 ] tou: recv=get_down
+[2026-07-29 15:44:46.045] [509259.390000] [ DEBUG] [15:44:43.390 ] tou: send=down none
+[2026-07-29 15:44:46.168] [509259.510000] [ DEBUG] [15:44:43.510 ] tou: recv=get_down
+[2026-07-29 15:44:46.168] [509259.510000] [ DEBUG] [15:44:43.510 ] tou: send=down none
+[2026-07-29 15:44:46.292] [509259.630000] [ DEBUG] [15:44:43.630 ] tou: recv=get_down
+[2026-07-29 15:44:46.292] [509259.630000] [ DEBUG] [15:44:43.630 ] tou: send=down none
+[2026-07-29 15:44:46.522] [509259.750000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:46.522] [509259.750000] [ DEBUG] [D][mible_beacon] one_second_handler 1548: one_second_handler running
+[2026-07-29 15:44:46.522] [509259.750000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509259 ts_last 507888
+[2026-07-29 15:44:46.522] [509259.760000] [ DEBUG] [15:44:43.760 ] tou: recv=get_down
+[2026-07-29 15:44:46.522] [509259.770000] [ DEBUG] [15:44:43.770 ] tou: send=down none
+[2026-07-29 15:44:46.522] [509259.870000] [ DEBUG] [15:44:43.870 ] tou: recv=get_down
+[2026-07-29 15:44:46.522] [509259.870000] [ DEBUG] [15:44:43.870 ] tou: send=down none
+[2026-07-29 15:44:46.645] [509259.990000] [ DEBUG] [15:44:43.990 ] tou: recv=get_down
+[2026-07-29 15:44:46.645] [509259.990000] [ DEBUG] [15:44:43.990 ] tou: send=down none
+[2026-07-29 15:44:46.767] [509260.110000] [ DEBUG] [15:44:44.110 ] tou: recv=get_down
+[2026-07-29 15:44:46.767] [509260.110000] [ DEBUG] [15:44:44.110 ] tou: send=down none
+[2026-07-29 15:44:47.000] [509260.230000] [ DEBUG] [15:44:44.230 ] tou: recv=get_down
+[2026-07-29 15:44:47.000] [509260.230000] [ DEBUG] [15:44:44.230 ] tou: send=down none
+[2026-07-29 15:44:47.000] [509260.260000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:47.000] [509260.350000] [ DEBUG] [15:44:44.350 ] tou: recv=get_down
+[2026-07-29 15:44:47.000] [509260.350000] [ DEBUG] [15:44:44.350 ] tou: send=down none
+[2026-07-29 15:44:47.125] [509260.470000] [ DEBUG] [15:44:44.470 ] tou: recv=get_down
+[2026-07-29 15:44:47.125] [509260.470000] [ DEBUG] [15:44:44.470 ] tou: send=down none
+[2026-07-29 15:44:47.249] [509260.590000] [ DEBUG] [15:44:44.590 ] tou: recv=get_down
+[2026-07-29 15:44:47.249] [509260.590000] [ DEBUG] [15:44:44.590 ] tou: send=down none
+[2026-07-29 15:44:47.483] [509260.710000] [ DEBUG] [15:44:44.710 ] tou: recv=get_down
+[2026-07-29 15:44:47.483] [509260.710000] [ DEBUG] [15:44:44.710 ] tou: send=down none
+[2026-07-29 15:44:47.483] [509260.760000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:47.483] [509260.760000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509260 ts_last 507888
+[2026-07-29 15:44:47.483] [509260.830000] [ DEBUG] [15:44:44.830 ] tou: recv=get_down
+[2026-07-29 15:44:47.483] [509260.830000] [ DEBUG] [15:44:44.830 ] tou: send=down none
+[2026-07-29 15:44:49.045] [509262.270000] [ DEBUG] [15:44:46.270 ] tou: recv=get_down
+[2026-07-29 15:44:49.045] [509262.270000] [ DEBUG] [15:44:46.270 ] tou: send=down none
+[2026-07-29 15:44:49.045] [509262.280000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:49.045] [509262.390000] [ DEBUG] [15:44:46.390 ] tou: recv=get_down
+[2026-07-29 15:44:49.045] [509262.390000] [ DEBUG] [15:44:46.390 ] tou: send=down none
+[2026-07-29 15:44:49.169] [509262.510000] [ DEBUG] [15:44:46.510 ] tou: recv=get_down
+[2026-07-29 15:44:49.169] [509262.510000] [ DEBUG] [15:44:46.510 ] tou: send=down none
+[2026-07-29 15:44:49.279] [509262.630000] [ DEBUG] [15:44:46.630 ] tou: recv=get_down
+[2026-07-29 15:44:49.279] [509262.630000] [ DEBUG] [15:44:46.630 ] tou: send=down none
+[2026-07-29 15:44:49.527] [509262.750000] [ DEBUG] [15:44:46.750 ] tou: recv=get_down
+[2026-07-29 15:44:49.527] [509262.750000] [ DEBUG] [15:44:46.750 ] tou: send=down none
+[2026-07-29 15:44:49.527] [509262.780000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:49.527] [509262.780000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509262 ts_last 507888
+[2026-07-29 15:44:49.527] [509262.870000] [ DEBUG] [15:44:46.870 ] tou: recv=get_down
+[2026-07-29 15:44:49.527] [509262.870000] [ DEBUG] [15:44:46.870 ] tou: send=down none
+[2026-07-29 15:44:49.651] [509262.990000] [ DEBUG] [15:44:46.990 ] tou: recv=get_down
+[2026-07-29 15:44:49.651] [509262.990000] [ DEBUG] [15:44:46.990 ] tou: send=down none
+[2026-07-29 15:44:49.761] [509263.110000] [ DEBUG] [15:44:47.110 ] tou: recv=get_down
+[2026-07-29 15:44:49.761] [509263.110000] [ DEBUG] [15:44:47.110 ] tou: send=down none
+[2026-07-29 15:44:50.009] [509263.230000] [ DEBUG] [15:44:47.230 ] tou: recv=get_down
+[2026-07-29 15:44:50.009] [509263.230000] [ DEBUG] [15:44:47.230 ] tou: send=down none
+[2026-07-29 15:44:50.009] [509263.290000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:50.009] [509263.350000] [ DEBUG] [15:44:47.350 ] tou: recv=get_down
+[2026-07-29 15:44:50.009] [509263.350000] [ DEBUG] [15:44:47.350 ] tou: send=down none
+[2026-07-29 15:44:50.117] [509263.470000] [ DEBUG] [15:44:47.470 ] tou: recv=get_down
+[2026-07-29 15:44:50.117] [509263.470000] [ DEBUG] [15:44:47.470 ] tou: send=down none
+[2026-07-29 15:44:50.240] [509263.590000] [ DEBUG] [15:44:47.590 ] tou: recv=get_down
+[2026-07-29 15:44:50.240] [509263.590000] [ DEBUG] [15:44:47.590 ] tou: send=down none
+[2026-07-29 15:44:50.488] [509263.710000] [ DEBUG] [15:44:47.710 ] tou: recv=get_down
+[2026-07-29 15:44:50.488] [509263.710000] [ DEBUG] [15:44:47.710 ] tou: send=down none
+[2026-07-29 15:44:50.488] [509263.790000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:50.488] [509263.790000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509263 ts_last 507888
+[2026-07-29 15:44:50.488] [509263.830000] [ DEBUG] [15:44:47.830 ] tou: recv=get_down
+[2026-07-29 15:44:50.488] [509263.830000] [ DEBUG] [15:44:47.830 ] tou: send=down none
+[2026-07-29 15:44:50.719] [509263.950000] [ DEBUG] [15:44:47.950 ] tou: recv=get_down
+[2026-07-29 15:44:50.719] [509263.950000] [ DEBUG] [15:44:47.950 ] tou: send=down none
+[2026-07-29 15:44:50.719] [509264.030000] [  INFO] [509264030]<D> send uart ping..[509264.030000] [  INFO] [509264030]<D> serial sendA5 A5[509264.030000] [  INFO] 03 20 00 01 00 6E 
+[2026-07-29 15:44:50.719] [509264.050000] [  INFO] [509264050]<D> serial recv len [509264.050000] [  INFO] [509264050]<D> serial recv data[509264.050000] [  INFO] A5 03 20 00 01 01 6F 
+[2026-07-29 15:44:50.719] [509264.070000] [ DEBUG] [15:44:48.070 ] tou: recv=get_down
+[2026-07-29 15:44:50.719] [509264.070000] [ DEBUG] [15:44:48.070 ] tou: send=down none
+[2026-07-29 15:44:50.843] [509264.190000] [ DEBUG] [15:44:48.190 ] tou: recv=get_down
+[2026-07-29 15:44:50.843] [509264.190000] [ DEBUG] [15:44:48.190 ] tou: send=down none
+[2026-07-29 15:44:50.966] [509264.300000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:50.966] [509264.310000] [ DEBUG] [15:44:48.310 ] tou: recv=get_down
+[2026-07-29 15:44:50.966] [509264.310000] [ DEBUG] [15:44:48.310 ] tou: send=down none
+[2026-07-29 15:44:51.090] [509264.430000] [ DEBUG] [15:44:48.430 ] tou: recv=get_down
+[2026-07-29 15:44:51.090] [509264.430000] [ DEBUG] [15:44:48.430 ] tou: send=down none
+[2026-07-29 15:44:51.198] [509264.550000] [ DEBUG] [15:44:48.550 ] tou: recv=get_down
+[2026-07-29 15:44:51.198] [509264.550000] [ DEBUG] [15:44:48.550 ] tou: send=down none
+[2026-07-29 15:44:51.321] [509264.670000] [ DEBUG] [15:44:48.670 ] tou: recv=get_down
+[2026-07-29 15:44:51.321] [509264.670000] [ DEBUG] [15:44:48.670 ] tou: send=down none
+[2026-07-29 15:44:51.569] [509264.790000] [ DEBUG] [15:44:48.790 ] tou: recv=get_down
+[2026-07-29 15:44:51.569] [509264.790000] [ DEBUG] [15:44:48.790 ] tou: send=down none
+[2026-07-29 15:44:51.569] [509264.800000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:51.569] [509264.800000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509264 ts_last 507888
+[2026-07-29 15:44:51.569] [509264.910000] [ DEBUG] [15:44:48.910 ] tou: recv=get_down
+[2026-07-29 15:44:51.569] [509264.910000] [ DEBUG] [15:44:48.910 ] tou: send=down none
+[2026-07-29 15:44:51.678] [509265.030000] [ DEBUG] [15:44:49.030 ] tou: recv=get_down
+[2026-07-29 15:44:51.678] [509265.030000] [ DEBUG] [15:44:49.030 ] tou: send=down none
+[2026-07-29 15:44:51.803] [509265.150000] [ DEBUG] [15:44:49.150 ] tou: recv=get_down
+[2026-07-29 15:44:51.803] [509265.150000] [ DEBUG] [15:44:49.150 ] tou: send=down none
+[2026-07-29 15:44:52.038] [509265.270000] [ DEBUG] [15:44:49.270 ] tou: recv=get_down
+[2026-07-29 15:44:52.038] [509265.270000] [ DEBUG] [15:44:49.270 ] tou: send=down none
+[2026-07-29 15:44:52.038] [509265.310000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:52.038] [509265.390000] [ DEBUG] [15:44:49.390 ] tou: recv=get_down
+[2026-07-29 15:44:52.038] [509265.390000] [ DEBUG] [15:44:49.390 ] tou: send=down none
+[2026-07-29 15:44:52.161] [509265.510000] [ DEBUG] [15:44:49.510 ] tou: recv=get_down
+[2026-07-29 15:44:52.161] [509265.510000] [ DEBUG] [15:44:49.510 ] tou: send=down none
+[2026-07-29 15:44:52.286] [509265.630000] [ DEBUG] [15:44:49.630 ] tou: recv=get_down
+[2026-07-29 15:44:52.286] [509265.630000] [ DEBUG] [15:44:49.630 ] tou: send=down none
+[2026-07-29 15:44:52.518] [509265.750000] [ DEBUG] [15:44:49.750 ] tou: recv=get_down
+[2026-07-29 15:44:52.518] [509265.750000] [ DEBUG] [15:44:49.750 ] tou: send=down none
+[2026-07-29 15:44:52.518] [509265.810000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:52.518] [509265.810000] [ DEBUG] [D][mible_beacon] one_second_handler 1548: one_second_handler running
+[2026-07-29 15:44:52.518] [509265.810000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509265 ts_last 507888
+[2026-07-29 15:44:52.518] [509265.870000] [ DEBUG] [15:44:49.870 ] tou: recv=get_down
+[2026-07-29 15:44:52.518] [509265.870000] [ DEBUG] [15:44:49.870 ] tou: send=down none
+[2026-07-29 15:44:52.642] [509265.990000] [ DEBUG] [15:44:49.990 ] tou: recv=get_down
+[2026-07-29 15:44:52.642] [509265.990000] [ DEBUG] [15:44:49.990 ] tou: send=down none
+[2026-07-29 15:44:52.767] [509266.110000] [ DEBUG] [15:44:50.110 ] tou: recv=get_down
+[2026-07-29 15:44:52.767] [509266.110000] [ DEBUG] [15:44:50.110 ] tou: send=down none
+[2026-07-29 15:44:53.001] [509266.230000] [ DEBUG] [15:44:50.230 ] tou: recv=get_down
+[2026-07-29 15:44:53.001] [509266.230000] [ DEBUG] [15:44:50.230 ] tou: send=down none
+[2026-07-29 15:44:53.001] [509266.320000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:53.001] [509266.350000] [ DEBUG] [15:44:50.350 ] tou: recv=get_down
+[2026-07-29 15:44:53.001] [509266.350000] [ DEBUG] [15:44:50.350 ] tou: send=down none
+[2026-07-29 15:44:53.125] [509266.470000] [ DEBUG] [15:44:50.470 ] tou: recv=get_down
+[2026-07-29 15:44:53.125] [509266.470000] [ DEBUG] [15:44:50.470 ] tou: send=down none
+[2026-07-29 15:44:53.250] [509266.590000] [ DEBUG] [15:44:50.590 ] tou: recv=get_down
+[2026-07-29 15:44:53.250] [509266.590000] [ DEBUG] [15:44:50.590 ] tou: send=down none
+[2026-07-29 15:44:53.358] [509266.710000] [ DEBUG] [15:44:50.710 ] tou: recv=get_down
+[2026-07-29 15:44:53.358] [509266.710000] [ DEBUG] [15:44:50.710 ] tou: send=down none
+[2026-07-29 15:44:53.606] [509266.820000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:53.606] [509266.820000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509266 ts_last 507888
+[2026-07-29 15:44:53.606] [509266.830000] [ DEBUG] [15:44:50.830 ] tou: recv=get_down
+[2026-07-29 15:44:53.606] [509266.830000] [ DEBUG] [15:44:50.830 ] tou: send=down none
+[2026-07-29 15:44:53.606] [509266.950000] [ DEBUG] [15:44:50.950 ] tou: recv=get_down
+[2026-07-29 15:44:53.606] [509266.950000] [ DEBUG] [15:44:50.950 ] tou: send=down none
+[2026-07-29 15:44:53.851] [509267.070000] [ DEBUG] [15:44:51.070 ] tou: recv=get_down
+[2026-07-29 15:44:53.851] [509267.070000] [ DEBUG] [15:44:51.070 ] tou: send=down none
+[2026-07-29 15:44:53.851] [509267.100000] [ DEBUG] [15:44:51.100 ] otu: [192.168.0.1:1681] talking, len=32
+[2026-07-29 15:44:53.851] [509267.100000] [  WARN] [15:44:51.100 ] otu: Token private!!.
+[2026-07-29 15:44:53.851] [509267.100000] [ DEBUG] [15:44:51.100 ] mipub: mipub probe...
+[2026-07-29 15:44:53.851] [509267.190000] [ DEBUG] [15:44:51.190 ] tou: recv=get_down
+[2026-07-29 15:44:53.851] [509267.190000] [ DEBUG] [15:44:51.190 ] tou: send=down none
+[2026-07-29 15:44:54.083] [509267.310000] [ DEBUG] [15:44:51.310 ] tou: recv=get_down
+[2026-07-29 15:44:54.083] [509267.310000] [ DEBUG] [15:44:51.310 ] tou: send=down none
+[2026-07-29 15:44:54.083] [509267.330000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:54.083] [509267.430000] [ DEBUG] [15:44:51.430 ] tou: recv=get_down
+[2026-07-29 15:44:54.083] [509267.430000] [ DEBUG] [15:44:51.430 ] tou: send=down none
+[2026-07-29 15:44:54.206] [509267.550000] [ DEBUG] [15:44:51.550 ] tou: recv=get_down
+[2026-07-29 15:44:54.206] [509267.550000] [ DEBUG] [15:44:51.550 ] tou: send=down none
+[2026-07-29 15:44:54.329] [509267.670000] [ DEBUG] [15:44:51.670 ] tou: recv=get_down
+[2026-07-29 15:44:54.329] [509267.670000] [ DEBUG] [15:44:51.670 ] tou: send=down none
+[2026-07-29 15:44:54.700] [509267.790000] [ DEBUG] [15:44:51.790 ] tou: recv=get_down
+[2026-07-29 15:44:54.700] [509267.790000] [ DEBUG] [15:44:51.790 ] tou: send=down none
+[2026-07-29 15:44:54.700] [509267.830000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:54.700] [509267.830000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509267 ts_last 507888
+[2026-07-29 15:44:54.700] [509267.910000] [ DEBUG] [15:44:51.910 ] tou: recv=get_down
+[2026-07-29 15:44:54.700] [509267.910000] [ DEBUG] [15:44:51.910 ] tou: send=down none
+[2026-07-29 15:44:54.700] [509267.970000] [ DEBUG] [D][rpc_agent] rpc_delegate_up 1106: up req: 59
+[2026-07-29 15:44:54.700] [509267.970000] [ DEBUG] [miio_client_func] ot_agent_recv_handler_one() mask msg = {"id":1553546694,"method":"local.query_status","params":""},msg_len = 59, fd = 9
+[2026-07-29 15:44:54.700] [509267.980000] [ DEBUG] [15:44:51.980 ] miio_message: handle_local_msg_state:{"id":1553546694,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:44:54.700] [509267.990000] [ DEBUG] [D][rpc_agent] mible_rpc_delegate_down 979: down: 1 68 {"id":1553546694,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:44:54.700] [509268.000000] [ DEBUG] [D][] arch_log_handler 990: msg_len=68, msg={"id":1553546694,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:44:54.700] [509268.010000] [ DEBUG] [D][] _local_status_msg_parse 873: s_otble_state=3
+[2026-07-29 15:44:54.700] [509268.040000] [ DEBUG] [15:44:52.040 ] tou: recv=get_down
+[2026-07-29 15:44:54.700] [509268.040000] [ DEBUG] [15:44:52.040 ] tou: send=down none
+[2026-07-29 15:44:54.823] [509268.160000] [  INFO] [15:44:52.160 ] miio_monitor: work time = 509268s, memory left = 46576
+[2026-07-29 15:44:54.823] [509268.160000] [ DEBUG] [15:44:52.160 ] tou: recv=get_down
+[2026-07-29 15:44:54.823] [509268.160000] [ DEBUG] [15:44:52.160 ] tou: send=down none
+[2026-07-29 15:44:55.070] [509268.290000] [ DEBUG] [15:44:52.290 ] tou: recv=get_down
+[2026-07-29 15:44:55.070] [509268.290000] [ DEBUG] [15:44:52.290 ] tou: send=down none
+[2026-07-29 15:44:55.070] [509268.340000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:55.070] [509268.410000] [ DEBUG] [15:44:52.410 ] tou: recv=get_down
+[2026-07-29 15:44:55.070] [509268.410000] [ DEBUG] [15:44:52.410 ] tou: send=down none
+[2026-07-29 15:44:55.177] [509268.530000] [ DEBUG] [15:44:52.530 ] tou: recv=get_down
+[2026-07-29 15:44:55.177] [509268.530000] [ DEBUG] [15:44:52.530 ] tou: send=down none
+[2026-07-29 15:44:55.301] [509268.650000] [ DEBUG] [15:44:52.650 ] tou: recv=get_down
+[2026-07-29 15:44:55.301] [509268.650000] [ DEBUG] [15:44:52.650 ] tou: send=down none
+[2026-07-29 15:44:55.537] [509268.770000] [ DEBUG] [15:44:52.770 ] tou: recv=get_down
+[2026-07-29 15:44:55.537] [509268.770000] [ DEBUG] [15:44:52.770 ] tou: send=down none
+[2026-07-29 15:44:55.537] [509268.840000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:55.537] [509268.840000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509268 ts_last 507888
+[2026-07-29 15:44:55.537] [509268.890000] [ DEBUG] [15:44:52.890 ] tou: recv=get_down
+[2026-07-29 15:44:55.537] [509268.890000] [ DEBUG] [15:44:52.890 ] tou: send=down none
+[2026-07-29 15:44:55.660] [509269.010000] [ DEBUG] [15:44:53.010 ] tou: recv=get_down
+[2026-07-29 15:44:55.660] [509269.010000] [ DEBUG] [15:44:53.010 ] tou: send=down none
+[2026-07-29 15:44:56.030] [509269.130000] [ DEBUG] [15:44:53.130 ] tou: recv=get_down
+[2026-07-29 15:44:56.030] [509269.130000] [ DEBUG] [15:44:53.130 ] tou: send=down none
+[2026-07-29 15:44:56.030] [509269.170000] [ DEBUG] [15:44:53.170 ] miio_net: sta offline 0 times in last 600s
+[2026-07-29 15:44:56.030] [509269.250000] [ DEBUG] [15:44:53.250 ] tou: recv=get_down
+[2026-07-29 15:44:56.030] [509269.250000] [ DEBUG] [15:44:53.250 ] tou: send=down none
+[2026-07-29 15:44:56.030] [509269.350000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:56.030] [509269.370000] [ DEBUG] [15:44:53.370 ] tou: recv=get_down
+[2026-07-29 15:44:56.030] [509269.370000] [ DEBUG] [15:44:53.370 ] tou: send=down none
+[2026-07-29 15:44:56.138] [509269.490000] [ DEBUG] [15:44:53.490 ] tou: recv=get_down
+[2026-07-29 15:44:56.138] [509269.490000] [ DEBUG] [15:44:53.490 ] tou: send=down none
+[2026-07-29 15:44:56.262] [509269.610000] [ DEBUG] [15:44:53.610 ] tou: recv=get_down
+[2026-07-29 15:44:56.262] [509269.610000] [ DEBUG] [15:44:53.610 ] tou: send=down none
+[2026-07-29 15:44:56.384] [509269.730000] [ DEBUG] [15:44:53.730 ] tou: recv=get_down
+[2026-07-29 15:44:56.384] [509269.730000] [ DEBUG] [15:44:53.730 ] tou: send=down none
+[2026-07-29 15:44:56.631] [509269.850000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:56.631] [509269.850000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509269 ts_last 507888
+[2026-07-29 15:44:56.631] [509269.850000] [ DEBUG] [15:44:53.850 ] tou: recv=get_down
+[2026-07-29 15:44:56.631] [509269.860000] [ DEBUG] [15:44:53.860 ] tou: send=down none
+[2026-07-29 15:44:56.631] [509269.970000] [ DEBUG] [15:44:53.970 ] tou: recv=get_down
+[2026-07-29 15:44:56.631] [509269.970000] [ DEBUG] [15:44:53.970 ] tou: send=down none
+[2026-07-29 15:44:56.740] [509270.090000] [ DEBUG] [15:44:54.090 ] tou: recv=get_down
+[2026-07-29 15:44:56.740] [509270.090000] [ DEBUG] [15:44:54.090 ] tou: send=down none
+[2026-07-29 15:44:56.863] [509270.210000] [ DEBUG] [15:44:54.210 ] tou: recv=get_down
+[2026-07-29 15:44:56.863] [509270.210000] [ DEBUG] [15:44:54.210 ] tou: send=down none
+[2026-07-29 15:44:57.097] [509270.330000] [ DEBUG] [15:44:54.330 ] tou: recv=get_down
+[2026-07-29 15:44:57.097] [509270.330000] [ DEBUG] [15:44:54.330 ] tou: send=down none
+[2026-07-29 15:44:57.097] [509270.360000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:57.097] [509270.450000] [ DEBUG] [15:44:54.450 ] tou: recv=get_down
+[2026-07-29 15:44:57.097] [509270.450000] [ DEBUG] [15:44:54.450 ] tou: send=down none
+[2026-07-29 15:44:57.221] [509270.570000] [ DEBUG] [15:44:54.570 ] tou: recv=get_down
+[2026-07-29 15:44:57.221] [509270.570000] [ DEBUG] [15:44:54.570 ] tou: send=down none
+[2026-07-29 15:44:57.345] [509270.690000] [ DEBUG] [15:44:54.690 ] tou: recv=get_down
+[2026-07-29 15:44:57.345] [509270.690000] [ DEBUG] [15:44:54.690 ] tou: send=down none
+[2026-07-29 15:44:57.591] [509270.810000] [ DEBUG] [15:44:54.810 ] tou: recv=get_down
+[2026-07-29 15:44:57.591] [509270.810000] [ DEBUG] [15:44:54.810 ] tou: send=down none
+[2026-07-29 15:44:57.591] [509270.860000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:57.591] [509270.860000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509270 ts_last 507888
+[2026-07-29 15:44:57.591] [509270.930000] [ DEBUG] [15:44:54.930 ] tou: recv=get_down
+[2026-07-29 15:44:57.591] [509270.930000] [ DEBUG] [15:44:54.930 ] tou: send=down none
+[2026-07-29 15:44:57.700] [509271.050000] [ DEBUG] [15:44:55.050 ] tou: recv=get_down
+[2026-07-29 15:44:57.700] [509271.050000] [ DEBUG] [15:44:55.050 ] tou: send=down none
+[2026-07-29 15:44:57.824] [509271.170000] [ DEBUG] [15:44:55.170 ] tou: recv=get_down
+[2026-07-29 15:44:57.824] [509271.170000] [ DEBUG] [15:44:55.170 ] tou: send=down none
+[2026-07-29 15:44:58.057] [509271.290000] [ DEBUG] [15:44:55.290 ] tou: recv=get_down
+[2026-07-29 15:44:58.057] [509271.290000] [ DEBUG] [15:44:55.290 ] tou: send=down none
+[2026-07-29 15:44:58.057] [509271.370000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:58.057] [509271.410000] [ DEBUG] [15:44:55.410 ] tou: recv=get_down
+[2026-07-29 15:44:58.057] [509271.410000] [ DEBUG] [15:44:55.410 ] tou: send=down none
+[2026-07-29 15:44:58.180] [509271.530000] [ DEBUG] [15:44:55.530 ] tou: recv=get_down
+[2026-07-29 15:44:58.180] [509271.530000] [ DEBUG] [15:44:55.530 ] tou: send=down none
+[2026-07-29 15:44:58.304] [509271.650000] [ DEBUG] [15:44:55.650 ] tou: recv=get_down
+[2026-07-29 15:44:58.304] [509271.650000] [ DEBUG] [15:44:55.650 ] tou: send=down none
+[2026-07-29 15:44:58.430] [509271.770000] [ DEBUG] [15:44:55.770 ] tou: recv=get_down
+[2026-07-29 15:44:58.430] [509271.770000] [ DEBUG] [15:44:55.770 ] tou: send=down none
+[2026-07-29 15:44:58.555] [509271.870000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:58.555] [509271.870000] [ DEBUG] [D][mible_beacon] one_second_handler 1548: one_second_handler running
+[2026-07-29 15:44:58.555] [509271.870000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509271 ts_last 507888
+[2026-07-29 15:44:58.555] [509271.890000] [ DEBUG] [15:44:55.890 ] tou: recv=get_down
+[2026-07-29 15:44:58.555] [509271.890000] [ DEBUG] [15:44:55.890 ] tou: send=down none
+[2026-07-29 15:44:58.664] [509272.010000] [ DEBUG] [15:44:56.010 ] tou: recv=get_down
+[2026-07-29 15:44:58.664] [509272.010000] [ DEBUG] [15:44:56.010 ] tou: send=down none
+[2026-07-29 15:44:58.786] [509272.130000] [ DEBUG] [15:44:56.130 ] tou: recv=get_down
+[2026-07-29 15:44:58.786] [509272.130000] [ DEBUG] [15:44:56.130 ] tou: send=down none
+[2026-07-29 15:44:58.911] [509272.250000] [ DEBUG] [15:44:56.250 ] tou: recv=get_down
+[2026-07-29 15:44:58.911] [509272.250000] [ DEBUG] [15:44:56.250 ] tou: send=down none
+[2026-07-29 15:44:59.036] [509272.370000] [ DEBUG] [15:44:56.370 ] tou: recv=get_down
+[2026-07-29 15:44:59.036] [509272.370000] [ DEBUG] [15:44:56.370 ] tou: send=down none
+[2026-07-29 15:44:59.036] [509272.380000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:59.143] [509272.490000] [ DEBUG] [15:44:56.490 ] tou: recv=get_down
+[2026-07-29 15:44:59.143] [509272.490000] [ DEBUG] [15:44:56.490 ] tou: send=down none
+[2026-07-29 15:44:59.267] [509272.610000] [ DEBUG] [15:44:56.610 ] tou: recv=get_down
+[2026-07-29 15:44:59.267] [509272.610000] [ DEBUG] [15:44:56.610 ] tou: send=down none
+[2026-07-29 15:44:59.390] [509272.730000] [ DEBUG] [15:44:56.730 ] tou: recv=get_down
+[2026-07-29 15:44:59.390] [509272.730000] [ DEBUG] [15:44:56.730 ] tou: send=down none
+[2026-07-29 15:44:59.621] [509272.850000] [ DEBUG] [15:44:56.850 ] tou: recv=get_down
+[2026-07-29 15:44:59.621] [509272.850000] [ DEBUG] [15:44:56.850 ] tou: send=down none
+[2026-07-29 15:44:59.621] [509272.880000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:44:59.621] [509272.880000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509272 ts_last 507888
+[2026-07-29 15:44:59.621] [509272.970000] [ DEBUG] [15:44:56.970 ] tou: recv=get_down
+[2026-07-29 15:44:59.621] [509272.970000] [ DEBUG] [15:44:56.970 ] tou: send=down none
+[2026-07-29 15:44:59.746] [509273.090000] [ DEBUG] [15:44:57.090 ] tou: recv=get_down
+[2026-07-29 15:44:59.746] [509273.090000] [ DEBUG] [15:44:57.090 ] tou: send=down none
+[2026-07-29 15:44:59.870] [509273.210000] [ DEBUG] [15:44:57.210 ] tou: recv=get_down
+[2026-07-29 15:44:59.870] [509273.210000] [ DEBUG] [15:44:57.210 ] tou: send=down none
+[2026-07-29 15:45:00.102] [509273.330000] [ DEBUG] [15:44:57.330 ] tou: recv=get_down
+[2026-07-29 15:45:00.102] [509273.330000] [ DEBUG] [15:44:57.330 ] tou: send=down none
+[2026-07-29 15:45:00.102] [509273.390000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:00.102] [509273.450000] [ DEBUG] [15:44:57.450 ] tou: recv=get_down
+[2026-07-29 15:45:00.102] [509273.450000] [ DEBUG] [15:44:57.450 ] tou: send=down none
+[2026-07-29 15:45:00.227] [509273.570000] [ DEBUG] [15:44:57.570 ] tou: recv=get_down
+[2026-07-29 15:45:00.227] [509273.570000] [ DEBUG] [15:44:57.570 ] tou: send=down none
+[2026-07-29 15:45:00.352] [509273.690000] [ DEBUG] [15:44:57.690 ] tou: recv=get_down
+[2026-07-29 15:45:00.352] [509273.690000] [ DEBUG] [15:44:57.690 ] tou: send=down none
+[2026-07-29 15:45:00.584] [509273.810000] [ DEBUG] [15:44:57.810 ] tou: recv=get_down
+[2026-07-29 15:45:00.584] [509273.810000] [ DEBUG] [15:44:57.810 ] tou: send=down none
+[2026-07-29 15:45:00.584] [509273.890000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:00.584] [509273.890000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509273 ts_last 507888
+[2026-07-29 15:45:00.584] [509273.930000] [ DEBUG] [15:44:57.930 ] tou: recv=get_down
+[2026-07-29 15:45:00.584] [509273.930000] [ DEBUG] [15:44:57.930 ] tou: send=down none
+[2026-07-29 15:45:00.832] [509274.050000] [ DEBUG] [15:44:58.050 ] tou: recv=get_down
+[2026-07-29 15:45:00.832] [509274.050000] [ DEBUG] [15:44:58.050 ] tou: send=down none
+[2026-07-29 15:45:00.832] [509274.070000] [  INFO] [509274070]<D> send uart ping..[509274.070000] [  INFO] [509274070]<D> serial sendA5 A5[509274.070000] [  INFO] 03 20 00 01 00 6E 
+[2026-07-29 15:45:00.832] [509274.090000] [  INFO] [509274080]<D> serial recv len [509274.090000] [  INFO] [509274090]<D> serial recv data[509274.090000] [  INFO] A5 03 20 00 01 01 6F 
+[2026-07-29 15:45:00.832] [509274.170000] [ DEBUG] [15:44:58.170 ] tou: recv=get_down
+[2026-07-29 15:45:00.832] [509274.170000] [ DEBUG] [15:44:58.170 ] tou: send=down none
+[2026-07-29 15:45:00.940] [509274.290000] [ DEBUG] [15:44:58.290 ] tou: recv=get_down
+[2026-07-29 15:45:00.940] [509274.290000] [ DEBUG] [15:44:58.290 ] tou: send=down none
+[2026-07-29 15:45:01.065] [509274.400000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:01.065] [509274.410000] [ DEBUG] [15:44:58.410 ] tou: recv=get_down
+[2026-07-29 15:45:01.065] [509274.410000] [ DEBUG] [15:44:58.410 ] tou: send=down none
+[2026-07-29 15:45:01.188] [509274.530000] [ DEBUG] [15:44:58.530 ] tou: recv=get_down
+[2026-07-29 15:45:01.188] [509274.530000] [ DEBUG] [15:44:58.530 ] tou: send=down none
+[2026-07-29 15:45:01.297] [509274.650000] [ DEBUG] [15:44:58.650 ] tou: recv=get_down
+[2026-07-29 15:45:01.297] [509274.650000] [ DEBUG] [15:44:58.650 ] tou: send=down none
+[2026-07-29 15:45:01.421] [509274.770000] [ DEBUG] [15:44:58.770 ] tou: recv=get_down
+[2026-07-29 15:45:01.421] [509274.770000] [ DEBUG] [15:44:58.770 ] tou: send=down none
+[2026-07-29 15:45:01.669] [509274.890000] [ DEBUG] [15:44:58.890 ] tou: recv=get_down
+[2026-07-29 15:45:01.669] [509274.890000] [ DEBUG] [15:44:58.890 ] tou: send=down none
+[2026-07-29 15:45:01.669] [509274.900000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:01.669] [509274.900000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509274 ts_last 507888
+[2026-07-29 15:45:01.669] [509275.010000] [ DEBUG] [15:44:59.010 ] tou: recv=get_down
+[2026-07-29 15:45:01.669] [509275.010000] [ DEBUG] [15:44:59.010 ] tou: send=down none
+[2026-07-29 15:45:01.777] [509275.130000] [ DEBUG] [15:44:59.130 ] tou: recv=get_down
+[2026-07-29 15:45:01.777] [509275.130000] [ DEBUG] [15:44:59.130 ] tou: send=down none
+[2026-07-29 15:45:01.901] [509275.250000] [ DEBUG] [15:44:59.250 ] tou: recv=get_down
+[2026-07-29 15:45:01.901] [509275.250000] [ DEBUG] [15:44:59.250 ] tou: send=down none
+[2026-07-29 15:45:02.150] [509275.370000] [ DEBUG] [15:44:59.370 ] tou: recv=get_down
+[2026-07-29 15:45:02.150] [509275.370000] [ DEBUG] [15:44:59.370 ] tou: send=down none
+[2026-07-29 15:45:02.150] [509275.410000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:02.150] [509275.490000] [ DEBUG] [15:44:59.490 ] tou: recv=get_down
+[2026-07-29 15:45:02.150] [509275.490000] [ DEBUG] [15:44:59.490 ] tou: send=down none
+[2026-07-29 15:45:02.259] [509275.610000] [ DEBUG] [15:44:59.610 ] tou: recv=get_down
+[2026-07-29 15:45:02.259] [509275.610000] [ DEBUG] [15:44:59.610 ] tou: send=down none
+[2026-07-29 15:45:02.383] [509275.730000] [ DEBUG] [15:44:59.730 ] tou: recv=get_down
+[2026-07-29 15:45:02.383] [509275.730000] [ DEBUG] [15:44:59.730 ] tou: send=down none
+[2026-07-29 15:45:02.631] [509275.850000] [ DEBUG] [15:44:59.850 ] tou: recv=get_down
+[2026-07-29 15:45:02.631] [509275.850000] [ DEBUG] [15:44:59.850 ] tou: send=down none
+[2026-07-29 15:45:02.631] [509275.910000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:02.631] [509275.910000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509275 ts_last 507888
+[2026-07-29 15:45:02.631] [509275.970000] [ DEBUG] [15:44:59.970 ] tou: recv=get_down
+[2026-07-29 15:45:02.631] [509275.970000] [ DEBUG] [15:44:59.970 ] tou: send=down none
+[2026-07-29 15:45:02.740] [509276.090000] [ DEBUG] [15:45:00.090 ] tou: recv=get_down
+[2026-07-29 15:45:02.740] [509276.090000] [ DEBUG] [15:45:00.090 ] tou: send=down none
+[2026-07-29 15:45:02.865] [509276.210000] [ DEBUG] [15:45:00.210 ] tou: recv=get_down
+[2026-07-29 15:45:02.865] [509276.210000] [ DEBUG] [15:45:00.210 ] tou: send=down none
+[2026-07-29 15:45:03.098] [509276.330000] [ DEBUG] [15:45:00.330 ] tou: recv=get_down
+[2026-07-29 15:45:03.098] [509276.330000] [ DEBUG] [15:45:00.330 ] tou: send=down none
+[2026-07-29 15:45:03.098] [509276.420000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:03.098] [509276.450000] [ DEBUG] [15:45:00.450 ] tou: recv=get_down
+[2026-07-29 15:45:03.098] [509276.450000] [ DEBUG] [15:45:00.450 ] tou: send=down none
+[2026-07-29 15:45:03.221] [509276.570000] [ DEBUG] [15:45:00.570 ] tou: recv=get_down
+[2026-07-29 15:45:03.221] [509276.570000] [ DEBUG] [15:45:00.570 ] tou: send=down none
+[2026-07-29 15:45:03.343] [509276.690000] [ DEBUG] [15:45:00.690 ] tou: recv=get_down
+[2026-07-29 15:45:03.343] [509276.690000] [ DEBUG] [15:45:00.690 ] tou: send=down none
+[2026-07-29 15:45:03.466] [509276.810000] [ DEBUG] [15:45:00.810 ] tou: recv=get_down
+[2026-07-29 15:45:03.466] [509276.810000] [ DEBUG] [15:45:00.810 ] tou: send=down none
+[2026-07-29 15:45:03.588] [509276.920000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:03.588] [509276.920000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509276 ts_last 507888
+[2026-07-29 15:45:03.588] [509276.930000] [ DEBUG] [15:45:00.930 ] tou: recv=get_down
+[2026-07-29 15:45:03.588] [509276.930000] [ DEBUG] [15:45:00.930 ] tou: send=down none
+[2026-07-29 15:45:03.837] [509277.050000] [ DEBUG] [15:45:01.050 ] tou: recv=get_down
+[2026-07-29 15:45:03.837] [509277.050000] [ DEBUG] [15:45:01.050 ] tou: send=down none
+[2026-07-29 15:45:03.837] [509277.110000] [ DEBUG] [D][rpc_agent] rpc_delegate_up 1106: up req: 59
+[2026-07-29 15:45:03.837] [509277.110000] [ DEBUG] [miio_client_func] ot_agent_recv_handler_one() mask msg = {"id":2079220695,"method":"local.query_status","params":""},msg_len = 59, fd = 9
+[2026-07-29 15:45:03.837] [509277.120000] [ DEBUG] [15:45:01.120 ] miio_message: handle_local_msg_state:{"id":2079220695,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:03.837] [509277.130000] [ DEBUG] [D][rpc_agent] mible_rpc_delegate_down 979: down: 1 68 {"id":2079220695,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:03.837] [509277.140000] [ DEBUG] [D][] arch_log_handler 990: msg_len=68, msg={"id":2079220695,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:03.837] [509277.150000] [ DEBUG] [D][] _local_status_msg_parse 873: s_otble_state=3
+[2026-07-29 15:45:03.837] [509277.180000] [ DEBUG] [15:45:01.180 ] tou: recv=get_down
+[2026-07-29 15:45:03.837] [509277.180000] [ DEBUG] [15:45:01.180 ] tou: send=down none
+[2026-07-29 15:45:03.960] [509277.300000] [ DEBUG] [15:45:01.300 ] tou: recv=get_down
+[2026-07-29 15:45:03.960] [509277.300000] [ DEBUG] [15:45:01.300 ] tou: send=down none
+[2026-07-29 15:45:04.081] [509277.420000] [ DEBUG] [15:45:01.420 ] tou: recv=get_down
+[2026-07-29 15:45:04.081] [509277.420000] [ DEBUG] [15:45:01.420 ] tou: send=down none
+[2026-07-29 15:45:04.081] [509277.430000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:04.189] [509277.540000] [ DEBUG] [15:45:01.540 ] tou: recv=get_down
+[2026-07-29 15:45:04.189] [509277.540000] [ DEBUG] [15:45:01.540 ] tou: send=down none
+[2026-07-29 15:45:04.313] [509277.660000] [ DEBUG] [15:45:01.660 ] tou: recv=get_down
+[2026-07-29 15:45:04.313] [509277.660000] [ DEBUG] [15:45:01.660 ] tou: send=down none
+[2026-07-29 15:45:04.436] [509277.780000] [ DEBUG] [15:45:01.780 ] tou: recv=get_down
+[2026-07-29 15:45:04.436] [509277.780000] [ DEBUG] [15:45:01.780 ] tou: send=down none
+[2026-07-29 15:45:04.668] [509277.900000] [ DEBUG] [15:45:01.900 ] tou: recv=get_down
+[2026-07-29 15:45:04.668] [509277.900000] [ DEBUG] [15:45:01.900 ] tou: send=down none
+[2026-07-29 15:45:04.668] [509277.930000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:04.668] [509277.930000] [ DEBUG] [D][mible_beacon] one_second_handler 1548: one_second_handler running
+[2026-07-29 15:45:04.668] [509277.930000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509277 ts_last 507888
+[2026-07-29 15:45:04.668] [509278.020000] [ DEBUG] [15:45:02.020 ] tou: recv=get_down
+[2026-07-29 15:45:04.668] [509278.020000] [ DEBUG] [15:45:02.020 ] tou: send=down none
+[2026-07-29 15:45:04.931] [509278.260000] [  INFO] [15:45:02.260 ] miio_monitor: work time = 509278s, memory left = 46576
+[2026-07-29 15:45:04.931] [509278.260000] [ DEBUG] [15:45:02.260 ] tou: recv=get_down
+[2026-07-29 15:45:04.931] [509278.260000] [ DEBUG] [15:45:02.260 ] tou: send=down none
+[2026-07-29 15:45:05.163] [509278.390000] [ DEBUG] [15:45:02.390 ] tou: recv=get_down
+[2026-07-29 15:45:05.163] [509278.390000] [ DEBUG] [15:45:02.390 ] tou: send=down none
+[2026-07-29 15:45:05.163] [509278.440000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:05.163] [509278.510000] [ DEBUG] [15:45:02.510 ] tou: recv=get_down
+[2026-07-29 15:45:05.163] [509278.510000] [ DEBUG] [15:45:02.510 ] tou: send=down none
+[2026-07-29 15:45:05.288] [509278.630000] [ DEBUG] [15:45:02.630 ] tou: recv=get_down
+[2026-07-29 15:45:05.288] [509278.630000] [ DEBUG] [15:45:02.630 ] tou: send=down none
+[2026-07-29 15:45:05.410] [509278.750000] [ DEBUG] [15:45:02.750 ] tou: recv=get_down
+[2026-07-29 15:45:05.410] [509278.750000] [ DEBUG] [15:45:02.750 ] tou: send=down none
+[2026-07-29 15:45:05.643] [509278.870000] [ DEBUG] [15:45:02.870 ] tou: recv=get_down
+[2026-07-29 15:45:05.643] [509278.870000] [ DEBUG] [15:45:02.870 ] tou: send=down none
+[2026-07-29 15:45:05.643] [509278.940000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:05.643] [509278.940000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509278 ts_last 507888
+[2026-07-29 15:45:05.643] [509278.990000] [ DEBUG] [15:45:02.990 ] tou: recv=get_down
+[2026-07-29 15:45:05.643] [509278.990000] [ DEBUG] [15:45:02.990 ] tou: send=down none
+[2026-07-29 15:45:05.765] [509279.110000] [ DEBUG] [15:45:03.110 ] tou: recv=get_down
+[2026-07-29 15:45:05.765] [509279.110000] [ DEBUG] [15:45:03.110 ] tou: send=down none
+[2026-07-29 15:45:05.888] [509279.230000] [ DEBUG] [15:45:03.230 ] tou: recv=get_down
+[2026-07-29 15:45:05.888] [509279.230000] [ DEBUG] [15:45:03.230 ] tou: send=down none
+[2026-07-29 15:45:06.121] [509279.350000] [ DEBUG] [15:45:03.350 ] tou: recv=get_down
+[2026-07-29 15:45:06.121] [509279.350000] [ DEBUG] [15:45:03.350 ] tou: send=down none
+[2026-07-29 15:45:06.121] [509279.450000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:06.121] [509279.470000] [ DEBUG] [15:45:03.470 ] tou: recv=get_down
+[2026-07-29 15:45:06.121] [509279.470000] [ DEBUG] [15:45:03.470 ] tou: send=down none
+[2026-07-29 15:45:06.244] [509279.590000] [ DEBUG] [15:45:03.590 ] tou: recv=get_down
+[2026-07-29 15:45:06.244] [509279.590000] [ DEBUG] [15:45:03.590 ] tou: send=down none
+[2026-07-29 15:45:06.369] [509279.710000] [ DEBUG] [15:45:03.710 ] tou: recv=get_down
+[2026-07-29 15:45:06.369] [509279.710000] [ DEBUG] [15:45:03.710 ] tou: send=down none
+[2026-07-29 15:45:06.478] [509279.830000] [ DEBUG] [15:45:03.830 ] tou: recv=get_down
+[2026-07-29 15:45:06.478] [509279.830000] [ DEBUG] [15:45:03.830 ] tou: send=down none
+[2026-07-29 15:45:06.618] [509279.950000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:06.618] [509279.950000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509279 ts_last 507888
+[2026-07-29 15:45:06.618] [509279.950000] [ DEBUG] [15:45:03.950 ] tou: recv=get_down
+[2026-07-29 15:45:06.618] [509279.960000] [ DEBUG] [15:45:03.960 ] tou: send=down none
+[2026-07-29 15:45:06.742] [509280.080000] [ DEBUG] [15:45:04.080 ] tou: recv=get_down
+[2026-07-29 15:45:06.742] [509280.080000] [ DEBUG] [15:45:04.080 ] tou: send=down none
+[2026-07-29 15:45:06.850] [509280.200000] [ DEBUG] [15:45:04.200 ] tou: recv=get_down
+[2026-07-29 15:45:06.850] [509280.200000] [ DEBUG] [15:45:04.200 ] tou: send=down none
+[2026-07-29 15:45:06.975] [509280.320000] [ DEBUG] [15:45:04.320 ] tou: recv=get_down
+[2026-07-29 15:45:06.975] [509280.320000] [ DEBUG] [15:45:04.320 ] tou: send=down none
+[2026-07-29 15:45:07.209] [509280.440000] [ DEBUG] [15:45:04.440 ] tou: recv=get_down
+[2026-07-29 15:45:07.209] [509280.440000] [ DEBUG] [15:45:04.440 ] tou: send=down none
+[2026-07-29 15:45:07.209] [509280.460000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:07.209] [509280.560000] [ DEBUG] [15:45:04.560 ] tou: recv=get_down
+[2026-07-29 15:45:07.209] [509280.560000] [ DEBUG] [15:45:04.560 ] tou: send=down none
+[2026-07-29 15:45:07.333] [509280.680000] [ DEBUG] [15:45:04.680 ] tou: recv=get_down
+[2026-07-29 15:45:07.333] [509280.680000] [ DEBUG] [15:45:04.680 ] tou: send=down none
+[2026-07-29 15:45:07.459] [509280.800000] [ DEBUG] [15:45:04.800 ] tou: recv=get_down
+[2026-07-29 15:45:07.459] [509280.800000] [ DEBUG] [15:45:04.800 ] tou: send=down none
+[2026-07-29 15:45:07.691] [509280.920000] [ DEBUG] [15:45:04.920 ] tou: recv=get_down
+[2026-07-29 15:45:07.691] [509280.920000] [ DEBUG] [15:45:04.920 ] tou: send=down none
+[2026-07-29 15:45:07.691] [509280.960000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:07.691] [509280.960000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509280 ts_last 507888
+[2026-07-29 15:45:07.691] [509281.040000] [ DEBUG] [15:45:05.040 ] tou: recv=get_down
+[2026-07-29 15:45:07.691] [509281.040000] [ DEBUG] [15:45:05.040 ] tou: send=down none
+[2026-07-29 15:45:07.815] [509281.160000] [ DEBUG] [15:45:05.160 ] tou: recv=get_down
+[2026-07-29 15:45:07.815] [509281.160000] [ DEBUG] [15:45:05.160 ] tou: send=down none
+[2026-07-29 15:45:07.939] [509281.280000] [ DEBUG] [15:45:05.280 ] tou: recv=get_down
+[2026-07-29 15:45:07.939] [509281.280000] [ DEBUG] [15:45:05.280 ] tou: send=down none
+[2026-07-29 15:45:08.171] [509281.400000] [ DEBUG] [15:45:05.400 ] tou: recv=get_down
+[2026-07-29 15:45:08.171] [509281.400000] [ DEBUG] [15:45:05.400 ] tou: send=down none
+[2026-07-29 15:45:08.171] [509281.470000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:08.171] [509281.520000] [ DEBUG] [15:45:05.520 ] tou: recv=get_down
+[2026-07-29 15:45:08.171] [509281.520000] [ DEBUG] [15:45:05.520 ] tou: send=down none
+[2026-07-29 15:45:08.294] [509281.640000] [ DEBUG] [15:45:05.640 ] tou: recv=get_down
+[2026-07-29 15:45:08.294] [509281.640000] [ DEBUG] [15:45:05.640 ] tou: send=down none
+[2026-07-29 15:45:08.418] [509281.760000] [ DEBUG] [15:45:05.760 ] tou: recv=get_down
+[2026-07-29 15:45:08.418] [509281.760000] [ DEBUG] [15:45:05.760 ] tou: send=down none
+[2026-07-29 15:45:08.652] [509281.880000] [ DEBUG] [15:45:05.880 ] tou: recv=get_down
+[2026-07-29 15:45:08.652] [509281.880000] [ DEBUG] [15:45:05.880 ] tou: send=down none
+[2026-07-29 15:45:08.652] [509281.970000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:08.652] [509281.970000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509281 ts_last 507888
+[2026-07-29 15:45:08.652] [509282.000000] [ DEBUG] [15:45:06.000 ] tou: recv=get_down
+[2026-07-29 15:45:08.652] [509282.000000] [ DEBUG] [15:45:06.000 ] tou: send=down none
+[2026-07-29 15:45:08.776] [509282.120000] [ DEBUG] [15:45:06.120 ] tou: recv=get_down
+[2026-07-29 15:45:08.776] [509282.120000] [ DEBUG] [15:45:06.120 ] tou: send=down none
+[2026-07-29 15:45:08.900] [509282.240000] [ DEBUG] [15:45:06.240 ] tou: recv=get_down
+[2026-07-29 15:45:08.900] [509282.240000] [ DEBUG] [15:45:06.240 ] tou: send=down none
+[2026-07-29 15:45:09.008] [509282.360000] [ DEBUG] [15:45:06.360 ] tou: recv=get_down
+[2026-07-29 15:45:09.008] [509282.360000] [ DEBUG] [15:45:06.360 ] tou: send=down none
+[2026-07-29 15:45:09.147] [509282.480000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:09.147] [509282.480000] [ DEBUG] [15:45:06.480 ] tou: recv=get_down
+[2026-07-29 15:45:09.147] [509282.480000] [ DEBUG] [15:45:06.480 ] tou: send=down none
+[2026-07-29 15:45:09.271] [509282.610000] [ DEBUG] [15:45:06.610 ] tou: recv=get_down
+[2026-07-29 15:45:09.271] [509282.610000] [ DEBUG] [15:45:06.610 ] tou: send=down none
+[2026-07-29 15:45:09.380] [509282.730000] [ DEBUG] [15:45:06.730 ] tou: recv=get_down
+[2026-07-29 15:45:09.380] [509282.730000] [ DEBUG] [15:45:06.730 ] tou: send=down none
+[2026-07-29 15:45:09.505] [509282.850000] [ DEBUG] [15:45:06.850 ] tou: recv=get_down
+[2026-07-29 15:45:09.505] [509282.850000] [ DEBUG] [15:45:06.850 ] tou: send=down none
+[2026-07-29 15:45:09.739] [509282.970000] [ DEBUG] [15:45:06.970 ] tou: recv=get_down
+[2026-07-29 15:45:09.739] [509282.970000] [ DEBUG] [15:45:06.970 ] tou: send=down none
+[2026-07-29 15:45:09.739] [509282.980000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:09.739] [509282.980000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509282 ts_last 507888
+[2026-07-29 15:45:09.739] [509283.090000] [ DEBUG] [15:45:07.090 ] tou: recv=get_down
+[2026-07-29 15:45:09.739] [509283.090000] [ DEBUG] [15:45:07.090 ] tou: send=down none
+[2026-07-29 15:45:09.865] [509283.210000] [ DEBUG] [15:45:07.210 ] tou: recv=get_down
+[2026-07-29 15:45:09.865] [509283.210000] [ DEBUG] [15:45:07.210 ] tou: send=down none
+[2026-07-29 15:45:09.989] [509283.330000] [ DEBUG] [15:45:07.330 ] tou: recv=get_down
+[2026-07-29 15:45:09.989] [509283.330000] [ DEBUG] [15:45:07.330 ] tou: send=down none
+[2026-07-29 15:45:10.223] [509283.450000] [ DEBUG] [15:45:07.450 ] tou: recv=get_down
+[2026-07-29 15:45:10.223] [509283.450000] [ DEBUG] [15:45:07.450 ] tou: send=down none
+[2026-07-29 15:45:10.223] [509283.490000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:10.223] [509283.570000] [ DEBUG] [15:45:07.570 ] tou: recv=get_down
+[2026-07-29 15:45:10.223] [509283.570000] [ DEBUG] [15:45:07.570 ] tou: send=down none
+[2026-07-29 15:45:10.347] [509283.690000] [ DEBUG] [15:45:07.690 ] tou: recv=get_down
+[2026-07-29 15:45:10.347] [509283.690000] [ DEBUG] [15:45:07.690 ] tou: send=down none
+[2026-07-29 15:45:10.471] [509283.810000] [ DEBUG] [15:45:07.810 ] tou: recv=get_down
+[2026-07-29 15:45:10.471] [509283.810000] [ DEBUG] [15:45:07.810 ] tou: send=down none
+[2026-07-29 15:45:10.829] [509283.930000] [ DEBUG] [15:45:07.930 ] tou: recv=get_down
+[2026-07-29 15:45:10.829] [509283.930000] [ DEBUG] [15:45:07.930 ] tou: send=down none
+[2026-07-29 15:45:10.829] [509283.990000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:10.829] [509283.990000] [ DEBUG] [D][mible_beacon] one_second_handler 1548: one_second_handler running
+[2026-07-29 15:45:10.829] [509283.990000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509283 ts_last 507888
+[2026-07-29 15:45:10.829] [509284.050000] [ DEBUG] [15:45:08.050 ] tou: recv=get_down
+[2026-07-29 15:45:10.829] [509284.050000] [ DEBUG] [15:45:08.050 ] tou: send=down none
+[2026-07-29 15:45:10.829] [509284.100000] [  INFO] [509284100]<D> send uart ping..[509284.100000] [  INFO] [509284100]<D> serial sendA5 A5[509284.100000] [  INFO] 03 20 00 01 00 6E 
+[2026-07-29 15:45:10.829] [509284.110000] [  INFO] [509284110]<D> serial recv len [509284.120000] [  INFO] [509284120]<D> serial recv data[509284.120000] [  INFO] A5 03 20 00 01 01 6F 
+[2026-07-29 15:45:10.829] [509284.170000] [ DEBUG] [15:45:08.170 ] tou: recv=get_down
+[2026-07-29 15:45:10.829] [509284.170000] [ DEBUG] [15:45:08.170 ] tou: send=down none
+[2026-07-29 15:45:10.952] [509284.290000] [ DEBUG] [15:45:08.290 ] tou: recv=get_down
+[2026-07-29 15:45:10.952] [509284.290000] [ DEBUG] [15:45:08.290 ] tou: send=down none
+[2026-07-29 15:45:11.185] [509284.410000] [ DEBUG] [15:45:08.410 ] tou: recv=get_down
+[2026-07-29 15:45:11.185] [509284.410000] [ DEBUG] [15:45:08.410 ] tou: send=down none
+[2026-07-29 15:45:11.185] [509284.500000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:11.185] [509284.530000] [ DEBUG] [15:45:08.530 ] tou: recv=get_down
+[2026-07-29 15:45:11.185] [509284.530000] [ DEBUG] [15:45:08.530 ] tou: send=down none
+[2026-07-29 15:45:11.309] [509284.650000] [ DEBUG] [15:45:08.650 ] tou: recv=get_down
+[2026-07-29 15:45:11.309] [509284.650000] [ DEBUG] [15:45:08.650 ] tou: send=down none
+[2026-07-29 15:45:11.418] [509284.770000] [ DEBUG] [15:45:08.770 ] tou: recv=get_down
+[2026-07-29 15:45:11.418] [509284.770000] [ DEBUG] [15:45:08.770 ] tou: send=down none
+[2026-07-29 15:45:11.542] [509284.890000] [ DEBUG] [15:45:08.890 ] tou: recv=get_down
+[2026-07-29 15:45:11.542] [509284.890000] [ DEBUG] [15:45:08.890 ] tou: send=down none
+[2026-07-29 15:45:11.667] [509285.000000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:11.667] [509285.000000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509285 ts_last 507888
+[2026-07-29 15:45:11.667] [509285.010000] [ DEBUG] [15:45:09.010 ] tou: recv=get_down
+[2026-07-29 15:45:11.667] [509285.010000] [ DEBUG] [15:45:09.010 ] tou: send=down none
+[2026-07-29 15:45:11.789] [509285.130000] [ DEBUG] [15:45:09.130 ] tou: recv=get_down
+[2026-07-29 15:45:11.789] [509285.130000] [ DEBUG] [15:45:09.130 ] tou: send=down none
+[2026-07-29 15:45:11.911] [509285.250000] [ DEBUG] [15:45:09.250 ] tou: recv=get_down
+[2026-07-29 15:45:11.911] [509285.250000] [ DEBUG] [15:45:09.250 ] tou: send=down none
+[2026-07-29 15:45:12.019] [509285.370000] [ DEBUG] [15:45:09.370 ] tou: recv=get_down
+[2026-07-29 15:45:12.019] [509285.370000] [ DEBUG] [15:45:09.370 ] tou: send=down none
+[2026-07-29 15:45:12.268] [509285.490000] [ DEBUG] [15:45:09.490 ] tou: recv=get_down
+[2026-07-29 15:45:12.268] [509285.490000] [ DEBUG] [15:45:09.490 ] tou: send=down none
+[2026-07-29 15:45:12.268] [509285.510000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:12.268] [509285.610000] [ DEBUG] [15:45:09.610 ] tou: recv=get_down
+[2026-07-29 15:45:12.268] [509285.610000] [ DEBUG] [15:45:09.610 ] tou: send=down none
+[2026-07-29 15:45:12.392] [509285.730000] [ DEBUG] [15:45:09.730 ] tou: recv=get_down
+[2026-07-29 15:45:12.392] [509285.730000] [ DEBUG] [15:45:09.730 ] tou: send=down none
+[2026-07-29 15:45:12.502] [509285.850000] [ DEBUG] [15:45:09.850 ] tou: recv=get_down
+[2026-07-29 15:45:12.502] [509285.850000] [ DEBUG] [15:45:09.850 ] tou: send=down none
+[2026-07-29 15:45:12.750] [509285.970000] [ DEBUG] [15:45:09.970 ] tou: recv=get_down
+[2026-07-29 15:45:12.750] [509285.970000] [ DEBUG] [15:45:09.970 ] tou: send=down none
+[2026-07-29 15:45:12.750] [509286.010000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:12.750] [509286.010000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509286 ts_last 507888
+[2026-07-29 15:45:12.750] [509286.090000] [ DEBUG] [15:45:10.090 ] tou: recv=get_down
+[2026-07-29 15:45:12.750] [509286.090000] [ DEBUG] [15:45:10.090 ] tou: send=down none
+[2026-07-29 15:45:12.859] [509286.210000] [ DEBUG] [15:45:10.210 ] tou: recv=get_down
+[2026-07-29 15:45:12.859] [509286.210000] [ DEBUG] [15:45:10.210 ] tou: send=down none
+[2026-07-29 15:45:12.983] [509286.330000] [ DEBUG] [15:45:10.330 ] tou: recv=get_down
+[2026-07-29 15:45:12.983] [509286.330000] [ DEBUG] [15:45:10.330 ] tou: send=down none
+[2026-07-29 15:45:13.231] [509286.450000] [ DEBUG] [15:45:10.450 ] tou: recv=get_down
+[2026-07-29 15:45:13.231] [509286.450000] [ DEBUG] [15:45:10.450 ] tou: send=down none
+[2026-07-29 15:45:13.231] [509286.520000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:13.231] [509286.570000] [ DEBUG] [15:45:10.570 ] tou: recv=get_down
+[2026-07-29 15:45:13.231] [509286.570000] [ DEBUG] [15:45:10.570 ] tou: send=down none
+[2026-07-29 15:45:13.341] [509286.690000] [ DEBUG] [15:45:10.690 ] tou: recv=get_down
+[2026-07-29 15:45:13.341] [509286.690000] [ DEBUG] [15:45:10.690 ] tou: send=down none
+[2026-07-29 15:45:13.467] [509286.810000] [ DEBUG] [15:45:10.810 ] tou: recv=get_down
+[2026-07-29 15:45:13.467] [509286.810000] [ DEBUG] [15:45:10.810 ] tou: send=down none
+[2026-07-29 15:45:13.700] [509286.930000] [ DEBUG] [15:45:10.930 ] tou: recv=get_down
+[2026-07-29 15:45:13.700] [509286.930000] [ DEBUG] [15:45:10.930 ] tou: send=down none
+[2026-07-29 15:45:13.700] [509287.020000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:13.700] [509287.020000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509287 ts_last 507888
+[2026-07-29 15:45:13.700] [509287.050000] [ DEBUG] [15:45:11.050 ] tou: recv=get_down
+[2026-07-29 15:45:13.700] [509287.050000] [ DEBUG] [15:45:11.050 ] tou: send=down none
+[2026-07-29 15:45:13.824] [509287.170000] [ DEBUG] [15:45:11.170 ] tou: recv=get_down
+[2026-07-29 15:45:13.824] [509287.170000] [ DEBUG] [15:45:11.170 ] tou: send=down none
+[2026-07-29 15:45:13.981] [509287.260000] [ DEBUG] [D][rpc_agent] rpc_delegate_up 1106: up req: 58
+[2026-07-29 15:45:13.981] [509287.260000] [ DEBUG] [miio_client_func] ot_agent_recv_handler_one() mask msg = {"id":349600696,"method":"local.query_status","params":""},msg_len = 58, fd = 9
+[2026-07-29 15:45:13.981] [509287.270000] [ DEBUG] [15:45:11.270 ] miio_message: handle_local_msg_state:{"id":349600696,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:13.981] [509287.280000] [ DEBUG] [D][rpc_agent] mible_rpc_delegate_down 979: down: 1 67 {"id":349600696,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:13.981] [509287.290000] [ DEBUG] [D][] arch_log_handler 990: msg_len=67, msg={"id":349600696,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:13.981] [509287.300000] [ DEBUG] [D][] _local_status_msg_parse 873: s_otble_state=3
+[2026-07-29 15:45:13.981] [509287.310000] [ DEBUG] [15:45:11.310 ] tou: recv=get_down
+[2026-07-29 15:45:13.981] [509287.320000] [ DEBUG] [15:45:11.320 ] tou: send=down none
+[2026-07-29 15:45:14.216] [509287.440000] [ DEBUG] [15:45:11.440 ] tou: recv=get_down
+[2026-07-29 15:45:14.216] [509287.440000] [ DEBUG] [15:45:11.440 ] tou: send=down none
+[2026-07-29 15:45:14.216] [509287.530000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:14.216] [509287.560000] [ DEBUG] [15:45:11.560 ] tou: recv=get_down
+[2026-07-29 15:45:14.216] [509287.560000] [ DEBUG] [15:45:11.560 ] tou: send=down none
+[2026-07-29 15:45:14.340] [509287.680000] [ DEBUG] [15:45:11.680 ] tou: recv=get_down
+[2026-07-29 15:45:14.340] [509287.680000] [ DEBUG] [15:45:11.680 ] tou: send=down none
+[2026-07-29 15:45:14.448] [509287.800000] [ DEBUG] [15:45:11.800 ] tou: recv=get_down
+[2026-07-29 15:45:14.448] [509287.800000] [ DEBUG] [15:45:11.800 ] tou: send=down none
+[2026-07-29 15:45:14.572] [509287.920000] [ DEBUG] [15:45:11.920 ] tou: recv=get_down
+[2026-07-29 15:45:14.572] [509287.920000] [ DEBUG] [15:45:11.920 ] tou: send=down none
+[2026-07-29 15:45:14.695] [509288.030000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:14.695] [509288.030000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509288 ts_last 507888
+[2026-07-29 15:45:14.695] [509288.040000] [ DEBUG] [15:45:12.040 ] tou: recv=get_down
+[2026-07-29 15:45:14.695] [509288.040000] [ DEBUG] [15:45:12.040 ] tou: send=down none
+[2026-07-29 15:45:14.819] [509288.160000] [ DEBUG] [15:45:12.160 ] tou: recv=get_down
+[2026-07-29 15:45:14.819] [509288.160000] [ DEBUG] [15:45:12.160 ] tou: send=down none
+[2026-07-29 15:45:15.052] [509288.280000] [ DEBUG] [15:45:12.280 ] tou: recv=get_down
+[2026-07-29 15:45:15.052] [509288.280000] [ DEBUG] [15:45:12.280 ] tou: send=down none
+[2026-07-29 15:45:15.052] [509288.360000] [  INFO] [15:45:12.360 ] miio_monitor: work time = 509288s, memory left = 46576
+[2026-07-29 15:45:15.052] [509288.400000] [ DEBUG] [15:45:12.400 ] tou: recv=get_down
+[2026-07-29 15:45:15.052] [509288.400000] [ DEBUG] [15:45:12.400 ] tou: send=down none
+[2026-07-29 15:45:15.299] [509288.520000] [ DEBUG] [15:45:12.520 ] tou: recv=get_down
+[2026-07-29 15:45:15.299] [509288.520000] [ DEBUG] [15:45:12.520 ] tou: send=down none
+[2026-07-29 15:45:15.299] [509288.540000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:15.299] [509288.640000] [ DEBUG] [15:45:12.640 ] tou: recv=get_down
+[2026-07-29 15:45:15.299] [509288.640000] [ DEBUG] [15:45:12.640 ] tou: send=down none
+[2026-07-29 15:45:15.407] [509288.760000] [ DEBUG] [15:45:12.760 ] tou: recv=get_down
+[2026-07-29 15:45:15.407] [509288.760000] [ DEBUG] [15:45:12.760 ] tou: send=down none
+[2026-07-29 15:45:15.531] [509288.880000] [ DEBUG] [15:45:12.880 ] tou: recv=get_down
+[2026-07-29 15:45:15.531] [509288.880000] [ DEBUG] [15:45:12.880 ] tou: send=down none
+[2026-07-29 15:45:15.779] [509289.000000] [ DEBUG] [15:45:13.000 ] tou: recv=get_down
+[2026-07-29 15:45:15.779] [509289.000000] [ DEBUG] [15:45:13.000 ] tou: send=down none
+[2026-07-29 15:45:15.779] [509289.040000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:15.779] [509289.040000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509289 ts_last 507888
+[2026-07-29 15:45:15.779] [509289.120000] [ DEBUG] [15:45:13.120 ] tou: recv=get_down
+[2026-07-29 15:45:15.779] [509289.120000] [ DEBUG] [15:45:13.120 ] tou: send=down none
+[2026-07-29 15:45:15.902] [509289.240000] [ DEBUG] [15:45:13.240 ] tou: recv=get_down
+[2026-07-29 15:45:15.902] [509289.240000] [ DEBUG] [15:45:13.240 ] tou: send=down none
+[2026-07-29 15:45:16.011] [509289.360000] [ DEBUG] [15:45:13.360 ] tou: recv=get_down
+[2026-07-29 15:45:16.011] [509289.360000] [ DEBUG] [15:45:13.360 ] tou: send=down none
+[2026-07-29 15:45:16.263] [509289.480000] [ DEBUG] [15:45:13.480 ] tou: recv=get_down
+[2026-07-29 15:45:16.263] [509289.480000] [ DEBUG] [15:45:13.480 ] tou: send=down none
+[2026-07-29 15:45:16.263] [509289.550000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:16.263] [509289.600000] [ DEBUG] [15:45:13.600 ] tou: recv=get_down
+[2026-07-29 15:45:16.263] [509289.600000] [ DEBUG] [15:45:13.600 ] tou: send=down none
+[2026-07-29 15:45:16.372] [509289.720000] [ DEBUG] [15:45:13.720 ] tou: recv=get_down
+[2026-07-29 15:45:16.372] [509289.720000] [ DEBUG] [15:45:13.720 ] tou: send=down none
+[2026-07-29 15:45:16.496] [509289.840000] [ DEBUG] [15:45:13.840 ] tou: recv=get_down
+[2026-07-29 15:45:16.496] [509289.840000] [ DEBUG] [15:45:13.840 ] tou: send=down none
+[2026-07-29 15:45:16.731] [509289.960000] [ DEBUG] [15:45:13.960 ] tou: recv=get_down
+[2026-07-29 15:45:16.731] [509289.960000] [ DEBUG] [15:45:13.960 ] tou: send=down none
+[2026-07-29 15:45:16.731] [509290.050000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:16.731] [509290.050000] [ DEBUG] [D][mible_beacon] one_second_handler 1548: one_second_handler running
+[2026-07-29 15:45:16.731] [509290.050000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509290 ts_last 507888
+[2026-07-29 15:45:16.731] [509290.080000] [ DEBUG] [15:45:14.080 ] tou: recv=get_down
+[2026-07-29 15:45:16.731] [509290.080000] [ DEBUG] [15:45:14.080 ] tou: send=down none
+[2026-07-29 15:45:16.855] [509290.200000] [ DEBUG] [15:45:14.200 ] tou: recv=get_down
+[2026-07-29 15:45:16.855] [509290.200000] [ DEBUG] [15:45:14.200 ] tou: send=down none
+[2026-07-29 15:45:16.978] [509290.320000] [ DEBUG] [15:45:14.320 ] tou: recv=get_down
+[2026-07-29 15:45:16.978] [509290.320000] [ DEBUG] [15:45:14.320 ] tou: send=down none
+[2026-07-29 15:45:17.103] [509290.440000] [ DEBUG] [15:45:14.440 ] tou: recv=get_down
+[2026-07-29 15:45:17.103] [509290.440000] [ DEBUG] [15:45:14.440 ] tou: send=down none
+[2026-07-29 15:45:17.226] [509290.560000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:17.226] [509290.560000] [ DEBUG] [15:45:14.560 ] tou: recv=get_down
+[2026-07-29 15:45:17.226] [509290.560000] [ DEBUG] [15:45:14.560 ] tou: send=down none
+[2026-07-29 15:45:17.349] [509290.690000] [ DEBUG] [15:45:14.690 ] tou: recv=get_down
+[2026-07-29 15:45:17.349] [509290.690000] [ DEBUG] [15:45:14.690 ] tou: send=down none
+[2026-07-29 15:45:17.461] [509290.810000] [ DEBUG] [15:45:14.810 ] tou: recv=get_down
+[2026-07-29 15:45:17.461] [509290.810000] [ DEBUG] [15:45:14.810 ] tou: send=down none
+[2026-07-29 15:45:17.584] [509290.930000] [ DEBUG] [15:45:14.930 ] tou: recv=get_down
+[2026-07-29 15:45:17.584] [509290.930000] [ DEBUG] [15:45:14.930 ] tou: send=down none
+[2026-07-29 15:45:17.818] [509291.050000] [ DEBUG] [15:45:15.050 ] tou: recv=get_down
+[2026-07-29 15:45:17.818] [509291.050000] [ DEBUG] [15:45:15.050 ] tou: send=down none
+[2026-07-29 15:45:17.818] [509291.060000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:17.818] [509291.060000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509291 ts_last 507888
+[2026-07-29 15:45:17.818] [509291.170000] [ DEBUG] [15:45:15.170 ] tou: recv=get_down
+[2026-07-29 15:45:17.818] [509291.170000] [ DEBUG] [15:45:15.170 ] tou: send=down none
+[2026-07-29 15:45:17.942] [509291.290000] [ DEBUG] [15:45:15.290 ] tou: recv=get_down
+[2026-07-29 15:45:17.942] [509291.290000] [ DEBUG] [15:45:15.290 ] tou: send=down none
+[2026-07-29 15:45:18.065] [509291.410000] [ DEBUG] [15:45:15.410 ] tou: recv=get_down
+[2026-07-29 15:45:18.065] [509291.410000] [ DEBUG] [15:45:15.410 ] tou: send=down none
+[2026-07-29 15:45:18.299] [509291.530000] [ DEBUG] [15:45:15.530 ] tou: recv=get_down
+[2026-07-29 15:45:18.299] [509291.530000] [ DEBUG] [15:45:15.530 ] tou: send=down none
+[2026-07-29 15:45:18.299] [509291.570000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:18.299] [509291.650000] [ DEBUG] [15:45:15.650 ] tou: recv=get_down
+[2026-07-29 15:45:18.299] [509291.650000] [ DEBUG] [15:45:15.650 ] tou: send=down none
+[2026-07-29 15:45:18.423] [509291.770000] [ DEBUG] [15:45:15.770 ] tou: recv=get_down
+[2026-07-29 15:45:18.423] [509291.770000] [ DEBUG] [15:45:15.770 ] tou: send=down none
+[2026-07-29 15:45:18.547] [509291.890000] [ DEBUG] [15:45:15.890 ] tou: recv=get_down
+[2026-07-29 15:45:18.547] [509291.890000] [ DEBUG] [15:45:15.890 ] tou: send=down none
+[2026-07-29 15:45:18.781] [509292.010000] [ DEBUG] [15:45:16.010 ] tou: recv=get_down
+[2026-07-29 15:45:18.781] [509292.010000] [ DEBUG] [15:45:16.010 ] tou: send=down none
+[2026-07-29 15:45:18.781] [509292.070000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:18.781] [509292.070000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509292 ts_last 507888
+[2026-07-29 15:45:18.781] [509292.130000] [ DEBUG] [15:45:16.130 ] tou: recv=get_down
+[2026-07-29 15:45:18.781] [509292.130000] [ DEBUG] [15:45:16.130 ] tou: send=down none
+[2026-07-29 15:45:18.905] [509292.250000] [ DEBUG] [15:45:16.250 ] tou: recv=get_down
+[2026-07-29 15:45:18.905] [509292.250000] [ DEBUG] [15:45:16.250 ] tou: send=down none
+[2026-07-29 15:45:19.029] [509292.370000] [ DEBUG] [15:45:16.370 ] tou: recv=get_down
+[2026-07-29 15:45:19.029] [509292.370000] [ DEBUG] [15:45:16.370 ] tou: send=down none
+[2026-07-29 15:45:19.261] [509292.490000] [ DEBUG] [15:45:16.490 ] tou: recv=get_down
+[2026-07-29 15:45:19.261] [509292.490000] [ DEBUG] [15:45:16.490 ] tou: send=down none
+[2026-07-29 15:45:19.261] [509292.580000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:19.261] [509292.610000] [ DEBUG] [15:45:16.610 ] tou: recv=get_down
+[2026-07-29 15:45:19.261] [509292.610000] [ DEBUG] [15:45:16.610 ] tou: send=down none
+[2026-07-29 15:45:19.385] [509292.730000] [ DEBUG] [15:45:16.730 ] tou: recv=get_down
+[2026-07-29 15:45:19.385] [509292.730000] [ DEBUG] [15:45:16.730 ] tou: send=down none
+[2026-07-29 15:45:19.509] [509292.850000] [ DEBUG] [15:45:16.850 ] tou: recv=get_down
+[2026-07-29 15:45:19.509] [509292.850000] [ DEBUG] [15:45:16.850 ] tou: send=down none
+[2026-07-29 15:45:19.633] [509292.970000] [ DEBUG] [15:45:16.970 ] tou: recv=get_down
+[2026-07-29 15:45:19.633] [509292.970000] [ DEBUG] [15:45:16.970 ] tou: send=down none
+[2026-07-29 15:45:19.867] [509293.080000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:19.867] [509293.080000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509293 ts_last 507888
+[2026-07-29 15:45:19.867] [509293.090000] [ DEBUG] [15:45:17.090 ] tou: recv=get_down
+[2026-07-29 15:45:19.867] [509293.090000] [ DEBUG] [15:45:17.090 ] tou: send=down none
+[2026-07-29 15:45:19.867] [509293.210000] [ DEBUG] [15:45:17.210 ] tou: recv=get_down
+[2026-07-29 15:45:19.867] [509293.210000] [ DEBUG] [15:45:17.210 ] tou: send=down none
+[2026-07-29 15:45:19.991] [509293.330000] [ DEBUG] [15:45:17.330 ] tou: recv=get_down
+[2026-07-29 15:45:19.991] [509293.330000] [ DEBUG] [15:45:17.330 ] tou: send=down none
+[2026-07-29 15:45:20.099] [509293.450000] [ DEBUG] [15:45:17.450 ] tou: recv=get_down
+[2026-07-29 15:45:20.099] [509293.450000] [ DEBUG] [15:45:17.450 ] tou: send=down none
+[2026-07-29 15:45:20.348] [509293.570000] [ DEBUG] [15:45:17.570 ] tou: recv=get_down
+[2026-07-29 15:45:20.348] [509293.570000] [ DEBUG] [15:45:17.570 ] tou: send=down none
+[2026-07-29 15:45:20.348] [509293.590000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:20.348] [509293.690000] [ DEBUG] [15:45:17.690 ] tou: recv=get_down
+[2026-07-29 15:45:20.348] [509293.690000] [ DEBUG] [15:45:17.690 ] tou: send=down none
+[2026-07-29 15:45:20.470] [509293.810000] [ DEBUG] [15:45:17.810 ] tou: recv=get_down
+[2026-07-29 15:45:20.470] [509293.810000] [ DEBUG] [15:45:17.810 ] tou: send=down none
+[2026-07-29 15:45:20.579] [509293.930000] [ DEBUG] [15:45:17.930 ] tou: recv=get_down
+[2026-07-29 15:45:20.579] [509293.930000] [ DEBUG] [15:45:17.930 ] tou: send=down none
+[2026-07-29 15:45:20.823] [509294.050000] [ DEBUG] [15:45:18.050 ] tou: recv=get_down
+[2026-07-29 15:45:20.823] [509294.050000] [ DEBUG] [15:45:18.050 ] tou: send=down none
+[2026-07-29 15:45:20.823] [509294.090000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:20.823] [509294.090000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509294 ts_last 507888
+[2026-07-29 15:45:20.823] [509294.130000] [  INFO] [509294130]<D> send uart ping..[509294.130000] [  INFO] [509294130]<D> serial sendA5 A5[509294.130000] [  INFO] 03 20 00 01 00 6E 
+[2026-07-29 15:45:20.823] [509294.140000] [  INFO] [509294140]<D> serial recv len [509294.140000] [  INFO] [509294140]<D> serial recv data[509294.150000] [  INFO] A5 03 20 00 01 01 6F 
+[2026-07-29 15:45:20.823] [509294.170000] [ DEBUG] [15:45:18.170 ] tou: recv=get_down
+[2026-07-29 15:45:20.823] [509294.170000] [ DEBUG] [15:45:18.170 ] tou: send=down none
+[2026-07-29 15:45:20.946] [509294.290000] [ DEBUG] [15:45:18.290 ] tou: recv=get_down
+[2026-07-29 15:45:20.946] [509294.290000] [ DEBUG] [15:45:18.290 ] tou: send=down none
+[2026-07-29 15:45:21.070] [509294.410000] [ DEBUG] [15:45:18.410 ] tou: recv=get_down
+[2026-07-29 15:45:21.070] [509294.410000] [ DEBUG] [15:45:18.410 ] tou: send=down none
+[2026-07-29 15:45:21.304] [509294.530000] [ DEBUG] [15:45:18.530 ] tou: recv=get_down
+[2026-07-29 15:45:21.304] [509294.530000] [ DEBUG] [15:45:18.530 ] tou: send=down none
+[2026-07-29 15:45:21.304] [509294.600000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:21.304] [509294.650000] [ DEBUG] [15:45:18.650 ] tou: recv=get_down
+[2026-07-29 15:45:21.304] [509294.650000] [ DEBUG] [15:45:18.650 ] tou: send=down none
+[2026-07-29 15:45:21.428] [509294.770000] [ DEBUG] [15:45:18.770 ] tou: recv=get_down
+[2026-07-29 15:45:21.428] [509294.770000] [ DEBUG] [15:45:18.770 ] tou: send=down none
+[2026-07-29 15:45:21.553] [509294.890000] [ DEBUG] [15:45:18.890 ] tou: recv=get_down
+[2026-07-29 15:45:21.553] [509294.890000] [ DEBUG] [15:45:18.890 ] tou: send=down none
+[2026-07-29 15:45:21.786] [509295.010000] [ DEBUG] [15:45:19.010 ] tou: recv=get_down
+[2026-07-29 15:45:21.786] [509295.010000] [ DEBUG] [15:45:19.010 ] tou: send=down none
+[2026-07-29 15:45:21.786] [509295.100000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:21.786] [509295.100000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509295 ts_last 507888
+[2026-07-29 15:45:21.786] [509295.130000] [ DEBUG] [15:45:19.130 ] tou: recv=get_down
+[2026-07-29 15:45:21.786] [509295.130000] [ DEBUG] [15:45:19.130 ] tou: send=down none
+[2026-07-29 15:45:21.910] [509295.250000] [ DEBUG] [15:45:19.250 ] tou: recv=get_down
+[2026-07-29 15:45:21.910] [509295.250000] [ DEBUG] [15:45:19.250 ] tou: send=down none
+[2026-07-29 15:45:22.143] [509295.370000] [ DEBUG] [15:45:19.370 ] tou: recv=get_down
+[2026-07-29 15:45:22.143] [509295.370000] [ DEBUG] [15:45:19.370 ] tou: send=down none
+[2026-07-29 15:45:22.143] [509295.460000] [ DEBUG] [15:45:19.460 ] otu: [192.168.0.57:48201] talking, len=32
+[2026-07-29 15:45:22.143] [509295.460000] [  WARN] [15:45:19.460 ] otu: Token private!!.
+[2026-07-29 15:45:22.143] [509295.490000] [ DEBUG] [15:45:19.490 ] tou: recv=get_down
+[2026-07-29 15:45:22.143] [509295.490000] [ DEBUG] [15:45:19.490 ] tou: send=down none
+[2026-07-29 15:45:22.281] [509295.610000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:22.281] [509295.610000] [ DEBUG] [15:45:19.610 ] tou: recv=get_down
+[2026-07-29 15:45:22.281] [509295.610000] [ DEBUG] [15:45:19.610 ] tou: send=down none
+[2026-07-29 15:45:22.390] [509295.740000] [ DEBUG] [15:45:19.740 ] tou: recv=get_down
+[2026-07-29 15:45:22.390] [509295.740000] [ DEBUG] [15:45:19.740 ] tou: send=down none
+[2026-07-29 15:45:22.512] [509295.860000] [ DEBUG] [15:45:19.860 ] tou: recv=get_down
+[2026-07-29 15:45:22.512] [509295.860000] [ DEBUG] [15:45:19.860 ] tou: send=down none
+[2026-07-29 15:45:22.637] [509295.980000] [ DEBUG] [15:45:19.980 ] tou: recv=get_down
+[2026-07-29 15:45:22.637] [509295.980000] [ DEBUG] [15:45:19.980 ] tou: send=down none
+[2026-07-29 15:45:22.873] [509296.100000] [ DEBUG] [15:45:20.100 ] tou: recv=get_down
+[2026-07-29 15:45:22.873] [509296.100000] [ DEBUG] [15:45:20.100 ] tou: send=down none
+[2026-07-29 15:45:22.873] [509296.110000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:22.873] [509296.110000] [ DEBUG] [D][mible_beacon] one_second_handler 1548: one_second_handler running
+[2026-07-29 15:45:22.873] [509296.110000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509296 ts_last 507888
+[2026-07-29 15:45:22.873] [509296.220000] [ DEBUG] [15:45:20.220 ] tou: recv=get_down
+[2026-07-29 15:45:22.873] [509296.220000] [ DEBUG] [15:45:20.220 ] tou: send=down none
+[2026-07-29 15:45:22.997] [509296.340000] [ DEBUG] [15:45:20.340 ] tou: recv=get_down
+[2026-07-29 15:45:22.997] [509296.340000] [ DEBUG] [15:45:20.340 ] tou: send=down none
+[2026-07-29 15:45:23.120] [509296.460000] [ DEBUG] [15:45:20.460 ] tou: recv=get_down
+[2026-07-29 15:45:23.120] [509296.460000] [ DEBUG] [15:45:20.460 ] tou: send=down none
+[2026-07-29 15:45:23.353] [509296.580000] [ DEBUG] [15:45:20.580 ] tou: recv=get_down
+[2026-07-29 15:45:23.353] [509296.580000] [ DEBUG] [15:45:20.580 ] tou: send=down none
+[2026-07-29 15:45:23.353] [509296.620000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:23.353] [509296.700000] [ DEBUG] [15:45:20.700 ] tou: recv=get_down
+[2026-07-29 15:45:23.353] [509296.700000] [ DEBUG] [15:45:20.700 ] tou: send=down none
+[2026-07-29 15:45:23.476] [509296.820000] [ DEBUG] [15:45:20.820 ] tou: recv=get_down
+[2026-07-29 15:45:23.476] [509296.820000] [ DEBUG] [15:45:20.820 ] tou: send=down none
+[2026-07-29 15:45:23.600] [509296.940000] [ DEBUG] [15:45:20.940 ] tou: recv=get_down
+[2026-07-29 15:45:23.600] [509296.940000] [ DEBUG] [15:45:20.940 ] tou: send=down none
+[2026-07-29 15:45:23.833] [509297.060000] [ DEBUG] [15:45:21.060 ] tou: recv=get_down
+[2026-07-29 15:45:23.833] [509297.060000] [ DEBUG] [15:45:21.060 ] tou: send=down none
+[2026-07-29 15:45:23.833] [509297.120000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:23.833] [509297.120000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509297 ts_last 507888
+[2026-07-29 15:45:23.833] [509297.180000] [ DEBUG] [15:45:21.180 ] tou: recv=get_down
+[2026-07-29 15:45:23.833] [509297.180000] [ DEBUG] [15:45:21.180 ] tou: send=down none
+[2026-07-29 15:45:23.957] [509297.300000] [ DEBUG] [15:45:21.300 ] tou: recv=get_down
+[2026-07-29 15:45:23.957] [509297.300000] [ DEBUG] [15:45:21.300 ] tou: send=down none
+[2026-07-29 15:45:24.329] [509297.410000] [ DEBUG] [D][rpc_agent] rpc_delegate_up 1106: up req: 59
+[2026-07-29 15:45:24.329] [509297.410000] [ DEBUG] [miio_client_func] ot_agent_recv_handler_one() mask msg = {"id":1488271697,"method":"local.query_status","params":""},msg_len = 59, fd = 9
+[2026-07-29 15:45:24.329] [509297.420000] [ DEBUG] [15:45:21.420 ] miio_message: handle_local_msg_state:{"id":1488271697,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:24.329] [509297.430000] [ DEBUG] [D][rpc_agent] mible_rpc_delegate_down 979: down: 1 68 {"id":1488271697,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:24.329] [509297.440000] [ DEBUG] [D][] arch_log_handler 990: msg_len=68, msg={"id":1488271697,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:24.329] [509297.450000] [ DEBUG] [D][] _local_status_msg_parse 873: s_otble_state=3
+[2026-07-29 15:45:24.329] [509297.460000] [ DEBUG] [15:45:21.460 ] tou: recv=get_down
+[2026-07-29 15:45:24.329] [509297.470000] [ DEBUG] [15:45:21.470 ] tou: send=down none
+[2026-07-29 15:45:24.329] [509297.560000] [ DEBUG] [15:45:21.560 ] tou: recv=get_down
+[2026-07-29 15:45:24.329] [509297.560000] [ DEBUG] [15:45:21.560 ] tou: send=down none
+[2026-07-29 15:45:24.329] [509297.630000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:24.329] [509297.660000] [  INFO] [15:45:21.660 ] ots: -->kplv sent.
+[2026-07-29 15:45:24.329] [509297.680000] [ DEBUG] [15:45:21.680 ] tou: recv=get_down
+[2026-07-29 15:45:24.329] [509297.680000] [ DEBUG] [15:45:21.680 ] tou: send=down none
+[2026-07-29 15:45:24.578] [509297.800000] [ DEBUG] [15:45:21.800 ] tou: recv=get_down
+[2026-07-29 15:45:24.578] [509297.800000] [ DEBUG] [15:45:21.800 ] tou: send=down none
+[2026-07-29 15:45:24.578] [509297.820000] [ DEBUG] [15:45:21.820 ] ots: recvd 8Bytes
+[2026-07-29 15:45:24.578] [509297.820000] [  INFO] [15:45:21.820 ] ots: <--kplv ack.
+[2026-07-29 15:45:24.578] [509297.820000] [ DEBUG] [15:45:21.820 ] ots: event emit[id=11,txt=ots.keeplive,ext_len=0]
+[2026-07-29 15:45:24.578] [509297.830000] [ DEBUG] [15:45:21.830 ] ots: keeplive costtime = 170
+[2026-07-29 15:45:24.578] [509297.830000] [ DEBUG] [15:45:21.830 ] ots: ots.keeplive[11] happened!
+[2026-07-29 15:45:24.578] [509297.920000] [ DEBUG] [15:45:21.920 ] tou: recv=get_down
+[2026-07-29 15:45:24.578] [509297.920000] [ DEBUG] [15:45:21.920 ] tou: send=down none
+[2026-07-29 15:45:24.809] [509298.040000] [ DEBUG] [15:45:22.040 ] tou: recv=get_down
+[2026-07-29 15:45:24.809] [509298.040000] [ DEBUG] [15:45:22.040 ] tou: send=down none
+[2026-07-29 15:45:24.809] [509298.130000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:24.809] [509298.130000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509298 ts_last 507888
+[2026-07-29 15:45:24.809] [509298.160000] [ DEBUG] [15:45:22.160 ] tou: recv=get_down
+[2026-07-29 15:45:24.809] [509298.160000] [ DEBUG] [15:45:22.160 ] tou: send=down none
+[2026-07-29 15:45:24.932] [509298.280000] [ DEBUG] [15:45:22.280 ] tou: recv=get_down
+[2026-07-29 15:45:24.932] [509298.280000] [ DEBUG] [15:45:22.280 ] tou: send=down none
+[2026-07-29 15:45:25.181] [509298.400000] [ DEBUG] [15:45:22.400 ] tou: recv=get_down
+[2026-07-29 15:45:25.181] [509298.400000] [ DEBUG] [15:45:22.400 ] tou: send=down none
+[2026-07-29 15:45:25.181] [509298.480000] [  INFO] [15:45:22.480 ] miio_monitor: work time = 509298s, memory left = 46576
+[2026-07-29 15:45:25.181] [509298.520000] [ DEBUG] [15:45:22.520 ] tou: recv=get_down
+[2026-07-29 15:45:25.181] [509298.520000] [ DEBUG] [15:45:22.520 ] tou: send=down none
+[2026-07-29 15:45:25.305] [509298.640000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:25.305] [509298.640000] [ DEBUG] [15:45:22.640 ] tou: recv=get_down
+[2026-07-29 15:45:25.305] [509298.640000] [ DEBUG] [15:45:22.640 ] tou: send=down none
+[2026-07-29 15:45:25.429] [509298.770000] [ DEBUG] [15:45:22.770 ] tou: recv=get_down
+[2026-07-29 15:45:25.429] [509298.770000] [ DEBUG] [15:45:22.770 ] tou: send=down none
+[2026-07-29 15:45:25.553] [509298.890000] [ DEBUG] [15:45:22.890 ] tou: recv=get_down
+[2026-07-29 15:45:25.553] [509298.890000] [ DEBUG] [15:45:22.890 ] tou: send=down none
+[2026-07-29 15:45:25.662] [509299.010000] [ DEBUG] [15:45:23.010 ] tou: recv=get_down
+[2026-07-29 15:45:25.662] [509299.010000] [ DEBUG] [15:45:23.010 ] tou: send=down none
+[2026-07-29 15:45:25.911] [509299.130000] [ DEBUG] [15:45:23.130 ] tou: recv=get_down
+[2026-07-29 15:45:25.911] [509299.130000] [ DEBUG] [15:45:23.130 ] tou: send=down none
+[2026-07-29 15:45:25.911] [509299.140000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:25.911] [509299.140000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509299 ts_last 507888
+[2026-07-29 15:45:25.911] [509299.250000] [ DEBUG] [15:45:23.250 ] tou: recv=get_down
+[2026-07-29 15:45:25.911] [509299.250000] [ DEBUG] [15:45:23.250 ] tou: send=down none
+[2026-07-29 15:45:26.020] [509299.370000] [ DEBUG] [15:45:23.370 ] tou: recv=get_down
+[2026-07-29 15:45:26.020] [509299.370000] [ DEBUG] [15:45:23.370 ] tou: send=down none
+[2026-07-29 15:45:26.143] [509299.490000] [ DEBUG] [15:45:23.490 ] tou: recv=get_down
+[2026-07-29 15:45:26.143] [509299.490000] [ DEBUG] [15:45:23.490 ] tou: send=down none
+[2026-07-29 15:45:26.390] [509299.610000] [ DEBUG] [15:45:23.610 ] tou: recv=get_down
+[2026-07-29 15:45:26.390] [509299.610000] [ DEBUG] [15:45:23.610 ] tou: send=down none
+[2026-07-29 15:45:26.390] [509299.650000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:26.390] [509299.730000] [ DEBUG] [15:45:23.730 ] tou: recv=get_down
+[2026-07-29 15:45:26.390] [509299.730000] [ DEBUG] [15:45:23.730 ] tou: send=down none
+[2026-07-29 15:45:26.499] [509299.850000] [ DEBUG] [15:45:23.850 ] tou: recv=get_down
+[2026-07-29 15:45:26.499] [509299.850000] [ DEBUG] [15:45:23.850 ] tou: send=down none
+[2026-07-29 15:45:26.623] [509299.970000] [ DEBUG] [15:45:23.970 ] tou: recv=get_down
+[2026-07-29 15:45:26.623] [509299.970000] [ DEBUG] [15:45:23.970 ] tou: send=down none
+[2026-07-29 15:45:26.870] [509300.090000] [ DEBUG] [15:45:24.090 ] tou: recv=get_down
+[2026-07-29 15:45:26.870] [509300.090000] [ DEBUG] [15:45:24.090 ] tou: send=down none
+[2026-07-29 15:45:26.870] [509300.150000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:26.870] [509300.150000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509300 ts_last 507888
+[2026-07-29 15:45:26.870] [509300.210000] [ DEBUG] [15:45:24.210 ] tou: recv=get_down
+[2026-07-29 15:45:26.870] [509300.210000] [ DEBUG] [15:45:24.210 ] tou: send=down none
+[2026-07-29 15:45:26.980] [509300.330000] [ DEBUG] [15:45:24.330 ] tou: recv=get_down
+[2026-07-29 15:45:26.980] [509300.330000] [ DEBUG] [15:45:24.330 ] tou: send=down none
+[2026-07-29 15:45:27.105] [509300.450000] [ DEBUG] [15:45:24.450 ] tou: recv=get_down
+[2026-07-29 15:45:27.105] [509300.450000] [ DEBUG] [15:45:24.450 ] tou: send=down none
+[2026-07-29 15:45:27.351] [509300.570000] [ DEBUG] [15:45:24.570 ] tou: recv=get_down
+[2026-07-29 15:45:27.351] [509300.570000] [ DEBUG] [15:45:24.570 ] tou: send=down none
+[2026-07-29 15:45:27.351] [509300.660000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:27.351] [509300.690000] [ DEBUG] [15:45:24.690 ] tou: recv=get_down
+[2026-07-29 15:45:27.351] [509300.690000] [ DEBUG] [15:45:24.690 ] tou: send=down none
+[2026-07-29 15:45:27.462] [509300.810000] [ DEBUG] [15:45:24.810 ] tou: recv=get_down
+[2026-07-29 15:45:27.462] [509300.810000] [ DEBUG] [15:45:24.810 ] tou: send=down none
+[2026-07-29 15:45:27.587] [509300.930000] [ DEBUG] [15:45:24.930 ] tou: recv=get_down
+[2026-07-29 15:45:27.587] [509300.930000] [ DEBUG] [15:45:24.930 ] tou: send=down none
+[2026-07-29 15:45:27.711] [509301.050000] [ DEBUG] [15:45:25.050 ] tou: recv=get_down
+[2026-07-29 15:45:27.711] [509301.050000] [ DEBUG] [15:45:25.050 ] tou: send=down none
+[2026-07-29 15:45:27.836] [509301.160000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:27.836] [509301.160000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509301 ts_last 507888
+[2026-07-29 15:45:27.836] [509301.170000] [ DEBUG] [15:45:25.170 ] tou: recv=get_down
+[2026-07-29 15:45:27.836] [509301.170000] [ DEBUG] [15:45:25.170 ] tou: send=down none
+[2026-07-29 15:45:27.943] [509301.290000] [ DEBUG] [15:45:25.290 ] tou: recv=get_down
+[2026-07-29 15:45:27.943] [509301.290000] [ DEBUG] [15:45:25.290 ] tou: send=down none
+[2026-07-29 15:45:28.067] [509301.410000] [ DEBUG] [15:45:25.410 ] tou: recv=get_down
+[2026-07-29 15:45:28.067] [509301.410000] [ DEBUG] [15:45:25.410 ] tou: send=down none
+[2026-07-29 15:45:28.190] [509301.530000] [ DEBUG] [15:45:25.530 ] tou: recv=get_down
+[2026-07-29 15:45:28.190] [509301.530000] [ DEBUG] [15:45:25.530 ] tou: send=down none
+[2026-07-29 15:45:28.426] [509301.650000] [ DEBUG] [15:45:25.650 ] tou: recv=get_down
+[2026-07-29 15:45:28.426] [509301.650000] [ DEBUG] [15:45:25.650 ] tou: send=down none
+[2026-07-29 15:45:28.426] [509301.670000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:28.426] [509301.770000] [ DEBUG] [15:45:25.770 ] tou: recv=get_down
+[2026-07-29 15:45:28.426] [509301.770000] [ DEBUG] [15:45:25.770 ] tou: send=down none
+[2026-07-29 15:45:28.549] [509301.890000] [ DEBUG] [15:45:25.890 ] tou: recv=get_down
+[2026-07-29 15:45:28.549] [509301.890000] [ DEBUG] [15:45:25.890 ] tou: send=down none
+[2026-07-29 15:45:28.658] [509302.010000] [ DEBUG] [15:45:26.010 ] tou: recv=get_down
+[2026-07-29 15:45:28.658] [509302.010000] [ DEBUG] [15:45:26.010 ] tou: send=down none
+[2026-07-29 15:45:28.907] [509302.130000] [ DEBUG] [15:45:26.130 ] tou: recv=get_down
+[2026-07-29 15:45:28.907] [509302.130000] [ DEBUG] [15:45:26.130 ] tou: send=down none
+[2026-07-29 15:45:28.907] [509302.170000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:28.907] [509302.170000] [ DEBUG] [D][mible_beacon] one_second_handler 1548: one_second_handler running
+[2026-07-29 15:45:28.907] [509302.170000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509302 ts_last 507888
+[2026-07-29 15:45:28.907] [509302.250000] [ DEBUG] [15:45:26.250 ] tou: recv=get_down
+[2026-07-29 15:45:28.907] [509302.250000] [ DEBUG] [15:45:26.250 ] tou: send=down none
+[2026-07-29 15:45:29.032] [509302.370000] [ DEBUG] [15:45:26.370 ] tou: recv=get_down
+[2026-07-29 15:45:29.032] [509302.370000] [ DEBUG] [15:45:26.370 ] tou: send=down none
+[2026-07-29 15:45:29.140] [509302.490000] [ DEBUG] [15:45:26.490 ] tou: recv=get_down
+[2026-07-29 15:45:29.140] [509302.490000] [ DEBUG] [15:45:26.490 ] tou: send=down none
+[2026-07-29 15:45:29.390] [509302.610000] [ DEBUG] [15:45:26.610 ] tou: recv=get_down
+[2026-07-29 15:45:29.390] [509302.610000] [ DEBUG] [15:45:26.610 ] tou: send=down none
+[2026-07-29 15:45:29.390] [509302.680000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:29.390] [509302.730000] [ DEBUG] [15:45:26.730 ] tou: recv=get_down
+[2026-07-29 15:45:29.390] [509302.730000] [ DEBUG] [15:45:26.730 ] tou: send=down none
+[2026-07-29 15:45:29.498] [509302.850000] [ DEBUG] [15:45:26.850 ] tou: recv=get_down
+[2026-07-29 15:45:29.498] [509302.850000] [ DEBUG] [15:45:26.850 ] tou: send=down none
+[2026-07-29 15:45:29.623] [509302.970000] [ DEBUG] [15:45:26.970 ] tou: recv=get_down
+[2026-07-29 15:45:29.623] [509302.970000] [ DEBUG] [15:45:26.970 ] tou: send=down none
+[2026-07-29 15:45:29.871] [509303.090000] [ DEBUG] [15:45:27.090 ] tou: recv=get_down
+[2026-07-29 15:45:29.871] [509303.090000] [ DEBUG] [15:45:27.090 ] tou: send=down none
+[2026-07-29 15:45:29.871] [509303.180000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:29.871] [509303.180000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509303 ts_last 507888
+[2026-07-29 15:45:29.871] [509303.210000] [ DEBUG] [15:45:27.210 ] tou: recv=get_down
+[2026-07-29 15:45:29.871] [509303.210000] [ DEBUG] [15:45:27.210 ] tou: send=down none
+[2026-07-29 15:45:29.979] [509303.330000] [ DEBUG] [15:45:27.330 ] tou: recv=get_down
+[2026-07-29 15:45:29.979] [509303.330000] [ DEBUG] [15:45:27.330 ] tou: send=down none
+[2026-07-29 15:45:30.102] [509303.450000] [ DEBUG] [15:45:27.450 ] tou: recv=get_down
+[2026-07-29 15:45:30.102] [509303.450000] [ DEBUG] [15:45:27.450 ] tou: send=down none
+[2026-07-29 15:45:30.225] [509303.570000] [ DEBUG] [15:45:27.570 ] tou: recv=get_down
+[2026-07-29 15:45:30.225] [509303.570000] [ DEBUG] [15:45:27.570 ] tou: send=down none
+[2026-07-29 15:45:30.351] [509303.690000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:30.351] [509303.690000] [ DEBUG] [15:45:27.690 ] tou: recv=get_down
+[2026-07-29 15:45:30.351] [509303.690000] [ DEBUG] [15:45:27.690 ] tou: send=down none
+[2026-07-29 15:45:30.476] [509303.820000] [ DEBUG] [15:45:27.820 ] tou: recv=get_down
+[2026-07-29 15:45:30.476] [509303.820000] [ DEBUG] [15:45:27.820 ] tou: send=down none
+[2026-07-29 15:45:30.600] [509303.940000] [ DEBUG] [15:45:27.940 ] tou: recv=get_down
+[2026-07-29 15:45:30.600] [509303.940000] [ DEBUG] [15:45:27.940 ] tou: send=down none
+[2026-07-29 15:45:30.723] [509304.060000] [ DEBUG] [15:45:28.060 ] tou: recv=get_down
+[2026-07-29 15:45:30.723] [509304.060000] [ DEBUG] [15:45:28.060 ] tou: send=down none
+[2026-07-29 15:45:30.967] [509304.180000] [ DEBUG] [15:45:28.180 ] tou: recv=get_down
+[2026-07-29 15:45:30.967] [509304.180000] [ DEBUG] [15:45:28.180 ] tou: send=down none
+[2026-07-29 15:45:30.967] [509304.190000] [  INFO] [509304190]<D> send uart ping..[509304.190000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:30.967] [509304.190000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509304 ts_last 507888
+[2026-07-29 15:45:30.967] [509304.200000] [  INFO] [509304200]<D> serial sendA5 A5[509304.200000] [  INFO] 03 20 00 01 00 6E 
+[2026-07-29 15:45:30.967] [509304.220000] [  INFO] [509304220]<D> serial recv len [509304.220000] [  INFO] [509304220]<D> serial recv data[509304.220000] [  INFO] A5 03 20 00 01 01 6F 
+[2026-07-29 15:45:30.967] [509304.310000] [ DEBUG] [15:45:28.310 ] tou: recv=get_down
+[2026-07-29 15:45:30.967] [509304.310000] [ DEBUG] [15:45:28.310 ] tou: send=down none
+[2026-07-29 15:45:31.091] [509304.430000] [ DEBUG] [15:45:28.430 ] tou: recv=get_down
+[2026-07-29 15:45:31.091] [509304.430000] [ DEBUG] [15:45:28.430 ] tou: send=down none
+[2026-07-29 15:45:31.213] [509304.550000] [ DEBUG] [15:45:28.550 ] tou: recv=get_down
+[2026-07-29 15:45:31.213] [509304.550000] [ DEBUG] [15:45:28.550 ] tou: send=down none
+[2026-07-29 15:45:31.443] [509304.670000] [ DEBUG] [15:45:28.670 ] tou: recv=get_down
+[2026-07-29 15:45:31.443] [509304.670000] [ DEBUG] [15:45:28.670 ] tou: send=down none
+[2026-07-29 15:45:31.443] [509304.700000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:31.443] [509304.790000] [ DEBUG] [15:45:28.790 ] tou: recv=get_down
+[2026-07-29 15:45:31.443] [509304.790000] [ DEBUG] [15:45:28.790 ] tou: send=down none
+[2026-07-29 15:45:31.567] [509304.910000] [ DEBUG] [15:45:28.910 ] tou: recv=get_down
+[2026-07-29 15:45:31.567] [509304.910000] [ DEBUG] [15:45:28.910 ] tou: send=down none
+[2026-07-29 15:45:31.689] [509305.030000] [ DEBUG] [15:45:29.030 ] tou: recv=get_down
+[2026-07-29 15:45:31.689] [509305.030000] [ DEBUG] [15:45:29.030 ] tou: send=down none
+[2026-07-29 15:45:31.919] [509305.150000] [ DEBUG] [15:45:29.150 ] tou: recv=get_down
+[2026-07-29 15:45:31.919] [509305.150000] [ DEBUG] [15:45:29.150 ] tou: send=down none
+[2026-07-29 15:45:31.919] [509305.200000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:31.919] [509305.200000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509305 ts_last 507888
+[2026-07-29 15:45:31.919] [509305.270000] [ DEBUG] [15:45:29.270 ] tou: recv=get_down
+[2026-07-29 15:45:31.919] [509305.270000] [ DEBUG] [15:45:29.270 ] tou: send=down none
+[2026-07-29 15:45:32.043] [509305.390000] [ DEBUG] [15:45:29.390 ] tou: recv=get_down
+[2026-07-29 15:45:32.043] [509305.390000] [ DEBUG] [15:45:29.390 ] tou: send=down none
+[2026-07-29 15:45:32.165] [509305.510000] [ DEBUG] [15:45:29.510 ] tou: recv=get_down
+[2026-07-29 15:45:32.165] [509305.510000] [ DEBUG] [15:45:29.510 ] tou: send=down none
+[2026-07-29 15:45:32.414] [509305.630000] [ DEBUG] [15:45:29.630 ] tou: recv=get_down
+[2026-07-29 15:45:32.414] [509305.630000] [ DEBUG] [15:45:29.630 ] tou: send=down none
+[2026-07-29 15:45:32.414] [509305.710000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:32.414] [509305.750000] [ DEBUG] [15:45:29.750 ] tou: recv=get_down
+[2026-07-29 15:45:32.414] [509305.750000] [ DEBUG] [15:45:29.750 ] tou: send=down none
+[2026-07-29 15:45:32.520] [509305.870000] [ DEBUG] [15:45:29.870 ] tou: recv=get_down
+[2026-07-29 15:45:32.520] [509305.870000] [ DEBUG] [15:45:29.870 ] tou: send=down none
+[2026-07-29 15:45:32.645] [509305.990000] [ DEBUG] [15:45:29.990 ] tou: recv=get_down
+[2026-07-29 15:45:32.645] [509305.990000] [ DEBUG] [15:45:29.990 ] tou: send=down none
+[2026-07-29 15:45:32.879] [509306.110000] [ DEBUG] [15:45:30.110 ] tou: recv=get_down
+[2026-07-29 15:45:32.879] [509306.110000] [ DEBUG] [15:45:30.110 ] tou: send=down none
+[2026-07-29 15:45:32.879] [509306.210000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:32.879] [509306.210000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509306 ts_last 507888
+[2026-07-29 15:45:32.879] [509306.230000] [ DEBUG] [15:45:30.230 ] tou: recv=get_down
+[2026-07-29 15:45:32.879] [509306.230000] [ DEBUG] [15:45:30.230 ] tou: send=down none
+[2026-07-29 15:45:33.000] [509306.350000] [ DEBUG] [15:45:30.350 ] tou: recv=get_down
+[2026-07-29 15:45:33.000] [509306.350000] [ DEBUG] [15:45:30.350 ] tou: send=down none
+[2026-07-29 15:45:33.124] [509306.470000] [ DEBUG] [15:45:30.470 ] tou: recv=get_down
+[2026-07-29 15:45:33.124] [509306.470000] [ DEBUG] [15:45:30.470 ] tou: send=down none
+[2026-07-29 15:45:33.248] [509306.590000] [ DEBUG] [15:45:30.590 ] tou: recv=get_down
+[2026-07-29 15:45:33.248] [509306.590000] [ DEBUG] [15:45:30.590 ] tou: send=down none
+[2026-07-29 15:45:33.371] [509306.710000] [ DEBUG] [15:45:30.710 ] tou: recv=get_down
+[2026-07-29 15:45:33.371] [509306.710000] [ DEBUG] [15:45:30.710 ] tou: send=down none
+[2026-07-29 15:45:33.371] [509306.720000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:33.481] [509306.830000] [ DEBUG] [15:45:30.830 ] tou: recv=get_down
+[2026-07-29 15:45:33.481] [509306.830000] [ DEBUG] [15:45:30.830 ] tou: send=down none
+[2026-07-29 15:45:33.605] [509306.950000] [ DEBUG] [15:45:30.950 ] tou: recv=get_down
+[2026-07-29 15:45:33.605] [509306.950000] [ DEBUG] [15:45:30.950 ] tou: send=down none
+[2026-07-29 15:45:33.731] [509307.070000] [ DEBUG] [15:45:31.070 ] tou: recv=get_down
+[2026-07-29 15:45:33.731] [509307.070000] [ DEBUG] [15:45:31.070 ] tou: send=down none
+[2026-07-29 15:45:33.964] [509307.190000] [ DEBUG] [15:45:31.190 ] tou: recv=get_down
+[2026-07-29 15:45:33.964] [509307.190000] [ DEBUG] [15:45:31.190 ] tou: send=down none
+[2026-07-29 15:45:33.964] [509307.220000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:33.964] [509307.220000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509307 ts_last 507888
+[2026-07-29 15:45:33.964] [509307.310000] [ DEBUG] [15:45:31.310 ] tou: recv=get_down
+[2026-07-29 15:45:33.964] [509307.310000] [ DEBUG] [15:45:31.310 ] tou: send=down none
+[2026-07-29 15:45:34.087] [509307.430000] [ DEBUG] [15:45:31.430 ] tou: recv=get_down
+[2026-07-29 15:45:34.087] [509307.430000] [ DEBUG] [15:45:31.430 ] tou: send=down none
+[2026-07-29 15:45:34.443] [509307.550000] [ DEBUG] [15:45:31.550 ] tou: recv=get_down
+[2026-07-29 15:45:34.443] [509307.550000] [ DEBUG] [15:45:31.550 ] tou: send=down none
+[2026-07-29 15:45:34.443] [509307.570000] [ DEBUG] [D][rpc_agent] rpc_delegate_up 1106: up req: 59
+[2026-07-29 15:45:34.443] [509307.570000] [  INFO] [15:45:31.570 ] miio_monitor: work time = 509307s, memory left = 46544
+[2026-07-29 15:45:34.443] [509307.570000] [ DEBUG] [miio_client_func] ot_agent_recv_handler_one() mask msg = {"id":1538196698,"method":"local.query_status","params":""},msg_len = 59, fd = 9
+[2026-07-29 15:45:34.443] [509307.580000] [ DEBUG] [15:45:31.580 ] miio_message: handle_local_msg_state:{"id":1538196698,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:34.443] [509307.600000] [ DEBUG] [D][rpc_agent] mible_rpc_delegate_down 979: down: 1 68 {"id":1538196698,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:34.443] [509307.610000] [ DEBUG] [D][] arch_log_handler 990: msg_len=68, msg={"id":1538196698,"method":"local.status","params":"cloud_connected"}
+[2026-07-29 15:45:34.443] [509307.620000] [ DEBUG] [D][] _local_status_msg_parse 873: s_otble_state=3
+[2026-07-29 15:45:34.443] [509307.670000] [ DEBUG] [15:45:31.670 ] tou: recv=get_down
+[2026-07-29 15:45:34.443] [509307.670000] [ DEBUG] [15:45:31.670 ] tou: send=down none
+[2026-07-29 15:45:34.443] [509307.730000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:34.443] [509307.790000] [ DEBUG] [15:45:31.790 ] tou: recv=get_down
+[2026-07-29 15:45:34.443] [509307.790000] [ DEBUG] [15:45:31.790 ] tou: send=down none
+[2026-07-29 15:45:34.568] [509307.910000] [ DEBUG] [15:45:31.910 ] tou: recv=get_down
+[2026-07-29 15:45:34.568] [509307.910000] [ DEBUG] [15:45:31.910 ] tou: send=down none
+[2026-07-29 15:45:34.677] [509308.030000] [ DEBUG] [15:45:32.030 ] tou: recv=get_down
+[2026-07-29 15:45:34.677] [509308.030000] [ DEBUG] [15:45:32.030 ] tou: send=down none
+[2026-07-29 15:45:34.925] [509308.150000] [ DEBUG] [15:45:32.150 ] tou: recv=get_down
+[2026-07-29 15:45:34.925] [509308.150000] [ DEBUG] [15:45:32.150 ] tou: send=down none
+[2026-07-29 15:45:34.925] [509308.230000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:34.925] [509308.230000] [ DEBUG] [D][mible_beacon] one_second_handler 1548: one_second_handler running
+[2026-07-29 15:45:34.925] [509308.230000] [ DEBUG] [D][] mible_prph_check 125: ts_now 509308 ts_last 507888
+[2026-07-29 15:45:34.925] [509308.270000] [ DEBUG] [15:45:32.270 ] tou: recv=get_down
+[2026-07-29 15:45:34.925] [509308.270000] [ DEBUG] [15:45:32.270 ] tou: send=down none
+[2026-07-29 15:45:35.048] [509308.390000] [ DEBUG] [15:45:32.390 ] tou: recv=get_down
+[2026-07-29 15:45:35.048] [509308.390000] [ DEBUG] [15:45:32.390 ] tou: send=down none
+[2026-07-29 15:45:35.280] [509308.510000] [ DEBUG] [15:45:32.510 ] tou: recv=get_down
+[2026-07-29 15:45:35.280] [509308.510000] [ DEBUG] [15:45:32.510 ] tou: send=down none
+[2026-07-29 15:45:35.280] [509308.580000] [  INFO] [15:45:32.580 ] miio_monitor: work time = 509308s, memory left = 46576
+[2026-07-29 15:45:35.280] [509308.630000] [ DEBUG] [15:45:32.630 ] tou: recv=get_down
+[2026-07-29 15:45:35.280] [509308.630000] [ DEBUG] [15:45:32.630 ] tou: send=down none
+[2026-07-29 15:45:35.403] [509308.740000] [ DEBUG] [D][mible_beacon] gateway_get_first_rpc_and_upload 2506: rpc_upload_list is empty
+[2026-07-29 15:45:35.403] [509308.750000] [ DEBUG] [15:45:32.750 ] tou: recv=get_down
+[2026-07-29 15:45:35.403] [509308.750000] [ DEBUG] [15:45:32.750 ] tou: send=down none
+[2026-07-29 15:45:35.527] [509308.870000] [ DEBUG] [15:45:32.870 ] tou: recv=get_down
+[2026-07-29 15:45:35.527] [509308.870000] [ DEBUG] [15:45:32.870 ] tou: send=down none
