@@ -27,10 +27,10 @@
     "theme_style": "win11",
     "font_size": 10,
     "topmost": false,
-    "serial_config_collapsed": true,
-    "save_raw_enabled_default": true,
+    "serial_config_collapsed": false,
+    "save_raw_enabled_default": false,
     "save_raw_path_default": "D:\\测试\\工具\\串口解析\\Serial-port-data-parsing\\data",
     "raw_auto_split_mb": 50,
-    "window_geometry": "1815x1038+57+593"
+    "window_geometry": "2003x1038+724+450"
   }
 }

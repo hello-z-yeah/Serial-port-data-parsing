@@ -2189,17 +2189,36 @@ class ProtocolParserApp:
     def _build_send_panel(self, parent: tk.Misc) -> None:
         """构建"指令发送"Tab。"""
 
-        # 模式选择
+        # 模式选择（分段按钮：选中绿色）
         mode_row = ttk.LabelFrame(parent, text="发送模式", padding=8)
         mode_row.grid(row=1, column=0, sticky="we", pady=(0, 8))
         mode_row.columnconfigure(0, weight=1)
-        for i, (label, value) in enumerate([
-            ("协议模式（自动组帧+CRC）", "protocol"),
-            ("Raw HEX", "raw_hex"),
-            ("Raw ASCII", "raw_ascii"),
-        ]):
-            rb = ttk.Radiobutton(mode_row, text=label, value=value, variable=self.send_mode_var, command=self._on_send_mode_change)
-            rb.grid(row=0, column=i, padx=6, sticky="w")
+
+        seg = ttk.Frame(mode_row)
+        seg.pack(fill="x")
+        self._send_mode_seg = seg
+        for c in range(3):
+            seg.columnconfigure(c, weight=1, uniform="sendmode")
+
+        self._send_mode_btns: dict[str, RoundedButton] = {}
+        for col, (value, label) in enumerate((
+            ("protocol", "协议模式"),
+            ("raw_hex", "HEX"),
+            ("raw_ascii", "ASCII"),
+        )):
+            b = RoundedButton(
+                seg,
+                text=label,
+                style="Toolbar.TButton",
+                width=12,
+                command=self._safe(lambda v=value: self._set_send_mode(v)),
+            )
+            b.grid(row=0, column=col, sticky="ew", padx=1)
+            self._send_mode_btns[value] = b
+
+        self._sync_send_mode_btn_style()
+        seg.bind("<Configure>", self._safe(self._layout_send_mode_seg), add="+")
+        self.root.after(50, self._safe(self._layout_send_mode_seg))
 
         # 协议模式内容
         self.protocol_frame = ttk.LabelFrame(parent, text="协议参数", padding=8)
@@ -2262,26 +2281,28 @@ class ProtocolParserApp:
         self.fields_text.insert("1.0", self.tx_fields_var.get())
 
         # Raw 内容（共用 1 个帧，通过 mode 显示不同的 placeholder）
-        self.raw_frame = ttk.LabelFrame(parent, text="Raw 内容（切换模式后此处改变语义）", padding=8)
-        self.raw_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))  # 与协议同排
+        # HEX / ASCII 共用输入区（标题随模式变，不再单独占一行提示）
+        self.raw_frame = ttk.LabelFrame(parent, text="HEX格式发送", padding=8)
+        self.raw_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))
         self.raw_frame.columnconfigure(0, weight=1)
-        self.raw_frame.rowconfigure(1, weight=1)
-        self.raw_frame.columnconfigure(0, weight=1)
-        self.raw_hint = ttk.Label(self.raw_frame, text="HEX 模式：1A 2B 3C 或 1A2B3C", foreground="#555")
-        self.raw_hint.grid(row=0, column=0, sticky="w")
+        self.raw_frame.rowconfigure(0, weight=1)
+
+        # 保留对象，供模式切换改文案；不 grid，不占高度
+        self.raw_hint = ttk.Label(self.raw_frame, text="")
+
         self.raw_text = tk.Text(
             self.raw_frame,
-            height=4,
+            height=6,
             font=self.serial_font,
             relief="solid",
             borderwidth=1,
             highlightthickness=1,
-            highlightbackground="#E0E0E0",
-            highlightcolor="#E0E0E0",
+            highlightbackground="#C0C0C0",
+            highlightcolor="#C0C0C0",
             bd=1,
         )
-        self.raw_text.grid(row=1, column=1, columnspan=3, sticky="nsew", pady=3)
-        self.raw_frame.rowconfigure(1, weight=1)
+        # 占满整框：row=0, column=0
+        self.raw_text.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
 
         # 周期发送 + 操作按钮（两行，避免窄宽度下被裁切）
         act = ttk.LabelFrame(parent, text="发送操作", padding=6)
@@ -2444,6 +2465,7 @@ class ProtocolParserApp:
 
         try:
             self.send_mode_var.set("protocol")
+            self._sync_send_mode_btn_style()
             self._on_send_mode_change()
         except Exception:
             pass
@@ -2492,8 +2514,64 @@ class ProtocolParserApp:
         if code is not None:
             self.tx_cmd_code_var.set(f"0x{code:02X}")
 
+    def _set_send_mode(self, mode: str) -> None:
+        """分段按钮切换发送模式。"""
+        if mode not in ("protocol", "raw_hex", "raw_ascii"):
+            return
+        self.send_mode_var.set(mode)
+        self._sync_send_mode_btn_style()
+        self._on_send_mode_change()
+
+    def _layout_send_mode_seg(self, event=None) -> None:
+        """三个发送模式按钮均分整行宽度，消除右侧空白。"""
+        seg = getattr(self, "_send_mode_seg", None)
+        btns = getattr(self, "_send_mode_btns", None)
+        if not seg or not btns:
+            return
+        try:
+            w = int(seg.winfo_width())
+        except Exception:
+            return
+        if w < 60:
+            return
+        each = max((w - 8) // 3, 48)
+        for btn in btns.values():
+            try:
+                # RoundedButton.configure(width=) 走 Canvas 像素宽度
+                btn.configure(width=each)
+                # 若文字未居中，强制重绘
+                if hasattr(btn, "_draw"):
+                    btn._draw()
+                # 居中文字
+                if hasattr(btn, "_text_id"):
+                    h = int(btn.cget("height") or 24)
+                    btn.coords(btn._text_id, each / 2, h / 2)
+            except Exception:
+                pass
+
+    def _sync_send_mode_btn_style(self) -> None:
+        cur = self.send_mode_var.get()
+        for value, btn in getattr(self, "_send_mode_btns", {}).items():
+            try:
+                if value == cur:
+                    btn.configure(style="Success.TButton")
+                else:
+                    btn.configure(style="Toolbar.TButton")
+            except Exception:
+                pass
+        # 换肤后保持均分
+        try:
+            self._layout_send_mode_seg()
+        except Exception:
+            pass
+
     def _on_send_mode_change(self) -> None:
         mode = self.send_mode_var.get()
+        try:
+            self._sync_send_mode_btn_style()
+        except Exception:
+            pass
+
         if mode == "protocol":
             self.protocol_frame.grid()
             self.raw_frame.grid_remove()
@@ -2501,9 +2579,9 @@ class ProtocolParserApp:
             self.protocol_frame.grid_remove()
             self.raw_frame.grid()
             if mode == "raw_hex":
-                self.raw_hint.configure(text="Raw HEX：例如 1A 2B 3C 0D 0A（空格可省略）")
-            else:
-                self.raw_hint.configure(text="Raw ASCII：直接输入文本内容（写入实际字节= UTF-8 编码 或 原字符）")
+                self.raw_frame.configure(text="HEX格式发送")
+            else:  # raw_ascii
+                self.raw_frame.configure(text="ASCII格式发送")
 
     def _current_fields_text(self) -> str:
         try:
@@ -4245,11 +4323,11 @@ class ProtocolParserApp:
                                 ibytes = iraw.replace(" ", "")
                                 ival_hex = ibytes[4:] if len(ibytes) >= 4 else ""
                                 if ival_hex:
-                                    data_fields.append(f"{iname}{ival_text} ({ival_hex})")
+                                    data_fields.append(f"{ival_text} ({ival_hex})")
                                 else:
-                                    data_fields.append(f"{iname}{ival_text}")
+                                    data_fields.append(ival_text)
                             elif ichildren and isinstance(ichildren, list) and ichildren[0].get("attrid"):
-                                data_fields.append(f"{iname}{ival_text}")
+                                data_fields.append(ival_text)
                             else:
                                 data_fields.append(f"{iname}={itext}")
                     elif children and isinstance(children, list) and children[0].get("attrid"):
@@ -4259,13 +4337,11 @@ class ProtocolParserApp:
                             raw_bytes = raw_hex.replace(" ", "")
                             if len(raw_bytes) >= 4:
                                 value_hex = raw_bytes[4:]
-                                data_fields.append(f"{fname}{val_text} ({value_hex})")
+                                data_fields.append(f"{val_text} ({value_hex})")
                             else:
-                                data_fields.append(f"{fname}{val_text}")
+                                data_fields.append(val_text)
                         else:
-                            data_fields.append(f"{fname}{val_text}")
-                    else:
-                        data_fields.append(f"{fname}={ftext}")
+                            data_fields.append(val_text)
             if data_fields:
                 self.serial_text.insert("end", f"  {{ {'; '.join(data_fields)} }}", "field")
             self.serial_text.insert("end", f"  | {raw_display}\n", "raw")
