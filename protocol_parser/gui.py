@@ -595,18 +595,26 @@ def _enable_full_combobox(
     on_tip=None,
     on_clear=None,
 ) -> None:
-    """合上悬停 + 展开列表悬停 → 状态栏显示完整文本。"""
+    """合上：悬停显示当前值；展开：列表项悬停显示完整文本（状态栏）。
+
+    列表用 ComboboxListbox 绑定标签，不依赖 PopdownWindow 路径。
+    """
+    state = {"last": ""}
 
     def _tip(text: str) -> None:
         text = (text or "").strip()
-        if not text or on_tip is None:
+        if not text or text == state["last"]:
+            return
+        state["last"] = text
+        if on_tip is None:
             return
         try:
             on_tip(text)
         except Exception:
             pass
 
-    def _clear() -> None:
+    def _clear(_e=None) -> None:
+        state["last"] = ""
         if on_clear is None:
             return
         try:
@@ -614,34 +622,6 @@ def _enable_full_combobox(
         except Exception:
             pass
 
-    def _find_listbox():
-        try:
-            pd = combo.tk.call("ttk::combobox::PopdownWindow", str(combo))
-        except Exception:
-            return None
-        pd = str(pd)
-        for suf in (".f.l", ".lb", ".f.lb"):
-            try:
-                w = combo.nametowidget(pd + suf)
-                if w.winfo_class() == "Listbox":
-                    return w
-            except Exception:
-                pass
-        try:
-            root_pd = combo.nametowidget(pd)
-            stack = [root_pd]
-            while stack:
-                w = stack.pop()
-                try:
-                    if w.winfo_class() == "Listbox":
-                        return w
-                    stack.extend(w.winfo_children())
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        return None
-
     def _on_combo_enter(_e=None) -> None:
         try:
             _tip(str(combo.get() or ""))
@@ -649,193 +629,103 @@ def _enable_full_combobox(
             pass
 
     def _on_combo_leave(_e=None) -> None:
-        # 鼠标移进下拉列表时不要清
-        try:
-            lb = _find_listbox()
-            if lb is not None and lb.winfo_ismapped():
+        # 可能移进下拉列表，稍晚再清；列表 Motion 会继续刷 tip
+        def _later():
+            try:
                 x, y = combo.winfo_pointerxy()
-                lx, ly = lb.winfo_rootx(), lb.winfo_rooty()
-                if lx <= x <= lx + max(lb.winfo_width(), 1) and ly <= y <= ly + max(lb.winfo_height(), 1):
+                lx, ly = combo.winfo_rootx(), combo.winfo_rooty()
+                if (
+                    lx <= x <= lx + max(combo.winfo_width(), 1)
+                    and ly <= y <= ly + max(combo.winfo_height(), 1)
+                ):
                     return
-        except Exception:
-            pass
+            except Exception:
+                pass
+            # 不在框上：若也不在列表上，Leave 会由 ComboboxListbox 处理；
+            # 这里不强制 clear，避免点开瞬间闪一下空
+        combo.after(120, _later)
+
+    def _on_selected(_e=None) -> None:
         _clear()
 
-    def _attach_list_bindings(attempt: int = 0) -> None:
-        lb = _find_listbox()
-        if lb is None:
-            if attempt < 25:
-                combo.after(40, lambda a=attempt + 1: _attach_list_bindings(a))
-            return
-
-        # 尽量加宽，减少截断
+    def _on_lb_motion(event) -> None:
         try:
-            values = combo.cget("values") or ()
-            if values:
-                longest = max(len(str(v)) for v in values)
-                lb.configure(width=max(longest + 4, 60))
-        except Exception:
-            pass
+            path = str(event.widget)  # 可能是 widget，也可能是路径 str
+            idx = combo.tk.call(path, "nearest", event.y)
+            text = combo.tk.call(path, "get", idx)
+            # print("tip_text", idx, repr(text))  # 测通后可删
+            _tip(str(text))
+        except Exception as e:
+            print("lb_err", e)
 
-        def _show_at_event(event) -> None:
-            try:
-                # 优先按坐标取行
-                idx = lb.index(f"@{event.x},{event.y}")
-            except Exception:
-                try:
-                    idx = lb.nearest(event.y)
-                except Exception:
-                    return
-            try:
-                _tip(str(lb.get(idx)))
-            except Exception:
-                pass
-
-        def _on_lb_leave(_e=None) -> None:
-            _clear()
-
-        # 重复打开时避免重复叠加太多，先解一次再绑
-        for seq in ("<Motion>", "<B1-Motion>", "<Leave>"):
-            try:
-                lb.unbind(seq)
-            except Exception:
-                pass
-
-        lb.bind("<Motion>", _show_at_event, add="+")
-        lb.bind("<B1-Motion>", _show_at_event, add="+")
-        lb.bind("<Leave>", _on_lb_leave, add="+")
-
-        # 弹层窗口本身也跟一下（有的环境 Listbox 收不到 Motion）
-        try:
-            pd = str(combo.tk.call("ttk::combobox::PopdownWindow", str(combo)))
-            pop = combo.nametowidget(pd)
-
-            def _on_pop_motion(event) -> None:
-                try:
-                    # 转到 listbox 坐标
-                    x = event.x_root - lb.winfo_rootx()
-                    y = event.y_root - lb.winfo_rooty()
-                    idx = lb.nearest(y)
-                    _tip(str(lb.get(idx)))
-                except Exception:
-                    pass
-
-            pop.bind("<Motion>", _on_pop_motion, add="+")
-        except Exception:
-            pass
-
-    def _on_open(_e=None) -> None:
-        # 多点几次，等 popdown 真正映射出来
-        for ms in (30, 80, 150, 250, 400):
-            combo.after(ms, lambda: _attach_list_bindings(0))
+    def _on_lb_leave(_e=None) -> None:
+        _clear()
 
     combo.bind("<Enter>", _on_combo_enter, add="+")
     combo.bind("<Leave>", _on_combo_leave, add="+")
-    combo.bind("<ButtonPress-1>", _on_open, add="+")
-    combo.bind("<Down>", _on_open, add="+")
-    combo.bind("<<ComboboxSelected>>", lambda _e: _clear(), add="+")
+    combo.bind("<<ComboboxSelected>>", _on_selected, add="+")
+    combo.bind("<Escape>", _clear, add="+")
 
-    def _tip(text: str) -> None:
-        text = (text or "").strip()
-        if not text:
-            return
-        if on_tip is not None:
-            try:
-                on_tip(text)
-            except Exception:
-                pass
-
-    def _clear() -> None:
-        if on_clear is not None:
-            try:
-                on_clear()
-            except Exception:
-                pass
-
-    def _find_listbox():
+    # 全局只绑一次：所有 ttk 下拉 Listbox 共用 ComboboxListbox 标签
+    if not getattr(_enable_full_combobox, "_lb_bound", False):
         try:
-            popdown = combo.tk.call("ttk::combobox::PopdownWindow", str(combo))
+            combo.bind_class("ComboboxListbox", "<Motion>", _on_lb_motion, add="+")
+            combo.bind_class("ComboboxListbox", "<Enter>", _on_lb_motion, add="+")
+            combo.bind_class("ComboboxListbox", "<Leave>", _on_lb_leave, add="+")
+            _enable_full_combobox._lb_bound = True
         except Exception:
-            return None
-        for suffix in (".f.l", ".lb", ".f.lb"):
+            pass
+    
+def _force_combobox_popdown_up(combo: ttk.Combobox) -> None:
+    """强制 ttk.Combobox 下拉列表向上展开（避免底部被状态栏挡住）。"""
+    def _place(_event=None) -> None:
+        def _do() -> None:
             try:
-                return combo.nametowidget(str(popdown) + suffix)
-            except Exception:
-                continue
-        try:
-            pd = combo.nametowidget(str(popdown))
-            stack = [pd]
-            while stack:
-                w = stack.pop()
-                if w.winfo_class() == "Listbox":
-                    return w
+                pop = str(combo.tk.call("ttk::combobox::PopdownWindow", str(combo)))
+                if not combo.tk.call("winfo", "exists", pop):
+                    return
+                if not int(combo.tk.call("winfo", "ismapped", pop)):
+                    return
+                x = int(combo.winfo_rootx())
+                y = int(combo.winfo_rooty())
                 try:
-                    stack.extend(w.winfo_children())
+                    ph = int(combo.tk.call("winfo", "height", pop))
+                    if ph <= 1:
+                        ph = int(combo.tk.call("winfo", "reqheight", pop))
                 except Exception:
-                    pass
-        except Exception:
-            pass
-        return None
-
-    def _pointer_in_listbox() -> bool:
-        """鼠标是否还在本下拉列表上（用于 Leave 时别误清）。"""
-        try:
-            lb = _find_listbox()
-            if lb is None or not lb.winfo_ismapped():
-                return False
-            x, y = combo.winfo_pointerxy()
-            lx, ly = lb.winfo_rootx(), lb.winfo_rooty()
-            return lx <= x <= lx + lb.winfo_width() and ly <= y <= ly + lb.winfo_height()
-        except Exception:
-            return False
-
-    def _on_combo_enter(_e=None) -> None:
-        try:
-            _tip(str(combo.get() or ""))
-        except Exception:
-            pass
-
-    def _on_combo_leave(_e=None) -> None:
-        # 移向列表时不要清
-        if _pointer_in_listbox():
-            return
-        _clear()
-
-    def _bind_list_motion(attempt: int = 0) -> None:
-        lb = _find_listbox()
-        if lb is None:
-            if attempt < 20:
-                combo.after(30, lambda: _bind_list_motion(attempt + 1))
-            return
-        try:
-            values = combo.cget("values") or ()
-            if values:
-                longest = max(len(str(v)) for v in values)
-                lb.configure(width=max(longest + 4, 56))
-        except Exception:
-            pass
-
-        def _on_motion(event) -> None:
-            try:
-                idx = lb.nearest(event.y)
-                _tip(str(lb.get(idx)))
+                    ph = int(combo.tk.call("winfo", "reqheight", pop))
+                new_y = y - ph
+                if new_y < 0:
+                    new_y = 0
+                combo.tk.call("wm", "geometry", pop, f"+{x}+{new_y}")
             except Exception:
                 pass
 
-        def _on_lb_leave(_e=None) -> None:
-            _clear()
+        for ms in (1, 10, 20, 40, 80):
+            combo.after(ms, _do)
 
-        lb.bind("<Motion>", _on_motion, add="+")
-        lb.bind("<Leave>", _on_lb_leave, add="+")
+    combo.bind("<ButtonPress-1>", _place, add="+")
+    combo.bind("<Down>", _place, add="+")
+    combo.bind("<space>", _place, add="+")
 
-    def _on_open(_e=None) -> None:
-        combo.after(20, lambda: _bind_list_motion(0))
-
-    combo.bind("<Enter>", _on_combo_enter, add="+")
-    combo.bind("<Leave>", _on_combo_leave, add="+")
-    combo.bind("<ButtonPress-1>", _on_open, add="+")
-    combo.bind("<Down>", _on_open, add="+")
-    combo.bind("<<ComboboxSelected>>", lambda _e: _clear(), add="+")
+def _center_toplevel(dlg: tk.Toplevel, parent: tk.Tk | tk.Toplevel, w: int | None = None, h: int | None = None) -> None:
+    """把弹窗居中到主窗口中间（不是屏幕左上角）。"""
+    try:
+        dlg.update_idletasks()
+        if w is None:
+            w = max(int(dlg.winfo_reqwidth()), 200)
+        if h is None:
+            h = max(int(dlg.winfo_reqheight()), 120)
+        parent.update_idletasks()
+        px = int(parent.winfo_rootx())
+        py = int(parent.winfo_rooty())
+        pw = int(parent.winfo_width())
+        ph = int(parent.winfo_height())
+        x = px + max((pw - w) // 2, 0)
+        y = py + max((ph - h) // 2, 0)
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
+    except Exception:
+        pass
 
 class RoundedButton(tk.Canvas):
     """大圆角按钮，支持动态 configure(text=..., style=...)，兼容 Tooltip。"""
@@ -1704,7 +1594,7 @@ class ProtocolParserApp:
 
         # 右：指令库（默认不 add，避免启动闪一下）
         self.CMDLIB_MIN_WIDTH = 320   # 最小宽度，可改
-        self.CMDLIB_DEFAULT_WIDTH = 560
+        self.CMDLIB_DEFAULT_WIDTH = 600
         self.cmdlib_outer = tk.Frame(
             self.main_pane,
             width=self.CMDLIB_DEFAULT_WIDTH,
@@ -1975,7 +1865,7 @@ class ProtocolParserApp:
             on_tip=self._status_tip,
             on_clear=self._status_tip_clear,
         )
-        self._bind_status_tip(self.port_combo)   # ★ 新增
+        
         self.port_combo.bind(
             "<<ComboboxSelected>>",
             self._safe(self._on_port_change_while_collecting),
@@ -2009,7 +1899,6 @@ class ProtocolParserApp:
             on_tip=self._status_tip,
             on_clear=self._status_tip_clear,
         )
-        self._bind_status_tip(self.baudrate_combo)
         self.baudrate_combo.bind(
             "<<ComboboxSelected>>",
             self._safe(self._on_serial_param_change_while_collecting),
@@ -2150,14 +2039,15 @@ class ProtocolParserApp:
                 except Exception:
                     pass
                 # 可选：打开时给一个默认宽度（需窗口已映射）
-                try:
-                    self.root.update_idletasks()
-                    total = max(self.main_pane.winfo_width(), 800)
-                    right = int(getattr(self, "CMDLIB_DEFAULT_WIDTH", 560))
-                    left = max(total - right - 8, 200)
-                    self.main_pane.sashpos(0, left)
-                except Exception:
-                    pass
+                def _place_sash():
+                    try:
+                        total = max(int(self.main_pane.winfo_width()), 800)
+                        right = int(getattr(self, "CMDLIB_DEFAULT_WIDTH", 560))
+                        left = max(total - right - 8, 200)
+                        self.main_pane.sashpos(0, left)
+                    except Exception:
+                        pass
+                self.root.after(20, _place_sash)
             except Exception:
                 pass
             self.cmdlib_visible = True
@@ -2260,7 +2150,6 @@ class ProtocolParserApp:
             on_tip=self._status_tip,
             on_clear=self._status_tip_clear,
         )
-        self._bind_status_tip(self.product_combo)
         self.product_combo.bind("<<ComboboxSelected>>", self._on_product_change)
         self.product_combo.bind("<<ComboboxSelected>>", self._on_product_change)
         self._import_btn = RoundedButton(
@@ -2483,13 +2372,29 @@ class ProtocolParserApp:
         self._cmdlib_list.bind("<Enter>", _bind_wheel)
         self._cmdlib_list.bind("<Leave>", _unbind_wheel)
 
+        self._cmdlib_cfg_job = None
+
         def _on_cfg(_e=None):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-            try:
-                canvas.itemconfigure(self._cmdlib_canvas_win, width=max(canvas.winfo_width(), 1))
-            except Exception:
-                pass
-        self._cmdlib_list.bind("<Configure>", _on_cfg)
+            # 防抖：拖动时不要每一像素都重算 40 行
+            job = getattr(self, "_cmdlib_cfg_job", None)
+            if job is not None:
+                try:
+                    self.root.after_cancel(job)
+                except Exception:
+                    pass
+
+            def _do():
+                self._cmdlib_cfg_job = None
+                try:
+                    w = max(int(canvas.winfo_width()), 1)
+                    canvas.itemconfigure(self._cmdlib_canvas_win, width=w)
+                    canvas.configure(scrollregion=canvas.bbox("all"))
+                except Exception:
+                    pass
+
+            self._cmdlib_cfg_job = self.root.after(40, _do)
+
+        # 只绑 canvas，不要绑 list（否则 40 行子控件会连环触发）
         canvas.bind("<Configure>", _on_cfg)
 
         self._cmdlib_row_widgets = []  # 缓存 40 行控件
@@ -2503,7 +2408,7 @@ class ProtocolParserApp:
         if getattr(self, "_cmdlib_row_widgets", None):
             return
         self._cmdlib_row_widgets = []
-        ROW_H = 36
+        ROW_H = 40
         _font = ("Microsoft YaHei UI", 10)
         self._cmdlib_list.columnconfigure(0, weight=1)
 
@@ -2538,14 +2443,22 @@ class ProtocolParserApp:
             ent_name = tk.Entry(mid, font=_font, relief="solid", bd=1, justify="center")
             ent_name.grid(row=0, column=0, sticky="nsew")
 
-            right = ttk.Frame(row, height=ROW_H, width=72)
+            right = ttk.Frame(row, height=ROW_H, width=156)  # 两个按钮，加宽
             right.grid(row=0, column=2, sticky="ns")
             right.grid_propagate(False)
             right.columnconfigure(0, weight=1)
+            right.columnconfigure(1, weight=1)
             right.rowconfigure(0, weight=1)
 
             def _make_send(ep=ent_payload, en=ent_name):
                 return lambda: self._cmdlib_commit_and_send(ep, en)
+
+            def _make_reset(ep=ent_payload, en=ent_name, idx=i):
+                def _reset():
+                    ep.delete(0, "end")
+                    en.delete(0, "end")
+                    self._cmdlib_save_row(idx, "", "")
+                return _reset
 
             def _tip_status(w):
                 def _on_enter(_e=None, widget=w):
@@ -2554,7 +2467,6 @@ class ProtocolParserApp:
                         self._set_status(t)
 
                 def _on_leave(_e=None):
-                    # 清掉 tip，只保留 COM | 波特率 | 存储状态
                     try:
                         self._update_left_status(tip="")
                     except Exception:
@@ -2569,7 +2481,12 @@ class ProtocolParserApp:
             ttk.Button(
                 right, text="发送", style="Primary.TButton",
                 command=self._safe(_make_send()),
-            ).grid(row=0, column=0, sticky="nsew")
+            ).grid(row=0, column=0, sticky="nsew", padx=(0, 2))
+
+            ttk.Button(
+                right, text="重置", style="Primary.TButton",
+                command=self._safe(_make_reset()),
+            ).grid(row=0, column=1, sticky="nsew")
 
             def _make_save(ep=ent_payload, en=ent_name, idx=i):
                 return lambda _e=None: self._cmdlib_save_row(idx, ep.get().strip(), en.get().strip())
@@ -2764,6 +2681,7 @@ class ProtocolParserApp:
         top.title("修改指令" if item else "新增指令")
         top.transient(self.root)
         top.grab_set()
+        _center_toplevel(top, self.root, 420, 260)
 
         ttk.Label(top, text="指令名称:").grid(row=0, column=0, sticky="w", padx=8, pady=6)
         name_var = tk.StringVar(value=(item or {}).get("name", ""))
@@ -2888,9 +2806,9 @@ class ProtocolParserApp:
 
         top = tk.Toplevel(self.root)
         top.title("配置循环发送")
-        top.geometry("560x420")
         top.transient(self.root)
         top.grab_set()
+        _center_toplevel(top, self.root, 720, 560) #配置循环发送窗口尺寸
 
         ttk.Label(
             top, text="勾选参与循环的指令，并设置间隔(ms)；列表顺序即发送顺序"
@@ -3003,12 +2921,14 @@ class ProtocolParserApp:
             left, textvariable=self.tx_cmd_label_var,
             state="readonly", width=COMBO_W,
         )
-        try:
-            _enable_full_combobox(self.cmd_combo)
-        except Exception:
-            pass
         self.cmd_combo.grid(row=0, column=1, sticky="ew")
         self.cmd_combo.bind("<<ComboboxSelected>>", self._on_send_cmd_selected)
+        _enable_full_combobox(
+            self.cmd_combo,
+            on_tip=self._status_tip,
+            on_clear=self._status_tip_clear,
+        )
+        _force_combobox_popdown_up(self.cmd_combo)
 
         # 快捷动作
         ttk.Label(left, text="快捷动作:").grid(row=1, column=0, sticky="w", padx=(0, 4))
@@ -3020,17 +2940,26 @@ class ProtocolParserApp:
         self.quick_combo.grid(row=1, column=1, sticky="ew")
         self.quick_combo.bind("<<ComboboxSelected>>", self._safe(self._on_quick_action_selected))
         self._quick_action_map = {}
+        _enable_full_combobox(
+            self.quick_combo,
+            on_tip=self._status_tip,
+            on_clear=self._status_tip_clear,
+        )
+        _force_combobox_popdown_up(self.quick_combo)
 
         # 方向
-        ttk.Label(left, text="方向:").grid(row=2, column=0, sticky="w", padx=(0, 4))
         dir_combo = ttk.Combobox(
             left, textvariable=self.tx_direction_var,
             values=["模组发送", "MCU发送"], state="readonly", width=COMBO_W,
         )
-        try:
-            _enable_full_combobox(dir_combo)
-        except Exception:
-            pass
+        dir_combo.grid(row=2, column=1, sticky="ew")
+        _enable_full_combobox(
+            dir_combo,
+            on_tip=self._status_tip,
+            on_clear=self._status_tip_clear,
+        )
+        _force_combobox_popdown_up(dir_combo)
+
         dir_combo.grid(row=2, column=1, sticky="ew")
 
         # 右侧：字段 JSON 大输入框（占满剩余宽高）
@@ -3791,7 +3720,8 @@ class ProtocolParserApp:
 
         dlg = tk.Toplevel(self.root)
         dlg.title(f"协议详情 - {self.cfg.get('product', '')}")
-        dlg.geometry("800x600")
+        dlg.transient(self.root)
+        _center_toplevel(dlg, self.root, 800, 600)
 
         text = tk.Text(dlg, font=("Consolas", 10))
         text.pack(fill="both", expand=True)
@@ -4191,9 +4121,7 @@ class ProtocolParserApp:
         dlg.transient(self.root)
         dlg.grab_set()
 
-        x = self.root.winfo_x() + (self.root.winfo_width() - _dlg_w) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - _dlg_h) // 2
-        dlg.geometry(f"+{x}+{y}")
+        _center_toplevel(dlg, self.root, _dlg_w, _dlg_h)
 
         frm = ttk.Frame(dlg, padding=16)
         frm.pack(fill="both", expand=True)
