@@ -595,21 +595,24 @@ def _enable_full_combobox(
     on_tip=None,
     on_clear=None,
 ) -> None:
-    """合上：悬停显示当前值；展开：列表项悬停显示完整文本（状态栏）。
+    """合上：悬停显示当前完整选中值；展开：列表项悬停显示完整文本（状态栏）。
 
-    列表用 ComboboxListbox 绑定标签，不依赖 PopdownWindow 路径。
+    鼠标离开 combo 时清空状态栏提示，避免左下角只显示截断文字却不刷新。
     """
     state = {"last": ""}
 
-    def _tip(text: str) -> None:
+    def _tip(text: str, *, prefix: bool = False) -> None:
         text = (text or "").strip()
-        if not text or text == state["last"]:
+        if not text:
             return
-        state["last"] = text
+        show = f"当前选中: {text}" if prefix else text
+        if show == state["last"]:
+            return
+        state["last"] = show
         if on_tip is None:
             return
         try:
-            on_tip(text)
+            on_tip(show)
         except Exception:
             pass
 
@@ -624,15 +627,16 @@ def _enable_full_combobox(
 
     def _on_combo_enter(_e=None) -> None:
         try:
-            _tip(str(combo.get() or ""))
+            _tip(str(combo.get() or ""), prefix=True)
         except Exception:
             pass
 
     def _on_combo_leave(_e=None) -> None:
-        # 可能移进下拉列表，稍晚再清；列表 Motion 会继续刷 tip
+        # 离开控件即清空；若指针仍在下拉 Listbox 上，Listbox Motion 会继续刷 tip
         def _later():
             try:
                 x, y = combo.winfo_pointerxy()
+                # 仍在 combo 本体上
                 lx, ly = combo.winfo_rootx(), combo.winfo_rooty()
                 if (
                     lx <= x <= lx + max(combo.winfo_width(), 1)
@@ -641,20 +645,31 @@ def _enable_full_combobox(
                     return
             except Exception:
                 pass
-            # 不在框上：若也不在列表上，Leave 会由 ComboboxListbox 处理；
-            # 这里不强制 clear，避免点开瞬间闪一下空
-        combo.after(120, _later)
+            _clear()
+
+        try:
+            combo.after(80, _later)
+        except Exception:
+            _clear()
+
+    def _on_combo_motion(_e=None) -> None:
+        try:
+            _tip(str(combo.get() or ""), prefix=True)
+        except Exception:
+            pass
 
     def _on_selected(_e=None) -> None:
-        _clear()
+        try:
+            _tip(str(combo.get() or ""), prefix=True)
+        except Exception:
+            pass
 
     def _on_lb_motion(event) -> None:
         try:
-            path = str(event.widget)  # 可能是 widget，也可能是路径 str
+            path = str(event.widget)
             idx = combo.tk.call(path, "nearest", event.y)
             text = combo.tk.call(path, "get", idx)
-            # print("tip_text", idx, repr(text))  # 测通后可删
-            _tip(str(text))
+            _tip(str(text), prefix=False)
         except Exception:
             pass
 
@@ -663,6 +678,7 @@ def _enable_full_combobox(
 
     combo.bind("<Enter>", _on_combo_enter, add="+")
     combo.bind("<Leave>", _on_combo_leave, add="+")
+    combo.bind("<Motion>", _on_combo_motion, add="+")
     combo.bind("<<ComboboxSelected>>", _on_selected, add="+")
     combo.bind("<Escape>", _clear, add="+")
 
@@ -670,12 +686,13 @@ def _enable_full_combobox(
     if not getattr(_enable_full_combobox, "_lb_bound", False):
         try:
             combo.bind_class("ComboboxListbox", "<Motion>", _on_lb_motion, add="+")
-            combo.bind_class("ComboboxListbox", "<Enter>", _on_lb_motion, add="+")
             combo.bind_class("ComboboxListbox", "<Leave>", _on_lb_leave, add="+")
             _enable_full_combobox._lb_bound = True
         except Exception:
             pass
-    
+
+
+
 def _force_combobox_popdown_up(combo: ttk.Combobox) -> None:
     """强制 ttk.Combobox 下拉列表向上展开（避免底部被状态栏挡住）。"""
     def _place(_event=None) -> None:
@@ -3309,6 +3326,7 @@ class ProtocolParserApp:
         self._quick_action_map = {}
 
         # 方向
+        ttk.Label(left, text="方向:").grid(row=2, column=0, sticky="w", padx=(0, 4))
         dir_combo = ttk.Combobox(
             left, textvariable=self.tx_direction_var,
             values=["模组发送", "MCU发送"], state="readonly", width=COMBO_W,
@@ -3327,12 +3345,16 @@ class ProtocolParserApp:
         right = ttk.Frame(self.protocol_frame)
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(1, weight=1)
+        right.rowconfigure(1, weight=1)  # 属性表
+        right.rowconfigure(3, weight=1)  # 字段 JSON
 
-        ttk.Label(right, text="字段 JSON:").grid(row=0, column=0, sticky="w", pady=(0, 2))
+        # --- 协议属性表（含方向列）---
+        self._build_attribute_panel(right)
+
+        ttk.Label(right, text="字段 JSON:").grid(row=2, column=0, sticky="w", pady=(4, 2))
         self.fields_text = tk.Text(
             right,
-            height=5,
+            height=4,
             font=self.serial_font,
             relief="solid",
             borderwidth=1,
@@ -3341,7 +3363,7 @@ class ProtocolParserApp:
             highlightcolor="#E0E0E0",
             bd=1,
         )
-        self.fields_text.grid(row=1, column=0, sticky="nsew")
+        self.fields_text.grid(row=3, column=0, sticky="nsew")
         try:
             self.fields_text.insert("1.0", self.tx_fields_var.get())
         except Exception:
@@ -3504,7 +3526,131 @@ class ProtocolParserApp:
         except Exception:
             pass
 
+    def _build_attribute_panel(self, parent: tk.Misc) -> None:
+        """协议参数属性表：参数名称 / 方向 / 当前值 / 说明。"""
+        ttk.Label(parent, text="协议属性:").grid(row=0, column=0, sticky="w", pady=(0, 2))
+        wrap = ttk.Frame(parent)
+        wrap.grid(row=1, column=0, sticky="nsew")
+        wrap.columnconfigure(0, weight=1)
+        wrap.rowconfigure(0, weight=1)
+
+        cols = ("name", "dir", "value", "desc")
+        self.attr_tree = ttk.Treeview(
+            wrap,
+            columns=cols,
+            show="headings",
+            selectmode="browse",
+            height=4,
+        )
+        self.attr_tree.heading("name", text="参数名称")
+        self.attr_tree.heading("dir", text="方向")
+        self.attr_tree.heading("value", text="当前值")
+        self.attr_tree.heading("desc", text="说明/解析")
+        self.attr_tree.column("name", width=120, minwidth=80, anchor="w", stretch=True)
+        self.attr_tree.column("dir", width=60, minwidth=48, anchor="center", stretch=False)
+        self.attr_tree.column("value", width=100, minwidth=70, anchor="w", stretch=True)
+        self.attr_tree.column("desc", width=180, minwidth=100, anchor="w", stretch=True)
+
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.attr_tree.yview)
+        self.attr_tree.configure(yscrollcommand=sb.set)
+        self.attr_tree.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+
+        try:
+            self.attr_tree.tag_configure("evenrow", background="#FFFFFF", foreground="#1F2937")
+            self.attr_tree.tag_configure("oddrow", background="#F9FAFB", foreground="#1F2937")
+        except Exception:
+            pass
+
+        self._render_attributes()
+
+    def _render_attributes(self) -> None:
+        """根据当前协议 attributes 刷新属性表（含方向列）。"""
+        tree = getattr(self, "attr_tree", None)
+        if tree is None:
+            return
+        try:
+            for iid in tree.get_children(""):
+                tree.delete(iid)
+        except Exception:
+            pass
+
+        attrs = (self.cfg or {}).get("attributes") or {}
+        if not isinstance(attrs, dict):
+            attrs = {}
+
+        index = 0
+        for aid, meta in attrs.items():
+            if not isinstance(meta, dict):
+                meta = {}
+            name = (
+                meta.get("cn_name")
+                or meta.get("name")
+                or meta.get("title")
+                or str(aid)
+            )
+            # 方向：兼容 dir / direction / access / rw
+            direction = (
+                meta.get("dir")
+                or meta.get("direction")
+                or meta.get("access")
+                or meta.get("rw")
+                or "双向"
+            )
+            direction = str(direction).strip() or "双向"
+            # 常见英文归一
+            low = direction.lower()
+            if low in ("r", "read", "ro", "readonly"):
+                direction = "只读"
+            elif low in ("w", "write", "wo", "writeonly"):
+                direction = "只写"
+            elif low in ("rw", "readwrite", "both", "bidirectional"):
+                direction = "双向"
+
+            value = meta.get("value")
+            if value is None:
+                value = meta.get("default")
+            if value is None:
+                value = meta.get("current")
+            value_s = "" if value is None else str(value)
+
+            desc = (
+                meta.get("desc")
+                or meta.get("description")
+                or meta.get("说明")
+                or meta.get("unit")
+                or ""
+            )
+            # enum 摘要
+            enum_map = meta.get("enum")
+            if isinstance(enum_map, dict) and enum_map and not desc:
+                parts = [f"{k}:{v}" for k, v in list(enum_map.items())[:4]]
+                desc = " / ".join(parts)
+
+            tags = ("oddrow" if index % 2 else "evenrow",)
+            try:
+                tree.insert(
+                    "",
+                    "end",
+                    iid=str(aid),
+                    values=(name, direction, value_s, str(desc)),
+                    tags=tags,
+                )
+            except Exception:
+                tree.insert(
+                    "",
+                    "end",
+                    values=(name, direction, value_s, str(desc)),
+                    tags=tags,
+                )
+            index += 1
+
+    def _update_attr_tree(self) -> None:
+        """兼容旧调用名。"""
+        self._render_attributes()
+
     def _refresh_quick_actions(self) -> None:
+
         """根据当前协议 attributes 生成「照明打开/关闭」等快捷动作。"""
         labels: list[str] = []
         self._quick_action_map = {}
@@ -3562,6 +3708,11 @@ class ProtocolParserApp:
             if hasattr(self, "quick_combo") and self.quick_combo is not None:
                 self.quick_combo["values"] = labels
                 self.tx_quick_var.set("")
+        except Exception:
+            pass
+        # 同步刷新协议属性表（含方向列）
+        try:
+            self._render_attributes()
         except Exception:
             pass
 
