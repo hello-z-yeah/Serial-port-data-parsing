@@ -1,1 +1,1 @@
-{{CONTENT}}
+placeholder - see artifacts
