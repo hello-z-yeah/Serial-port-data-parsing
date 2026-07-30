@@ -28,38 +28,6 @@ def _log_error_to_disk(exc: Exception) -> Path:
     return _parser_log_error(exc)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    try:
-        return args.func(args)
-    except ProtocolError as e:
-        friendly, debug = classify_protocol_error(e)
-        print(f"[错误] {friendly}", file=sys.stderr)
-        if debug:
-            print(f"       详细: {debug}", file=sys.stderr)
-        try:
-            _log_error_to_disk(e)
-        except Exception:
-            pass
-        return 2
-    except KeyboardInterrupt:
-        print("[提示] 用户中断", file=sys.stderr)
-        return 130
-    except Exception as e:  # noqa: BLE001  —— 顶层兜底，绝对不让堆栈直接裸抛
-        friendly, debug = classify_protocol_error(e)
-        print(f"[错误] {friendly}", file=sys.stderr)
-        log_path = _log_error_to_disk(e)
-        if debug:
-            print(f"       详细: {debug}", file=sys.stderr)
-        print(f"       堆栈已写入: {log_path}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-
-
 def find_protocol_file(product: str, protocol_dir: Path | None = None) -> Path:
     d = protocol_dir or DEFAULT_PROTOCOL_DIR
     # 先按文件名匹配
@@ -361,7 +329,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_serial = sub.add_parser("serial", help="串口实时采集并解析")
     p_serial.add_argument("--product", required=True, help="产品名称")
     p_serial.add_argument("--port", required=True, help="串口名称（如 COM3）")
-    p_serial.add_argument("--baudrate", type=int, default=115200, help="波特率（默认 115200）")
+    p_serial.add_argument("--baudrate", type=int, default=9600, help="波特率（默认 9600")
     p_serial.add_argument("--detail", action="store_true", help="详细输出模式（默认紧凑）")
     p_serial.add_argument("--log", default=None, help="保存日志到文件")
     p_serial.add_argument("--log-mode", choices=["compact", "detail"], default="compact", help="日志格式（默认紧凑）")

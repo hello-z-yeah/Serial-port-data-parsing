@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import re
 import sys
 import time
 from datetime import datetime
@@ -277,12 +278,6 @@ class ResultLogger:
         self._count += 1
 
 
-# 兼容性：旧代码可能用 text_log（原来叫这个名，也可能是笔误；保留为 ResultLogger 别名即可）
-# 注意：为避免重复实现，不再单独提供 text_log；需要按天滚动时直接 rotate_mode='daily'
-import re  # noqa: E402  （放在文件底部以免污染其他代码）
-
-
-
 # ---------- 粘贴交互模式 ----------
 
 def _log_error_to_disk(exc: Exception) -> Path:
@@ -423,7 +418,7 @@ def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
 def run_serial_mode(
     cfg: dict,
     port: str,
-    baudrate: int = 115200,
+    baudrate: int = 9600,
     detail: bool = False,
     logger: ResultLogger | None = None,
 ) -> int:

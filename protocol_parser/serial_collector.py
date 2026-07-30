@@ -148,13 +148,16 @@ class SerialCollector:
 
     cfg: dict
     port: str
-    baudrate: int = 115200
+    baudrate: int = 9600
     bytesize: int = 8
     stopbits: float = 1.0  # 允许 1.5（之前是 int，兼容 GUI 下拉"1 / 1.5 / 2"）
     direction: str | None = None
     on_frame: Callable[[ParseResult, Frame, float], None] | None = None
     on_error: Callable[[str], None] | None = None
     on_raw: Callable[[bytes, float], None] | None = None  # ASCII 模式 RX 回调
+    # raw 合并：减少 GUI 回调频率
+    raw_batch_bytes: int = 512      # 累计达到多少字节就刷一次
+    raw_batch_ms: float = 30.0      # 或距上次回调超过多少毫秒就刷一次
     raw_mode: bool = False  # True=仅输出原始数据，不做协议解析
     on_tx_sent: Callable[[bytes, str, float], None] | None = None  # bytes, dir_label, ts
     running: bool = False
@@ -294,6 +297,27 @@ class SerialCollector:
 
     def _read_loop(self) -> None:
         assert self._serial is not None and self.sync is not None
+        raw_buf = bytearray()
+        last_flush = time.time()
+
+        def _flush_raw(force: bool = False) -> None:
+            nonlocal raw_buf, last_flush
+            if not raw_buf:
+                return
+            now = time.time()
+            age_ms = (now - last_flush) * 1000.0
+            if not force and len(raw_buf) < self.raw_batch_bytes and age_ms < self.raw_batch_ms:
+                return
+            data = bytes(raw_buf)
+            raw_buf.clear()
+            last_flush = now
+            if self.on_raw:
+                try:
+                    self.on_raw(data, now)
+                except Exception as e:
+                    if self.on_error:
+                        self.on_error(f"原始数据回调异常（已跳过）: {e}")
+
         try:
             while self.running:
                 try:
@@ -304,38 +328,32 @@ class SerialCollector:
                     break
 
                 if not raw:
+                    # 空读也检查一下超时刷新，避免尾包一直卡在缓冲里
+                    _flush_raw(force=False)
                     continue
 
                 now = time.time()
 
-                # raw_mode：直接回调原始字节，不做协议解析
+                # raw_mode：缓冲后回调
                 if self.raw_mode:
-                    if self.on_raw:
-                        self.on_raw(raw, now)
+                    raw_buf.extend(raw)
+                    _flush_raw(force=False)
                     continue
 
-                # 无协议（cfg 没有 frame 配置）：直接把原始字节回传给 GUI 显示，
-                # 不走帧同步，避免 FrameSynchronizer 用默认 0xA5A5 帧头误消费字节
+                # 无协议 frame 配置：同样走 raw 合并
                 frame_cfg = self.cfg.get("frame", {}) if self.cfg else {}
                 if not frame_cfg:
-                    if self.on_raw:
-                        try:
-                            self.on_raw(raw, now)
-                        except Exception as e:
-                            if self.on_error:
-                                self.on_error(f"原始数据回调异常（已跳过）: {e}")
+                    raw_buf.extend(raw)
+                    _flush_raw(force=False)
                     continue
 
-                # HEX 模式：帧同步 + 协议解析
+                # HEX 协议：先冲掉未完成的 raw 缓冲，再走帧同步
+                _flush_raw(force=True)
                 frames = self.sync.feed(raw)
-                # 没切出任何帧（如接收的是纯 ASCII 文本，无协议帧头）：
-                # 把这段原始字节回传给 GUI，按 HEX 格式显示，避免界面空白误以为没数据
                 if not frames and self.on_raw:
-                    try:
-                        self.on_raw(raw, now)
-                    except Exception as e:
-                        if self.on_error:
-                            self.on_error(f"原始数据回调异常（已跳过）: {e}")
+                    # 无帧头的杂散字节：并入 raw 缓冲（也可直接 on_raw）
+                    raw_buf.extend(raw)
+                    _flush_raw(force=False)
                 for frame in frames:
                     try:
                         result = parse_frame(frame.raw, self.cfg, direction=self.direction)
@@ -349,9 +367,16 @@ class SerialCollector:
                     except Exception as e:
                         if self.on_error:
                             self.on_error(f"回调异常（已跳过）: {e}")
+
+            # 线程退出前冲干净
+            _flush_raw(force=True)
         except Exception as e:
             if self.on_error:
                 self.on_error(f"采集异常: {e}")
+            try:
+                _flush_raw(force=True)
+            except Exception:
+                pass
 
     @staticmethod
     def list_ports() -> list[dict]:

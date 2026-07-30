@@ -226,7 +226,8 @@ TYPEID_MAP = {
 
 # 强制上报标志位
 TYPEID_FORCE_REPORT_BIT = 0x80
-
+# 变长 typeid 集合（需要 length 字段），编解码共用
+VARLEN_TYPEIDS = frozenset({11, 12, 13, 14, 23, 24})
 
 # ---------- 配置加载 ----------
 
@@ -337,11 +338,37 @@ def merge_protocol(base: dict, override: dict) -> dict:
     # 策略：完全保留 base 的命令定义（包括 name/description/format），
     #       只有 override 中独有的命令才添加
     if "commands" in override:
-        base_cmds = {c["cmd_code"]: c for c in result.get("commands", [])}
+        import copy as _copy
+        def _cmd_key(c: dict):
+            raw = c.get("cmd_code", c.get("code", c.get("id", c.get("cmd"))))
+            try:
+                if isinstance(raw, str):
+                    return int(raw, 0) & 0xFF
+                return int(raw) & 0xFF
+            except Exception:
+                return str(raw)
+
+        base_cmds = {}
+        for c in result.get("commands", []):
+            base_cmds[_cmd_key(c)] = _copy.deepcopy(c)
+
         for cmd in override["commands"]:
-            cmd_code = cmd["cmd_code"]
-            if cmd_code not in base_cmds:
-                base_cmds[cmd_code] = cmd
+            if not isinstance(cmd, dict):
+                continue
+            key = _cmd_key(cmd)
+            if key in base_cmds:
+                # 同 cmd：产品侧覆盖 name/description 等，保留 base 的 request/response 格式
+                merged = base_cmds[key]
+                for k, v in cmd.items():
+                    if k in ("request", "response") and isinstance(v, dict):
+                        base_block = merged.get(k) if isinstance(merged.get(k), dict) else {}
+                        merged[k] = {**base_block, **v}
+                    else:
+                        merged[k] = v
+                base_cmds[key] = merged
+            else:
+                base_cmds[key] = _copy.deepcopy(cmd)
+
         result["commands"] = list(base_cmds.values())
 
     # attributes 合并（以 attrid 为键）
@@ -447,24 +474,84 @@ def to_hex(data: bytes) -> str:
 # ---------- 校验算法 ----------
 
 def calc_checksum(data: bytes, algorithm: str) -> bytes:
-    algorithm = algorithm.lower()
-    if algorithm == "sum":
+    """计算校验字节。algorithm 不区分大小写，支持别名。"""
+    algo = (algorithm or "").strip().lower().replace("-", "").replace("_", "")
+
+    # ---- 8 位 ----
+    # ADD8 / sum：字节累加 & 0xFF
+    if algo in ("sum", "add8", "add"):
         return bytes([sum(data) & 0xFF])
-    if algorithm == "xor":
+
+    # 0-ADD8：对 ADD8 取补（(0 - sum) & 0xFF），常见于部分协议
+    if algo in ("0add8", "0-add8", "negadd8", "add8neg"):
+        return bytes([(-sum(data)) & 0xFF])
+
+    # XOR8
+    if algo in ("xor", "xor8"):
         v = 0
         for b in data:
             v ^= b
         return bytes([v & 0xFF])
-    if algorithm == "crc8":
+
+    # CRC8（多项式 0x07，初值 0xFF）
+    if algo == "crc8":
         crc = 0xFF
         for b in data:
             crc ^= b
             for _ in range(8):
-                crc = (crc << 1) ^ 0x07 if crc & 0x80 else crc << 1
-                crc &= 0xFF
+                crc = ((crc << 1) ^ 0x07) & 0xFF if (crc & 0x80) else ((crc << 1) & 0xFF)
         return bytes([crc])
-    raise ChecksumAlgoError(f"不支持的校验算法: {algorithm}")
 
+    # ---- 16 位 ----
+    # ADD16：累加 & 0xFFFF，大端 2 字节
+    if algo in ("add16", "sum16"):
+        s = sum(data) & 0xFFFF
+        return bytes([(s >> 8) & 0xFF, s & 0xFF])
+
+    # Modbus CRC16（poly 0xA001，初值 0xFFFF，低字节在前）
+    if algo in ("modbuscrc16", "modbus", "crc16modbus"):
+        crc = 0xFFFF
+        for b in data:
+            crc ^= b
+            for _ in range(8):
+                if crc & 0x0001:
+                    crc = (crc >> 1) ^ 0xA001
+                else:
+                    crc >>= 1
+        return bytes([crc & 0xFF, (crc >> 8) & 0xFF])  # little-endian
+
+    # CRC16-CCITT（poly 0x1021，初值 0xFFFF，高字节在前）
+    if algo in ("ccittcrc16", "crc16ccitt", "ccitt"):
+        crc = 0xFFFF
+        for b in data:
+            crc ^= (b << 8) & 0xFFFF
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+                else:
+                    crc = (crc << 1) & 0xFFFF
+        return bytes([(crc >> 8) & 0xFF, crc & 0xFF])  # big-endian
+
+    # ---- 32 位 ----
+    # CRC32（IEEE，poly 0xEDB88320，初值 0xFFFFFFFF，结果取反，小端）
+    if algo == "crc32":
+        crc = 0xFFFFFFFF
+        for b in data:
+            crc ^= b
+            for _ in range(8):
+                if crc & 1:
+                    crc = (crc >> 1) ^ 0xEDB88320
+                else:
+                    crc >>= 1
+        crc ^= 0xFFFFFFFF
+        return bytes([
+            crc & 0xFF,
+            (crc >> 8) & 0xFF,
+            (crc >> 16) & 0xFF,
+            (crc >> 24) & 0xFF,
+        ])
+
+    raise ChecksumAlgoError(f"不支持的校验算法: {algorithm}")
 
 # ---------- 帧拆分 ----------
 
@@ -1041,7 +1128,7 @@ def _parse_attr_list(data: bytes, cfg: dict, force_report: bool = True) -> list[
         attr_meta = _lookup_attr(cfg, attrid)
 
         # 读取 value_len
-        if typeid in (11, 12, 13, 14, 23, 24):
+        if typeid in VARLEN_TYPEIDS:
             # 变长：优先用单个属性声明的 width，没有就用协议级的默认值
             width_candidates = [
                 attr_meta.get("length_width") if isinstance(attr_meta, dict) else None,
@@ -1685,39 +1772,63 @@ def _encode_scalar_value(cfg: dict, value, typeid: int | None, *, for_attr: bool
         return s.encode("utf-8")
     if isinstance(value, bool):
         return bytes([int(value)])
-    if isinstance(value, int):
-        # attr 的标量先看 typeid → size
+
+    # 数值：先处理 scale（编码侧 = 除以 scale）
+    encode_value = value
+    type_info = TYPEID_MAP.get(typeid) if (for_attr and typeid is not None) else None
+    if type_info and isinstance(value, (int, float)):
+        scale = type_info.get("scale")
+        if scale:
+            try:
+                unscaled = value / float(scale)
+                if abs(unscaled - round(unscaled)) < 1e-9:
+                    encode_value = int(round(unscaled))
+                else:
+                    encode_value = unscaled
+            except Exception:
+                pass
+
+    if isinstance(encode_value, int):
         if for_attr and typeid is not None:
             ti = TYPEID_MAP.get(typeid)
-            if ti and "size" in ti:
+            if ti and ti.get("size"):
                 signed = bool(ti.get("ctype", "").startswith("int"))
                 byte_order = "little" if "_le" in ti.get("ctype", "") else "big"
-                return int(value).to_bytes(ti["size"], byte_order, signed=signed)
-        # 无 typeid ：最小 1 字节（不要溢出）
-        nbytes = max(1, (value.bit_length() + 7) // 8)
-        if value < 0:
-            nbytes = max(1, ((value + 1).bit_length() + 8) // 8)
+                return int(encode_value).to_bytes(ti["size"], byte_order, signed=signed)
+        nbytes = max(1, (encode_value.bit_length() + 7) // 8)
+        if encode_value < 0:
+            nbytes = max(1, ((encode_value + 1).bit_length() + 8) // 8)
         try:
-            return int(value).to_bytes(nbytes, "big", signed=(value < 0))
+            return int(encode_value).to_bytes(nbytes, "big", signed=(encode_value < 0))
         except Exception:
             nbytes += 1
-            return int(value).to_bytes(nbytes, "big", signed=True)
-    if isinstance(value, float):
+            return int(encode_value).to_bytes(nbytes, "big", signed=True)
+    if isinstance(encode_value, float):
         import struct as _struct
-        return _struct.pack(">f", float(value))
+        return _struct.pack(">f", float(encode_value))
     raise EncodeFrameError(f"标量编码失败：不支持类型 {type(value)!r}（value={value!r}）")
+
 
 
 def _encode_attr_list(cfg: dict, items: list) -> bytes:
     """items: [(attrid, value[, typeid]), ...]
-    attr_list 在 V3 中每单元结构：
-        - attrid(1B) + typeid(1B) + len_bytes(1B 或 2B？：这里默认按 TYPEID_MAP.size；
-          没有 size 时按实际 value 编码长度后再用 1 字节 len)
-    简化：按 typeid_map 有 size 用 size；否则用 value 实际编码长度，1 字节 len。
+
+    与 _parse_attr_list 完全对称的线格式：
+        typeid(1B) + attrid(1B) + [len?] + value
+
+    - 定长 typeid：不写 length 字段，value 长度由 TYPEID_MAP.size 决定
+    - 变长 typeid (11/12/13/14/23/24)：写入 length 字段，宽度与解析端一致
+      （默认 2 字节，可通过 attributes.__length_width__ 或 attr.meta.length_width 配置）
     """
     out = bytearray()
     if not isinstance(items, list):
         raise EncodeFrameError(f"attr_list 期望列表，实际 {type(items)!r}")
+
+    DEFAULT_VARLEN_WIDTH = 2
+    protocol_len_width = int((cfg.get("attributes") or {}).get("__length_width__", DEFAULT_VARLEN_WIDTH))
+    if protocol_len_width not in (1, 2, 4):
+        protocol_len_width = DEFAULT_VARLEN_WIDTH
+
     for it in items:
         if not isinstance(it, (list, tuple)):
             raise EncodeFrameError(f"attr_list 每项必须是 (attrid, value[, typeid])，实际 {it!r}")
@@ -1728,30 +1839,47 @@ def _encode_attr_list(cfg: dict, items: list) -> bytes:
             attrid, value = it
         else:
             raise EncodeFrameError(f"attr_list 每项长度应为 2/3，实际 {len(it)}：{it!r}")
+
         typeid_i: int = 0 if typeid is None else _encode_attrid_int(typeid)
         type_info = TYPEID_MAP.get(typeid_i) if typeid_i else None
-        val_raw = _encode_scalar_value(cfg, value, typeid_i, for_attr=True)
-        # 应用 scale（反向：解析是乘 scale，编码就除 scale）
-        if type_info and isinstance(value, (int, float)):
-            scale = type_info.get("scale")
-            if scale:
-                from math import isclose
-                try:
-                    unscaled = value / float(scale)
-                    if abs(unscaled - round(unscaled)) < 1e-9:
-                        unscaled = int(round(unscaled))
-                        signed = bool(type_info.get("ctype", "").startswith("int"))
-                        byte_order = "little" if "_le" in type_info.get("ctype", "") else "big"
-                        size = type_info.get("size") or len(val_raw)
-                        val_raw = int(unscaled).to_bytes(size, byte_order, signed=signed)
-                except Exception:
-                    pass
         attrid_i = _encode_attrid_int(attrid)
-        out.append(attrid_i)
-        out.append(typeid_i)
-        length_byte = max(1, len(val_raw)) & 0xFF
-        out.append(length_byte)
-        out.extend(val_raw[:length_byte])
+        attr_meta = _lookup_attr(cfg, attrid_i)
+
+        val_raw = _encode_scalar_value(cfg, value, typeid_i, for_attr=True)
+
+        # 顺序与解析端完全一致：typeid → attrid
+        out.append(typeid_i & 0xFF)
+        out.append(attrid_i & 0xFF)
+
+        if typeid_i in VARLEN_TYPEIDS:
+            # 变长：写入 length 字段（宽度与解析端对称）
+            width_candidates = [
+                attr_meta.get("length_width") if isinstance(attr_meta, dict) else None,
+                protocol_len_width,
+            ]
+            width = DEFAULT_VARLEN_WIDTH
+            for w in width_candidates:
+                if isinstance(w, int) and w in (1, 2, 4):
+                    width = w
+                    break
+            try:
+                length_bytes = len(val_raw).to_bytes(width, "big", signed=False)
+            except OverflowError as e:
+                raise EncodeFrameError(
+                    f"变长属性 value 长度 {len(val_raw)} 无法用 {width} 字节编码"
+                ) from e
+            out.extend(length_bytes)
+            out.extend(val_raw)
+        else:
+            # 定长：不写 length，value 直接跟在后面
+            expected_size = type_info.get("size") if type_info else None
+            if expected_size is not None:
+                if len(val_raw) > expected_size:
+                    val_raw = val_raw[-expected_size:]  # 取低位
+                elif len(val_raw) < expected_size:
+                    val_raw = b"\x00" * (expected_size - len(val_raw)) + val_raw
+            out.extend(val_raw)
+
     return bytes(out)
 
 

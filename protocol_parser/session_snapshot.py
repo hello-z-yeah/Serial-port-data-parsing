@@ -41,7 +41,7 @@ class SessionSnapshot:
 
     # 串口配置
     port: str = ""
-    baudrate: int = 115200
+    baudrate: int = 9600
     bytesize: int = 8
     stopbits: float = 1.0
 
@@ -114,33 +114,89 @@ def default_session_path() -> Path:
 # ---------------------------------------------------------------------------
 
 def save_snapshot(snap: SessionSnapshot, path: str | Path | None = None) -> Path:
-    """把快照写盘。写入失败时抛 UpdaterError（上层 classify_protocol_error 会友好提示）。
-
-    策略：先写临时文件再 os.replace，保证 crash 时旧快照不被半写损坏。
-    """
+    """写入快照。先写临时文件再 replace；权限失败时降级直写/用户目录。"""
     target = Path(path) if path else default_session_path()
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_suffix(target.suffix + ".tmp")
-        payload = asdict(snap)
-        with open(tmp, "w", encoding="utf-8") as fp:
-            json.dump(payload, fp, ensure_ascii=False, indent=2)
-        os.replace(tmp, target)
-    except Exception as e:
-        from protocol_parser.parser import _UpdaterError_proxy
-        # 这里用函数创建避免强 import 循环
-        raise _mk_snapshot_error(
-            message=f"save session snapshot failed: {e}",
-            friendly_msg="保存更新会话快照失败，请检查磁盘或文件权限后重试。",
-        ) from e
-    return target
+    except Exception:
+        pass
 
+    payload = asdict(snap)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+
+    def _write(p: Path) -> None:
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(payload, fp, ensure_ascii=False, indent=2)
+
+    try:
+        _write(tmp)
+        try:
+            os.replace(tmp, target)
+        except OSError:
+            # WinError 5：目标被锁/无权限 → 直接覆盖写
+            _write(target)
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return target
+    except OSError as e:
+        # 再降级：用户可写目录
+        try:
+            from protocol_parser.paths import user_data_path
+            fallback_dir = user_data_path()
+        except Exception:
+            fallback_dir = Path.home() / "Documents" / "串口解析工具" / "data"
+            try:
+                fallback_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+        fallback = fallback_dir / target.name
+        try:
+            _write(fallback)
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return fallback
+        except Exception as e2:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise _mk_snapshot_error(
+                f"save session snapshot failed: {e}; fallback also failed: {e2}",
+                "保存会话快照失败（目录可能无写权限）",
+            ) from e2
 
 def load_snapshot(path: str | Path | None = None) -> SessionSnapshot | None:
-    """读取快照。文件不存在/损坏/缺字段都返回 None（不崩主流程）。"""
-    target = Path(path) if path else default_session_path()
-    if not target.exists():
+    """读取快照。文件不存在/损坏/缺字段都返回 None（不崩主流程）。
+    会依次尝试：显式 path → 默认路径 → 用户数据目录兜底。
+    """
+    candidates: list[Path] = []
+    if path is not None:
+        candidates.append(Path(path))
+    else:
+        candidates.append(default_session_path())
+        try:
+            from protocol_parser.paths import user_data_path
+            candidates.append(Path(user_data_path()) / SESSION_FILENAME)
+        except Exception:
+            candidates.append(
+                Path.home() / "Documents" / "串口解析工具" / "data" / SESSION_FILENAME
+            )
+
+    target: Path | None = None
+    for c in candidates:
+        try:
+            if c.exists():
+                target = c
+                break
+        except Exception:
+            continue
+    if target is None:
         return None
+
     try:
         with open(target, "r", encoding="utf-8") as fp:
             payload = json.load(fp)
