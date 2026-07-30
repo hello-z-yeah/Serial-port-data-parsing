@@ -2288,7 +2288,65 @@ class ProtocolParserApp:
             self._cmdlib_ascii = items
             self._cmdlib_save_list("ascii_cmds", items)
 
+    def _apply_treeview_grid_styles(self) -> None:
+        """强制 clam 主题，并为 CmdLib / Cycle / 通用 Treeview 画横纵网格线。
+
+        浅色模式网格线 #E0E0E0，深色模式 #383838。
+        """
+        try:
+            self.ttk_style.theme_use("clam")
+        except Exception:
+            pass
+        # clam 切换后重刷全局 ttk 配色，避免其它控件掉样式
+        try:
+            self.theme.apply_ttk_styles(self.ttk_style)
+        except Exception:
+            pass
+
+        mode = getattr(self.theme, "mode", "light") if hasattr(self, "theme") else "light"
+        grid_line_color = "#E0E0E0" if mode != "dark" else "#383838"
+        surface = self.theme.get("surface") if hasattr(self, "theme") else "#FFFFFF"
+        text_c = self.theme.get("text") if hasattr(self, "theme") else "#111827"
+        card = self.theme.get("card_bg") if hasattr(self, "theme") else "#F3F4F6"
+        secondary = self.theme.get("text_secondary") if hasattr(self, "theme") else "#525C6B"
+        primary = self.theme.get("primary") if hasattr(self, "theme") else "#0078D4"
+
+        for style_name in ("CmdLib.Treeview", "Cycle.Treeview", "Treeview"):
+            try:
+                self.ttk_style.configure(
+                    style_name,
+                    rowheight=28,
+                    font=("Microsoft YaHei UI", 10),
+                    borderwidth=1,
+                    relief="solid",
+                    bordercolor=grid_line_color,
+                    lightcolor=grid_line_color,
+                    darkcolor=grid_line_color,
+                    background=surface,
+                    fieldbackground=surface,
+                    foreground=text_c,
+                )
+                self.ttk_style.configure(
+                    f"{style_name}.Heading",
+                    font=("Microsoft YaHei UI", 10, "bold"),
+                    borderwidth=1,
+                    relief="solid",
+                    bordercolor=grid_line_color,
+                    lightcolor=grid_line_color,
+                    darkcolor=grid_line_color,
+                    background=card,
+                    foreground=secondary,
+                )
+                self.ttk_style.map(
+                    style_name,
+                    background=[("selected", primary)],
+                    foreground=[("selected", "#FFFFFF")],
+                )
+            except Exception:
+                pass
+
     def _build_cmd_library_panel(self, parent: tk.Misc) -> None:
+
         """指令库：ttk.Treeview 轻量表格（无 40 行重控件）。"""
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=0)
@@ -2319,10 +2377,6 @@ class ProtocolParserApp:
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6, pady=2)
 
         ttk.Button(
-            bar, text="发送选中", width=8, style="Primary.TButton",
-            command=self._safe(self._cmdlib_send_selected),
-        ).pack(side="left", padx=2)
-        ttk.Button(
             bar, text="清空选中", width=8, style="SendOutline.TButton",
             command=self._safe(self._cmdlib_clear_selected),
         ).pack(side="left", padx=2)
@@ -2336,34 +2390,35 @@ class ProtocolParserApp:
         wrap.columnconfigure(0, weight=1)
         wrap.rowconfigure(0, weight=1)
 
-        cols = ("idx", "name", "cmd_type", "payload")
+        # 干净五列布局：无分隔占位列，避免拖列时双重线/空白断层
+        cols = ("idx", "name", "cmd_type", "payload", "action")
         self.cmdlib_tree = ttk.Treeview(
             wrap,
             columns=cols,
             show="headings",
             selectmode="browse",
             height=18,
+            style="CmdLib.Treeview",
         )
         self.cmdlib_tree.heading("idx", text="序号")
         self.cmdlib_tree.heading("name", text="名称")
         self.cmdlib_tree.heading("cmd_type", text="CMD类型")
         self.cmdlib_tree.heading("payload", text="指令数据")
-        self.cmdlib_tree.column("idx", width=48, minwidth=40, anchor="center", stretch=False)
+        self.cmdlib_tree.heading("action", text="操作")
+        # 序号 / 操作固定宽；名称、类型适中；指令数据拉伸
+        self.cmdlib_tree.column("idx", width=52, minwidth=48, anchor="center", stretch=False)
         self.cmdlib_tree.column("name", width=110, minwidth=80, anchor="w", stretch=False)
-        self.cmdlib_tree.column("cmd_type", width=72, minwidth=60, anchor="center", stretch=False)
-        self.cmdlib_tree.column("payload", width=280, minwidth=120, anchor="w", stretch=True)
+        self.cmdlib_tree.column("cmd_type", width=72, minwidth=64, anchor="center", stretch=False)
+        self.cmdlib_tree.column("payload", width=220, minwidth=120, anchor="w", stretch=True)
+        self.cmdlib_tree.column("action", width=75, minwidth=70, anchor="center", stretch=False)
 
         sb = ttk.Scrollbar(wrap, orient="vertical", command=self.cmdlib_tree.yview)
         self.cmdlib_tree.configure(yscrollcommand=sb.set)
         self.cmdlib_tree.grid(row=0, column=0, sticky="nsew")
         sb.grid(row=0, column=1, sticky="ns")
 
-        # 行高略增，便于点击
-        try:
-            self.ttk_style.configure("Treeview", rowheight=26, font=("Microsoft YaHei UI", 10))
-            self.ttk_style.configure("Treeview.Heading", font=("Microsoft YaHei UI", 10, "bold"))
-        except Exception:
-            pass
+        # 强制 clam + 横纵网格线（CmdLib / Cycle / 通用 Treeview）
+        self._apply_treeview_grid_styles()
 
         # 内联编辑状态
         self._cmdlib_edit_entry: tk.Entry | None = None
@@ -2371,6 +2426,7 @@ class ProtocolParserApp:
         self._cmdlib_edit_col: str | None = None
         self._cmdlib_edit_index: int | None = None
 
+        self.cmdlib_tree.bind("<Button-1>", self._safe(self._cmdlib_on_tree_click), add="+")
         self.cmdlib_tree.bind("<Double-1>", self._safe(self._cmdlib_on_double_click))
         self.cmdlib_tree.bind("<Return>", self._safe(self._cmdlib_send_selected))
         self.cmdlib_tree.bind("<Delete>", self._safe(self._cmdlib_clear_selected))
@@ -2468,6 +2524,39 @@ class ProtocolParserApp:
         else:
             self._cmdlib_add_item()
 
+    def _cmdlib_on_tree_click(self, event) -> None:
+        """单击「操作」列 → 直接发送该行指令。"""
+        try:
+            region = self.cmdlib_tree.identify("region", event.x, event.y)
+        except Exception:
+            return
+        if region != "cell":
+            return
+        col = self.cmdlib_tree.identify_column(event.x)
+        row = self.cmdlib_tree.identify_row(event.y)
+        # #5 = action（idx, name, cmd_type, payload, action）
+        if not row or col != "#5":
+            return
+        try:
+            idx = int(row)
+        except Exception:
+            return
+        # 选中该行，便于后续清空等操作
+        try:
+            self.cmdlib_tree.selection_set(row)
+            self.cmdlib_tree.focus(row)
+        except Exception:
+            pass
+        items = list(self._cmdlib_current_list())
+        if idx >= len(items):
+            messagebox.showwarning("提示", "该行无指令内容")
+            return
+        item = items[idx]
+        if not (item.get("payload") or "").strip():
+            messagebox.showwarning("提示", "请先输入指令内容")
+            return
+        self._cmdlib_send_one(item)
+
     def _cmdlib_on_double_click(self, event) -> None:
         """双击单元格 → 临时 Entry 覆盖编辑（仅名称 / 指令数据）。"""
         if self._cmdlib_edit_entry is not None:
@@ -2476,7 +2565,7 @@ class ProtocolParserApp:
         region = self.cmdlib_tree.identify("region", event.x, event.y)
         if region != "cell":
             return
-        col = self.cmdlib_tree.identify_column(event.x)  # #1..#4
+        col = self.cmdlib_tree.identify_column(event.x)  # #1 idx #2 name #3 type #4 payload #5 action
         row = self.cmdlib_tree.identify_row(event.y)
         if not row or col not in ("#2", "#4"):
             return
@@ -2616,7 +2705,14 @@ class ProtocolParserApp:
                 payload = saved[i].get("payload") or ""
             else:
                 name, payload = "", ""
-            values = (str(i + 1), name, mode_label, payload)
+            # 操作列文字两侧留空格，避免被列边缘裁切
+            values = (
+                str(i + 1),
+                name,
+                mode_label,
+                payload,
+                " ▶️ 发送 ",
+            )
             iid = str(i)
             if iid in existing:
                 tree.item(iid, values=values)
@@ -2873,21 +2969,30 @@ class ProtocolParserApp:
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
 
-        cols = ("on", "name", "payload", "delay")
+        cols = ("on", "s1", "name", "s2", "payload", "s3", "delay")
+        # 与指令库统一网格线样式
+        self._apply_treeview_grid_styles()
         tree = ttk.Treeview(
             body,
             columns=cols,
             show="headings",
             selectmode="browse",
             height=16,
+            style="Cycle.Treeview",
         )
         tree.heading("on", text="参与")
+        tree.heading("s1", text="")
         tree.heading("name", text="名称")
+        tree.heading("s2", text="")
         tree.heading("payload", text="指令数据")
+        tree.heading("s3", text="")
         tree.heading("delay", text="间隔(ms)")
         tree.column("on", width=52, minwidth=48, anchor="center", stretch=False)
+        tree.column("s1", width=8, minwidth=6, anchor="center", stretch=False)
         tree.column("name", width=120, minwidth=80, anchor="w", stretch=False)
+        tree.column("s2", width=8, minwidth=6, anchor="center", stretch=False)
         tree.column("payload", width=320, minwidth=120, anchor="w", stretch=True)
+        tree.column("s3", width=8, minwidth=6, anchor="center", stretch=False)
         tree.column("delay", width=90, minwidth=70, anchor="center", stretch=False)
 
         sb = ttk.Scrollbar(body, orient="vertical", command=tree.yview)
@@ -2954,14 +3059,18 @@ class ProtocolParserApp:
             it = pool.get(cid) or {}
             on_mark = "☑" if cid in seq_map else "☐"
             delay = str((seq_map.get(cid) or {}).get("delay_ms", 1000))
+            sep = "│"
             tree.insert(
                 "",
                 "end",
                 iid=str(cid),
                 values=(
                     on_mark,
+                    sep,
                     it.get("name") or "",
+                    sep,
                     it.get("payload") or "",
+                    sep,
                     delay,
                 ),
             )
@@ -2995,8 +3104,8 @@ class ProtocolParserApp:
             except Exception:
                 d = 1000
             vals = list(tree.item(row, "values"))
-            if len(vals) >= 4:
-                vals[3] = str(d)
+            if len(vals) >= 7:
+                vals[6] = str(d)
                 tree.item(row, values=vals)
             _cancel_edit()
 
@@ -3022,7 +3131,7 @@ class ProtocolParserApp:
                 return
             col = tree.identify_column(event.x)
             row = tree.identify_row(event.y)
-            if not row or col != "#4":
+            if not row or col != "#7":
                 return
             _cancel_edit()
             bbox = tree.bbox(row, col)
@@ -3056,7 +3165,7 @@ class ProtocolParserApp:
                 if not vals or vals[0] != "☑":
                     continue
                 try:
-                    d = max(10, int(str(vals[3]).strip()))
+                    d = max(10, int(str(vals[6]).strip()))
                 except Exception:
                     d = 1000
                 new_seq.append({"id": rid, "delay_ms": d})
@@ -3073,6 +3182,35 @@ class ProtocolParserApp:
         bf.pack(pady=10)
         ttk.Button(bf, text="保存", command=_save).pack(side="left", padx=6)
         ttk.Button(bf, text="取消", command=top.destroy).pack(side="left")
+
+        # 弹窗相对主窗口居中
+        try:
+            top.update_idletasks()
+            win_w = top.winfo_width()
+            win_h = top.winfo_height()
+            if win_w <= 1:
+                win_w = int(top.winfo_reqwidth())
+            if win_h <= 1:
+                win_h = int(top.winfo_reqheight())
+            parent = self.root
+            parent.update_idletasks()
+            parent_x = parent.winfo_rootx()
+            parent_y = parent.winfo_rooty()
+            parent_w = parent.winfo_width()
+            parent_h = parent.winfo_height()
+            x = parent_x + (parent_w - win_w) // 2
+            y = parent_y + (parent_h - win_h) // 2
+            # 避免跑出屏幕
+            try:
+                sw = top.winfo_screenwidth()
+                sh = top.winfo_screenheight()
+                x = max(0, min(x, sw - win_w))
+                y = max(0, min(y, sh - win_h))
+            except Exception:
+                pass
+            top.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        except Exception:
+            pass
 
     def _build_send_panel(self, parent: tk.Misc) -> None:
         """底部横条：左模式竖排 | 中输入 | 右操作。"""
@@ -4223,25 +4361,9 @@ class ProtocolParserApp:
             )
         except Exception:
             pass
-        # 3b) 指令库 Treeview 主题色
+        # 3b) 指令库 / 循环配置 / 通用 Treeview 网格线（随亮暗主题变色）
         try:
-            self.ttk_style.configure(
-                "Treeview",
-                background=t.get("surface"),
-                fieldbackground=t.get("surface"),
-                foreground=t.get("text"),
-                rowheight=26,
-            )
-            self.ttk_style.map(
-                "Treeview",
-                background=[("selected", t.get("primary"))],
-                foreground=[("selected", "#FFFFFF")],
-            )
-            self.ttk_style.configure(
-                "Treeview.Heading",
-                background=t.get("card_bg"),
-                foreground=t.get("text_secondary"),
-            )
+            self._apply_treeview_grid_styles()
         except Exception:
             pass
         # 4) tag 颜色/字体
