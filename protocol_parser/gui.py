@@ -590,88 +590,178 @@ class Tooltip:
             pass
         Tooltip._TOPLEVEL = None
 
-def _enable_full_combobox(combo: ttk.Combobox) -> None:
-    """合上时悬停显示当前完整文本；展开后列表项悬停也显示完整行；列表按最长项加宽。"""
-    tip_win: list[tk.Toplevel | None] = [None]
-    after_id: list[str | None] = [None]
+def _enable_full_combobox(
+    combo: ttk.Combobox,
+    on_tip=None,
+    on_clear=None,
+) -> None:
+    """合上悬停 + 展开列表悬停 → 状态栏显示完整文本。"""
 
-    def _hide_tip() -> None:
-        if after_id[0] is not None:
-            try:
-                combo.after_cancel(after_id[0])
-            except Exception:
-                pass
-            after_id[0] = None
-        w = tip_win[0]
-        if w is not None:
-            try:
-                w.destroy()
-            except Exception:
-                pass
-            tip_win[0] = None
-
-    def _show_tip(text: str, x: int, y: int) -> None:
-        _hide_tip()
+    def _tip(text: str) -> None:
         text = (text or "").strip()
-        if not text:
+        if not text or on_tip is None:
             return
         try:
-            tw = tk.Toplevel(combo)
-            tw.wm_overrideredirect(True)
-            try:
-                tw.wm_attributes("-topmost", True)
-            except Exception:
-                pass
-            tk.Label(
-                tw,
-                text=text,
-                bg="#1F2937",
-                fg="#F9FAFB",
-                font=("Microsoft YaHei UI", 9),
-                padx=8,
-                pady=4,
-                justify="left",
-            ).pack()
-            tw.update_idletasks()
-            tw.geometry(f"+{x + 12}+{y + 16}")
-            tip_win[0] = tw
+            on_tip(text)
         except Exception:
-            tip_win[0] = None
+            pass
 
-    def _schedule_closed_tip(event=None) -> None:
-        _hide_tip()
-
-        def _do() -> None:
-            after_id[0] = None
-            try:
-                text = str(combo.get() or "")
-            except Exception:
-                text = ""
-            if not text:
-                return
-            try:
-                x = combo.winfo_rootx()
-                y = combo.winfo_rooty() + combo.winfo_height()
-            except Exception:
-                return
-            _show_tip(text, x, y)
-
+    def _clear() -> None:
+        if on_clear is None:
+            return
         try:
-            after_id[0] = combo.after(350, _do)
+            on_clear()
         except Exception:
             pass
 
     def _find_listbox():
         try:
-            popdown = combo.tk.call("ttk::combobox::PopdownWindow", combo)
+            pd = combo.tk.call("ttk::combobox::PopdownWindow", str(combo))
         except Exception:
             return None
-        for path in (f"{popdown}.f.l", f"{popdown}.lb", f"{popdown}.f.lb"):
+        pd = str(pd)
+        for suf in (".f.l", ".lb", ".f.lb"):
             try:
-                return combo.nametowidget(path)
+                w = combo.nametowidget(pd + suf)
+                if w.winfo_class() == "Listbox":
+                    return w
+            except Exception:
+                pass
+        try:
+            root_pd = combo.nametowidget(pd)
+            stack = [root_pd]
+            while stack:
+                w = stack.pop()
+                try:
+                    if w.winfo_class() == "Listbox":
+                        return w
+                    stack.extend(w.winfo_children())
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return None
+
+    def _on_combo_enter(_e=None) -> None:
+        try:
+            _tip(str(combo.get() or ""))
+        except Exception:
+            pass
+
+    def _on_combo_leave(_e=None) -> None:
+        # 鼠标移进下拉列表时不要清
+        try:
+            lb = _find_listbox()
+            if lb is not None and lb.winfo_ismapped():
+                x, y = combo.winfo_pointerxy()
+                lx, ly = lb.winfo_rootx(), lb.winfo_rooty()
+                if lx <= x <= lx + max(lb.winfo_width(), 1) and ly <= y <= ly + max(lb.winfo_height(), 1):
+                    return
+        except Exception:
+            pass
+        _clear()
+
+    def _attach_list_bindings(attempt: int = 0) -> None:
+        lb = _find_listbox()
+        if lb is None:
+            if attempt < 25:
+                combo.after(40, lambda a=attempt + 1: _attach_list_bindings(a))
+            return
+
+        # 尽量加宽，减少截断
+        try:
+            values = combo.cget("values") or ()
+            if values:
+                longest = max(len(str(v)) for v in values)
+                lb.configure(width=max(longest + 4, 60))
+        except Exception:
+            pass
+
+        def _show_at_event(event) -> None:
+            try:
+                # 优先按坐标取行
+                idx = lb.index(f"@{event.x},{event.y}")
+            except Exception:
+                try:
+                    idx = lb.nearest(event.y)
+                except Exception:
+                    return
+            try:
+                _tip(str(lb.get(idx)))
+            except Exception:
+                pass
+
+        def _on_lb_leave(_e=None) -> None:
+            _clear()
+
+        # 重复打开时避免重复叠加太多，先解一次再绑
+        for seq in ("<Motion>", "<B1-Motion>", "<Leave>"):
+            try:
+                lb.unbind(seq)
+            except Exception:
+                pass
+
+        lb.bind("<Motion>", _show_at_event, add="+")
+        lb.bind("<B1-Motion>", _show_at_event, add="+")
+        lb.bind("<Leave>", _on_lb_leave, add="+")
+
+        # 弹层窗口本身也跟一下（有的环境 Listbox 收不到 Motion）
+        try:
+            pd = str(combo.tk.call("ttk::combobox::PopdownWindow", str(combo)))
+            pop = combo.nametowidget(pd)
+
+            def _on_pop_motion(event) -> None:
+                try:
+                    # 转到 listbox 坐标
+                    x = event.x_root - lb.winfo_rootx()
+                    y = event.y_root - lb.winfo_rooty()
+                    idx = lb.nearest(y)
+                    _tip(str(lb.get(idx)))
+                except Exception:
+                    pass
+
+            pop.bind("<Motion>", _on_pop_motion, add="+")
+        except Exception:
+            pass
+
+    def _on_open(_e=None) -> None:
+        # 多点几次，等 popdown 真正映射出来
+        for ms in (30, 80, 150, 250, 400):
+            combo.after(ms, lambda: _attach_list_bindings(0))
+
+    combo.bind("<Enter>", _on_combo_enter, add="+")
+    combo.bind("<Leave>", _on_combo_leave, add="+")
+    combo.bind("<ButtonPress-1>", _on_open, add="+")
+    combo.bind("<Down>", _on_open, add="+")
+    combo.bind("<<ComboboxSelected>>", lambda _e: _clear(), add="+")
+
+    def _tip(text: str) -> None:
+        text = (text or "").strip()
+        if not text:
+            return
+        if on_tip is not None:
+            try:
+                on_tip(text)
+            except Exception:
+                pass
+
+    def _clear() -> None:
+        if on_clear is not None:
+            try:
+                on_clear()
+            except Exception:
+                pass
+
+    def _find_listbox():
+        try:
+            popdown = combo.tk.call("ttk::combobox::PopdownWindow", str(combo))
+        except Exception:
+            return None
+        for suffix in (".f.l", ".lb", ".f.lb"):
+            try:
+                return combo.nametowidget(str(popdown) + suffix)
             except Exception:
                 continue
-        # 兜底：递归找 Listbox
         try:
             pd = combo.nametowidget(str(popdown))
             stack = [pd]
@@ -679,59 +769,73 @@ def _enable_full_combobox(combo: ttk.Combobox) -> None:
                 w = stack.pop()
                 if w.winfo_class() == "Listbox":
                     return w
-                stack.extend(w.winfo_children())
+                try:
+                    stack.extend(w.winfo_children())
+                except Exception:
+                    pass
         except Exception:
             pass
         return None
 
-    def _widen_popdown(_event=None) -> None:
-        def _do() -> None:
-            try:
-                values = combo.cget("values") or ()
-                if not values:
-                    return
-                longest = max(len(str(v)) for v in values)
-                try:
-                    entry_w = int(float(str(combo.cget("width") or 0)))
-                except Exception:
-                    entry_w = 0
-                w = max(longest + 2, entry_w, 12)
-                lb = _find_listbox()
-                if lb is None:
-                    return
-                try:
-                    lb.configure(width=w)
-                except Exception:
-                    pass
-
-                def _on_motion(event) -> None:
-                    try:
-                        idx = lb.nearest(event.y)
-                        text = str(lb.get(idx))
-                    except Exception:
-                        text = ""
-                    _show_tip(text, event.x_root, event.y_root)
-
-                def _on_leave(_e=None) -> None:
-                    _hide_tip()
-
-                lb.bind("<Motion>", _on_motion, add="+")
-                lb.bind("<Leave>", _on_leave, add="+")
-                lb.bind("<ButtonPress>", _on_leave, add="+")
-            except Exception:
-                pass
-
+    def _pointer_in_listbox() -> bool:
+        """鼠标是否还在本下拉列表上（用于 Leave 时别误清）。"""
         try:
-            combo.after(80, _do)
+            lb = _find_listbox()
+            if lb is None or not lb.winfo_ismapped():
+                return False
+            x, y = combo.winfo_pointerxy()
+            lx, ly = lb.winfo_rootx(), lb.winfo_rooty()
+            return lx <= x <= lx + lb.winfo_width() and ly <= y <= ly + lb.winfo_height()
+        except Exception:
+            return False
+
+    def _on_combo_enter(_e=None) -> None:
+        try:
+            _tip(str(combo.get() or ""))
         except Exception:
             pass
 
-    combo.bind("<Enter>", _schedule_closed_tip, add="+")
-    combo.bind("<Leave>", lambda _e: _hide_tip(), add="+")
-    combo.bind("<ButtonPress>", lambda _e: _hide_tip(), add="+")
-    combo.bind("<ButtonPress-1>", _widen_popdown, add="+")
-    combo.bind("<Down>", _widen_popdown, add="+")
-    combo.bind("<<ComboboxSelected>>", lambda _e: _hide_tip(), add="+")
+    def _on_combo_leave(_e=None) -> None:
+        # 移向列表时不要清
+        if _pointer_in_listbox():
+            return
+        _clear()
+
+    def _bind_list_motion(attempt: int = 0) -> None:
+        lb = _find_listbox()
+        if lb is None:
+            if attempt < 20:
+                combo.after(30, lambda: _bind_list_motion(attempt + 1))
+            return
+        try:
+            values = combo.cget("values") or ()
+            if values:
+                longest = max(len(str(v)) for v in values)
+                lb.configure(width=max(longest + 4, 56))
+        except Exception:
+            pass
+
+        def _on_motion(event) -> None:
+            try:
+                idx = lb.nearest(event.y)
+                _tip(str(lb.get(idx)))
+            except Exception:
+                pass
+
+        def _on_lb_leave(_e=None) -> None:
+            _clear()
+
+        lb.bind("<Motion>", _on_motion, add="+")
+        lb.bind("<Leave>", _on_lb_leave, add="+")
+
+    def _on_open(_e=None) -> None:
+        combo.after(20, lambda: _bind_list_motion(0))
+
+    combo.bind("<Enter>", _on_combo_enter, add="+")
+    combo.bind("<Leave>", _on_combo_leave, add="+")
+    combo.bind("<ButtonPress-1>", _on_open, add="+")
+    combo.bind("<Down>", _on_open, add="+")
+    combo.bind("<<ComboboxSelected>>", lambda _e: _clear(), add="+")
 
 class RoundedButton(tk.Canvas):
     """大圆角按钮，支持动态 configure(text=..., style=...)，兼容 Tooltip。"""
@@ -1275,6 +1379,7 @@ class ProtocolParserApp:
         self.tx_interval_ms_var = tk.IntVar(value=1000)
         self._tx_cycle_job: str | None = None
         self.tx_auto_crc8_var = tk.BooleanVar(value=False)
+        self.tx_append_crlf_var = tk.BooleanVar(value=False)
         self.tx_crc_algo_var = tk.StringVar(value="ADD8")
             # ---------- 指令库 ----------
         self.CMDLIB_MAX = 40  # HEX / ASCII 各自上限
@@ -1456,6 +1561,34 @@ class ProtocolParserApp:
         base = f"{port}  |  {baud}  |  {save_s}"
         self.status_var.set(f"{base}  ·  {tip}" if tip else base)
 
+    def _status_tip(self, text: str) -> None:
+        """状态栏显示完整提示文本。"""
+        t = (text or "").strip()
+        if t:
+            self._set_status(t)
+
+    def _status_tip_clear(self) -> None:
+        """清除状态栏 tip，恢复 COM | 波特率 | 存储。"""
+        try:
+            self._update_left_status(tip="")
+        except Exception:
+            pass
+
+    def _bind_status_tip(self, widget: tk.Misc) -> None:
+        def _enter(_e=None):
+            try:
+                t = str(widget.get() or "").strip() if hasattr(widget, "get") else ""
+            except Exception:
+                t = ""
+            if t:
+                self._status_tip(t)
+
+        def _leave(_e=None):
+            self._status_tip_clear()
+
+        widget.bind("<Enter>", _enter, add="+")
+        widget.bind("<Leave>", _leave, add="+")
+
     def _build_ui(self) -> None:
         # ============================================================
         #  根级统一响应式布局（grid）：
@@ -1548,28 +1681,33 @@ class ProtocolParserApp:
         self.content_row = ttk.Frame(self.serial_frame)
         self.content_row.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
         self.content_row.columnconfigure(0, weight=1)
-        self.content_row.columnconfigure(1, weight=0)
-        self.content_row.rowconfigure(0, weight=0)
-        self.content_row.rowconfigure(1, weight=1)
-        self.content_row.rowconfigure(2, weight=0)
+        self.content_row.rowconfigure(0, weight=0)  # 工具条
+        self.content_row.rowconfigure(1, weight=1)  # 分栏
+        self.content_row.rowconfigure(2, weight=0)  # 底栏发送
 
-        # 第 0 行：工具条
+        # 第 0 行：工具条整宽
         self.rt_toolbar_host = ttk.Frame(self.content_row)
         self.rt_toolbar_host.grid(
-            row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(4, 0)
+            row=0, column=0, sticky="ew", padx=6, pady=(4, 0)
         )
 
-        # 第 1 行左：日志
-        self.realtime_container = ttk.Frame(self.content_row)
-        self.realtime_container.grid(row=1, column=0, sticky="nsew")
+        # 第 1 行：水平分栏（日志 | 指令库），可拖拽
+        self.main_pane = ttk.Panedwindow(self.content_row, orient="horizontal")
+        self.main_pane.grid(row=1, column=0, sticky="nsew")
+
+        # 左：日志
+        self.realtime_container = ttk.Frame(self.main_pane)
         self.realtime_container.columnconfigure(0, weight=1)
         self.realtime_container.rowconfigure(0, weight=1)
         self.realtime_container.configure(padding=(4, 0, 2, 0))
+        self.main_pane.add(self.realtime_container, weight=1)
 
-        # 第 1 行右：指令库（默认隐藏，不要 grid）
+        # 右：指令库（默认不 add，避免启动闪一下）
+        self.CMDLIB_MIN_WIDTH = 320   # 最小宽度，可改
+        self.CMDLIB_DEFAULT_WIDTH = 560
         self.cmdlib_outer = tk.Frame(
-            self.content_row,
-            width=560,  # 指令库宽度
+            self.main_pane,
+            width=self.CMDLIB_DEFAULT_WIDTH,
             bg=self.theme.get("app_bg"),
             highlightthickness=0,
         )
@@ -1832,7 +1970,12 @@ class ProtocolParserApp:
             left, textvariable=self.port_var, width=28, state="readonly"  # 原 20
         )
         self.port_combo.pack(side="left", padx=(4, 2))
-        _enable_full_combobox(self.port_combo)
+        _enable_full_combobox(
+            self.port_combo,
+            on_tip=self._status_tip,
+            on_clear=self._status_tip_clear,
+        )
+        self._bind_status_tip(self.port_combo)   # ★ 新增
         self.port_combo.bind(
             "<<ComboboxSelected>>",
             self._safe(self._on_port_change_while_collecting),
@@ -1861,7 +2004,12 @@ class ProtocolParserApp:
             ],
         )
         self.baudrate_combo.pack(side="left", padx=(4, 8))
-        _enable_full_combobox(self.baudrate_combo)
+        _enable_full_combobox(
+            self.baudrate_combo,
+            on_tip=self._status_tip,
+            on_clear=self._status_tip_clear,
+        )
+        self._bind_status_tip(self.baudrate_combo)
         self.baudrate_combo.bind(
             "<<ComboboxSelected>>",
             self._safe(self._on_serial_param_change_while_collecting),
@@ -1893,7 +2041,6 @@ class ProtocolParserApp:
             width=3, state="readonly",
         )
         self.bytesize_combo.pack(side="left", padx=(4, 12))
-        _enable_full_combobox(self.bytesize_combo)
         self.bytesize_combo.bind(
             "<<ComboboxSelected>>",
             self._safe(self._on_serial_param_change_while_collecting),
@@ -1982,8 +2129,7 @@ class ProtocolParserApp:
     def _toggle_cmdlib_panel(self) -> None:
         if self.cmdlib_visible:
             try:
-                self.cmdlib_outer.grid_remove()
-                self.cmdlib_visible = False
+                self.main_pane.forget(self.cmdlib_outer)
             except Exception:
                 pass
             self.cmdlib_visible = False
@@ -1994,8 +2140,24 @@ class ProtocolParserApp:
             self._set_status("已隐藏指令库")
         else:
             try:
-                self.cmdlib_outer.grid(row=1, column=1, sticky="nsew", padx=(4, 6), pady=0)
-                self.cmdlib_visible = True
+                self.main_pane.add(self.cmdlib_outer, weight=0)
+                # 最小宽度限制
+                try:
+                    self.main_pane.pane(
+                        self.cmdlib_outer,
+                        minsize=int(getattr(self, "CMDLIB_MIN_WIDTH", 320)),
+                    )
+                except Exception:
+                    pass
+                # 可选：打开时给一个默认宽度（需窗口已映射）
+                try:
+                    self.root.update_idletasks()
+                    total = max(self.main_pane.winfo_width(), 800)
+                    right = int(getattr(self, "CMDLIB_DEFAULT_WIDTH", 560))
+                    left = max(total - right - 8, 200)
+                    self.main_pane.sashpos(0, left)
+                except Exception:
+                    pass
             except Exception:
                 pass
             self.cmdlib_visible = True
@@ -2093,7 +2255,13 @@ class ProtocolParserApp:
             _hdr, textvariable=self.product_var, width=18, state="readonly"
         )
         self.product_combo.pack(side="left", padx=(0, 6))
-        _enable_full_combobox(self.product_combo)
+        _enable_full_combobox(
+            self.product_combo,
+            on_tip=self._status_tip,
+            on_clear=self._status_tip_clear,
+        )
+        self._bind_status_tip(self.product_combo)
+        self.product_combo.bind("<<ComboboxSelected>>", self._on_product_change)
         self.product_combo.bind("<<ComboboxSelected>>", self._on_product_change)
         self._import_btn = RoundedButton(
             _hdr, text="导入Word协议", style="Toolbar.TButton",
@@ -2276,11 +2444,6 @@ class ProtocolParserApp:
             command=self._safe(self._cmdlib_open_cycle_config),
         ).pack(side="left", padx=2)
 
-        ttk.Button(
-            bar, text="＋", width=3, style="SendOutline.TButton",
-            command=self._safe(self._cmdlib_add_item),
-        ).pack(side="right", padx=2)
-
         wrap = ttk.Frame(parent)
         wrap.grid(row=1, column=0, sticky="nsew")
         wrap.columnconfigure(0, weight=1)
@@ -2295,6 +2458,30 @@ class ProtocolParserApp:
         self._cmdlib_list = ttk.Frame(canvas)
         self._cmdlib_canvas = canvas
         self._cmdlib_canvas_win = canvas.create_window((0, 0), window=self._cmdlib_list, anchor="nw")
+        def _on_mousewheel(event):
+            # Windows / Mac
+            if getattr(event, "delta", 0):
+                canvas.yview_scroll(int(-event.delta / 120), "units")
+            # Linux
+            elif getattr(event, "num", None) == 4:
+                canvas.yview_scroll(-1, "units")
+            elif getattr(event, "num", None) == 5:
+                canvas.yview_scroll(1, "units")
+
+        def _bind_wheel(_e=None):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.bind_all("<Button-4>", _on_mousewheel)
+            canvas.bind_all("<Button-5>", _on_mousewheel)
+
+        def _unbind_wheel(_e=None):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", _bind_wheel)
+        canvas.bind("<Leave>", _unbind_wheel)
+        self._cmdlib_list.bind("<Enter>", _bind_wheel)
+        self._cmdlib_list.bind("<Leave>", _unbind_wheel)
 
         def _on_cfg(_e=None):
             canvas.configure(scrollregion=canvas.bbox("all"))
@@ -2305,10 +2492,102 @@ class ProtocolParserApp:
         self._cmdlib_list.bind("<Configure>", _on_cfg)
         canvas.bind("<Configure>", _on_cfg)
 
+        self._cmdlib_row_widgets = []  # 缓存 40 行控件
         self._cmdlib_load()
-        self._cmdlib_refresh_list()
+        self._cmdlib_ensure_rows()     # 只创建一次
+        self._cmdlib_fill_rows()       # 只填数据
         self._cmdlib_set_mode(self._cmdlib_mode.get() or "hex")
     
+    def _cmdlib_ensure_rows(self) -> None:
+        """首次创建固定 CMDLIB_MAX 行，之后复用。"""
+        if getattr(self, "_cmdlib_row_widgets", None):
+            return
+        self._cmdlib_row_widgets = []
+        ROW_H = 36
+        _font = ("Microsoft YaHei UI", 10)
+        self._cmdlib_list.columnconfigure(0, weight=1)
+
+        for i in range(self.CMDLIB_MAX):
+            card = tk.Frame(
+                self._cmdlib_list,
+                bg=self.theme.get("card_bg"),
+                highlightbackground=self.theme.get("card_border") or "#E0E0E0",
+                highlightthickness=1,
+                bd=0,
+            )
+            card.grid(row=i, column=0, sticky="ew", padx=4, pady=3)
+            card.columnconfigure(0, weight=1)
+
+            row = ttk.Frame(card)
+            row.grid(row=0, column=0, sticky="ew", padx=6, pady=4)
+            row.columnconfigure(0, weight=1)
+
+            left = ttk.Frame(row, height=ROW_H)
+            left.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+            left.grid_propagate(False)
+            left.columnconfigure(0, weight=1)
+            left.rowconfigure(0, weight=1)
+            ent_payload = tk.Entry(left, font=_font, relief="solid", bd=1)
+            ent_payload.grid(row=0, column=0, sticky="nsew")
+
+            mid = ttk.Frame(row, height=ROW_H, width=140)
+            mid.grid(row=0, column=1, sticky="ns", padx=(0, 4))
+            mid.grid_propagate(False)
+            mid.columnconfigure(0, weight=1)
+            mid.rowconfigure(0, weight=1)
+            ent_name = tk.Entry(mid, font=_font, relief="solid", bd=1, justify="center")
+            ent_name.grid(row=0, column=0, sticky="nsew")
+
+            right = ttk.Frame(row, height=ROW_H, width=72)
+            right.grid(row=0, column=2, sticky="ns")
+            right.grid_propagate(False)
+            right.columnconfigure(0, weight=1)
+            right.rowconfigure(0, weight=1)
+
+            def _make_send(ep=ent_payload, en=ent_name):
+                return lambda: self._cmdlib_commit_and_send(ep, en)
+
+            def _tip_status(w):
+                def _on_enter(_e=None, widget=w):
+                    t = (widget.get() or "").strip()
+                    if t:
+                        self._set_status(t)
+
+                def _on_leave(_e=None):
+                    # 清掉 tip，只保留 COM | 波特率 | 存储状态
+                    try:
+                        self._update_left_status(tip="")
+                    except Exception:
+                        self._set_status("")
+
+                w.bind("<Enter>", _on_enter, add="+")
+                w.bind("<Leave>", _on_leave, add="+")
+
+            _tip_status(ent_payload)
+            _tip_status(ent_name)
+
+            ttk.Button(
+                right, text="发送", style="Primary.TButton",
+                command=self._safe(_make_send()),
+            ).grid(row=0, column=0, sticky="nsew")
+
+            def _make_save(ep=ent_payload, en=ent_name, idx=i):
+                return lambda _e=None: self._cmdlib_save_row(idx, ep.get().strip(), en.get().strip())
+
+            ent_payload.bind("<FocusOut>", _make_save())
+            ent_name.bind("<FocusOut>", _make_save())
+
+            self._cmdlib_row_widgets.append({
+                "payload": ent_payload,
+                "name": ent_name,
+            })
+
+        try:
+            self._cmdlib_list.update_idletasks()
+            self._cmdlib_canvas.configure(scrollregion=self._cmdlib_canvas.bbox("all"))
+        except Exception:
+            pass
+
     def _cmdlib_toggle_mode_btn(self) -> None:
         """同一个按钮：HEX ↔ ASCII。"""
         cur = self._cmdlib_mode.get()
@@ -2335,72 +2614,91 @@ class ProtocolParserApp:
             self._cmdlib_stop_cycle()
         self._cmdlib_refresh_list()
 
+    def _cmdlib_fill_rows(self) -> None:
+        """只更新 Entry 文字，不重建控件。"""
+        if not getattr(self, "_cmdlib_row_widgets", None):
+            self._cmdlib_ensure_rows()
+        saved = list(self._cmdlib_current_list())
+        for i, w in enumerate(self._cmdlib_row_widgets):
+            if i < len(saved):
+                p = saved[i].get("payload") or ""
+                n = saved[i].get("name") or ""
+            else:
+                p, n = "", ""
+            ep, en = w["payload"], w["name"]
+            # 避免无意义重写触发事件
+            if ep.get() != p:
+                ep.delete(0, "end")
+                ep.insert(0, p)
+            if en.get() != n:
+                en.delete(0, "end")
+                en.insert(0, n)
+
     def _cmdlib_refresh_list(self) -> None:
-        if not hasattr(self, "_cmdlib_list"):
-            return
-        for w in self._cmdlib_list.winfo_children():
-            w.destroy()
+        """对外仍叫 refresh，内部只填数据。"""
+        self._cmdlib_fill_rows()
 
-        items = self._cmdlib_current_list()
-        self._cmdlib_list.columnconfigure(0, weight=1)
+    def _cmdlib_save_row(self, index: int, payload: str, name: str) -> None:
+        """按固定下标写回；空内容则该槽清空，不整体删行。"""
+        import uuid
+        items = list(self._cmdlib_current_list())
 
-        if not items:
-            ttk.Label(
-                self._cmdlib_list,
-                text="暂无指令，点击右上角 ＋ 添加（最多 40 条）",
-                foreground="#6B7280",
-            ).grid(row=0, column=0, sticky="w", padx=8, pady=12)
+        # 补齐长度，保证 index 可写
+        while len(items) <= index:
+            items.append({"id": "", "name": "", "payload": ""})
+
+        if not payload and not name:
+            items[index] = {"id": "", "name": "", "payload": ""}
         else:
-            ROW_H = 35  # 统一行高，可改 28～32
-            for i, item in enumerate(items):
-                row = ttk.Frame(self._cmdlib_list)
-                row.grid(row=i, column=0, sticky="ew", pady=3, padx=4)
-                row.columnconfigure(0, weight=1)
-                row.rowconfigure(0, weight=0)
+            old = items[index] if index < len(items) else {}
+            items[index] = {
+                "id": old.get("id") or uuid.uuid4().hex,
+                "name": name,
+                "payload": payload,
+            }
 
-                # 左：只读内容
-                left = ttk.Frame(row, height=ROW_H)
-                left.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-                left.grid_propagate(False)
-                left.columnconfigure(0, weight=1)
-                left.rowconfigure(0, weight=1)
-                ent = ttk.Entry(left)
-                ent.insert(0, item.get("payload", ""))
-                ent.configure(state="readonly")
-                ent.grid(row=0, column=0, sticky="nsew")
+        # 末尾连续空槽不写入文件（可选压缩）
+        while items and not (items[-1].get("payload") or items[-1].get("name")):
+            items.pop()
 
-                # 中：名称（发送）
-                mid = ttk.Frame(row, height=ROW_H, width=100)
-                mid.grid(row=0, column=1, sticky="ns", padx=(0, 4))
-                mid.grid_propagate(False)
-                mid.columnconfigure(0, weight=1)
-                mid.rowconfigure(0, weight=1)
-                name = item.get("name") or f"指令{i + 1}"
-                ttk.Button(
-                    mid,
-                    text=name,
-                    style="Primary.TButton",
-                    command=self._safe(lambda it=item: self._cmdlib_send_one(it)),
-                ).grid(row=0, column=0, sticky="nsew")
+        self._cmdlib_set_current_list(items)
 
-                # 右：修改
-                right = ttk.Frame(row, height=ROW_H, width=56)
-                right.grid(row=0, column=2, sticky="ns")
-                right.grid_propagate(False)
-                right.columnconfigure(0, weight=1)
-                right.rowconfigure(0, weight=1)
-                ttk.Button(
-                    right,
-                    text="修改",
-                    style="SendOutline.TButton",
-                    command=self._safe(lambda it=item: self._cmdlib_edit_item(it)),
-                ).grid(row=0, column=0, sticky="nsew")
+    def _cmdlib_commit_and_send(self, ent_payload: tk.Entry, ent_name: tk.Entry) -> None:
+        """先保存当前行，再发送。"""
+        payload = ent_payload.get().strip()
+        name = ent_name.get().strip()
+        if not payload:
+            messagebox.showwarning("提示", "请先输入指令内容")
+            return
+        # 写入库（找已有或追加）
+        import uuid
+        items = list(self._cmdlib_current_list())
+        found = None
+        for it in items:
+            if (it.get("payload") or "") == payload and (it.get("name") or "") == name:
+                found = it
+                break
+        if found is None:
+            # 按输入框内容匹配 payload 更新名称，或新建
+            for it in items:
+                if (it.get("payload") or "") == payload:
+                    it["name"] = name
+                    found = it
+                    break
+        if found is None:
+            if len(items) >= self.CMDLIB_MAX:
+                messagebox.showwarning("上限", f"最多 {self.CMDLIB_MAX} 条")
+                return
+            found = {"id": uuid.uuid4().hex, "name": name, "payload": payload}
+            items.append(found)
+            self._cmdlib_set_current_list(items)
+            # self._cmdlib_refresh_list()
+        else:
+            found["name"] = name
+            found["payload"] = payload
+            self._cmdlib_set_current_list(items)
 
-        try:
-            self._cmdlib_list.update_idletasks()
-            self._cmdlib_canvas.configure(scrollregion=self._cmdlib_canvas.bbox("all"))
-        except Exception:
-            pass
+        self._cmdlib_send_one(found)
 
     def _cmdlib_send_one(self, item: dict) -> None:
         if not (self.collector and self.collector.running):
@@ -2423,22 +2721,30 @@ class ProtocolParserApp:
                     raise ValueError("HEX 长度必须为偶数")
                 data = bytes.fromhex(s)
 
-                # 与底部「自动追加校验位」绑定
+                # 自动追加校验位
                 if bool(self.tx_auto_crc8_var.get()):
                     from protocol_parser.parser import calc_checksum
                     algo = (self.tx_crc_algo_var.get() or "ADD8").strip()
-                    cs_bytes = calc_checksum(data, algo)
-                    if cs_bytes:
-                        data = data + cs_bytes
-            else:
-                data = payload.encode("utf-8", errors="replace")
+                    cs = calc_checksum(data, algo)
+                    if cs:
+                        data = data + cs
 
-            self.collector.send(data)
+                # 加回车换行（0D 0A）
+                if bool(getattr(self, "tx_append_crlf_var", None) and self.tx_append_crlf_var.get()):
+                    data = data + b"\r\n"
+
+                self.collector.send(data)
+            else:
+                # ASCII
+                text = payload
+                if bool(getattr(self, "tx_append_crlf_var", None) and self.tx_append_crlf_var.get()):
+                    if not text.endswith("\r\n") and not text.endswith("\n"):
+                        text = text + "\r\n"
+                data = text.encode("utf-8", errors="replace")
+                self.collector.send(data)
+
             self.tx_frame_count = getattr(self, "tx_frame_count", 0) + 1
-            tip = f"指令库已发送: {item.get('name', '')}"
-            if self._cmdlib_mode.get() == "hex" and bool(self.tx_auto_crc8_var.get()):
-                tip += f"（已追加 {self.tx_crc_algo_var.get() or 'ADD8'}）"
-            self._set_status(tip)
+            self._set_status(f"指令库已发送: {item.get('name', '')}")
             try:
                 self._update_stats_bar()
             except Exception:
@@ -2498,7 +2804,7 @@ class ProtocolParserApp:
                         it["payload"] = payload
                         break
             self._cmdlib_set_current_list(items)
-            self._cmdlib_refresh_list()
+            # self._cmdlib_refresh_list()
             top.destroy()
 
         bf = ttk.Frame(top)
@@ -2519,7 +2825,7 @@ class ProtocolParserApp:
                     seq = [s for s in getattr(self, attr) if s.get("id") != item.get("id")]
                     setattr(self, attr, seq)
                     self._cmdlib_save_list(fname, seq)
-                self._cmdlib_refresh_list()
+                # self._cmdlib_refresh_list()
                 top.destroy()
             ttk.Button(bf, text="删除", command=_del).pack(side="left", padx=6)
 
@@ -2786,10 +3092,11 @@ class ProtocolParserApp:
         act.grid(row=0, column=2, sticky="nsew")
         act.columnconfigure(0, weight=1)
         act.columnconfigure(1, weight=1)
+        act.columnconfigure(2, weight=1)   # 新增
         for r in range(3):
             act.rowconfigure(r, weight=1, uniform="sendact")
 
-        # 第 1 行：发送 | 清空输入
+        # 第 1 行：发送 | 清空输入 | 加回车换行
         self.send_once_btn = ttk.Button(
             act, text="发送", width=10, style="SendOutline.TButton",
             command=self._safe(self._on_send_once),
@@ -2800,7 +3107,13 @@ class ProtocolParserApp:
             act, text="清空输入", width=10, style="SendOutline.TButton",
             command=self._safe(self._on_clear_send),
         )
-        self.clear_send_btn.grid(row=0, column=1, sticky="nsew", pady=(0, 4))
+        self.clear_send_btn.grid(row=0, column=1, sticky="nsew", padx=(0, 4), pady=(0, 4))
+
+        self.crlf_btn = ttk.Button(
+            act, text="加回车换行", width=10, style="SendOutline.TButton",
+            command=self._safe(self._toggle_crlf_btn),
+        )
+        self.crlf_btn.grid(row=0, column=2, sticky="nsew", pady=(0, 4))
 
         # 第 2 行：自动追加校验位 | 算法
         self.crc_auto_btn = ttk.Button(
@@ -2839,6 +3152,7 @@ class ProtocolParserApp:
 
         self._sync_crc_auto_btn_style()
         self._sync_tx_cycle_btn_style()
+        self._sync_crlf_btn_style()
         self._on_send_mode_change()
         # 删掉 _redraw_send_btns（ttk.Button 不需要）
         def _redraw_send_btns():
@@ -3190,12 +3504,17 @@ class ProtocolParserApp:
                         elif len(cs_bytes) > cs_len:
                             cs_bytes = cs_bytes[-cs_len:]
                         payload = payload + cs_bytes
+                        if bool(self.tx_append_crlf_var.get()):
+                            payload = payload + b"\r\n"
                 self.collector.send(payload)
             else:  # raw_ascii
                 s = self._current_raw_text()
                 if not s:
                     messagebox.showwarning("提示", "请输入 ASCII 内容")
                     return
+                if bool(self.tx_append_crlf_var.get()):
+                    if not s.endswith("\r\n") and not s.endswith("\n"):
+                        s = s + "\r\n"
                 self.collector.send_raw(s, as_text=True)
             self._sync_inputs_to_vars()
         except Exception as e:
@@ -3213,6 +3532,20 @@ class ProtocolParserApp:
     def _toggle_crc_auto_btn(self) -> None:
         self.tx_auto_crc8_var.set(not bool(self.tx_auto_crc8_var.get()))
         self._sync_crc_auto_btn_style()
+
+    def _sync_crlf_btn_style(self) -> None:
+        on = bool(self.tx_append_crlf_var.get())
+        try:
+            self.crlf_btn.configure(
+                text="加回车换行",
+                style="SendSuccess.TButton" if on else "SendOutline.TButton",
+            )
+        except Exception:
+            pass
+
+    def _toggle_crlf_btn(self) -> None:
+        self.tx_append_crlf_var.set(not bool(self.tx_append_crlf_var.get()))
+        self._sync_crlf_btn_style()
 
     def _sync_tx_cycle_btn_style(self) -> None:
         on = bool(self.tx_cycle_var.get()) and getattr(self, "_tx_cycle_job", None) is not None
