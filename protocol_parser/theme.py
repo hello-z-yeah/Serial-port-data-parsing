@@ -34,19 +34,20 @@ PALETTE = {
 
 
 class ThemeManager:
-    """兼容原 ThemeManager 接口的轻量包装。"""
+    """兼容原 ThemeManager 接口的轻量包装。
+
+    注意：不再在 __init__ 里调用 setTheme，避免在 QApplication 创建前产生副作用。
+    主题设置统一在 main() 里、创建任何窗口之前完成。
+    """
 
     def __init__(self, mode: str = "light", style: str = "win11"):
         self.mode = "light"  # 强制 Light 工业风
         self.style = "win11"
-        self._apply()
 
     def get(self, name: str) -> str:
         return PALETTE.get(name, "#000000")
 
-    def _apply(self) -> None:
+    def apply(self) -> None:
+        """显式应用主题（需在 QApplication 已创建后调用）。"""
         setTheme(Theme.LIGHT)
         setThemeColor(PALETTE["primary"])
-
-    def apply(self) -> None:
-        self._apply()
