@@ -189,9 +189,6 @@ class UiBridge(QObject):
     status_signal = Signal(str)                   # status text
 
 
-# ---------- 主窗口 ----------
-
-
 # ---------- 指令库「配置循环发送」对话框 ----------
 
 class CycleConfigDialog(QDialog):
@@ -381,15 +378,17 @@ class ProtocolParserApp(FluentWindow):
     """主界面：FluentWindow + 业务逻辑原样保留。"""
 
     def __init__(self, monitor_port: str | None = None, monitor_baud: int = 9600):
+        # 必须在 QApplication 已创建后才能实例化任何 QWidget / FluentWindow
+        if QApplication.instance() is None:
+            raise RuntimeError("ProtocolParserApp 必须在 QApplication 创建之后再实例化")
+
         super().__init__()
         self.setWindowTitle(f"串口协议解析工具 v{VERSION}")
         self.resize(1400, 860)
         self.setMinimumSize(1100, 700)
 
-        # 主题
+        # 主题管理器（仅提供 PALETTE.get；真正 setTheme 已在 main() 里、创建窗口前完成）
         self.theme = ThemeManager(mode="light", style="win11")
-        setTheme(Theme.LIGHT)
-        setThemeColor(PALETTE["primary"])
 
         # 启动参数
         self._monitor_port = monitor_port
@@ -487,9 +486,9 @@ class ProtocolParserApp(FluentWindow):
 
         self._set_status("就绪")
 
-    # ================================================================ 
+    # ================================================================
     # UI 构建
-    # ================================================================ 
+    # ================================================================
 
     def _build_ui(self) -> None:
         # 中央内容区
@@ -824,9 +823,9 @@ class ProtocolParserApp(FluentWindow):
         layout.addWidget(self.stats_label)
         return bar
 
-    # ================================================================ 
+    # ================================================================
     # 安全包装 / 状态
-    # ================================================================ 
+    # ================================================================
 
     def _safe(self, fn: Callable):
         def wrapper(*args, **kwargs):
@@ -867,9 +866,9 @@ class ProtocolParserApp(FluentWindow):
             f"RX {self.rx_frame_count}  TX {self.tx_frame_count}  错误 {err}  缓冲 {partial}B"
         )
 
-    # ================================================================ 
+    # ================================================================
     # 协议加载（业务逻辑原样）
-    # ================================================================ 
+    # ================================================================
 
     def _load_protocols(self) -> None:
         products: list[tuple[str, str]] = []
@@ -958,9 +957,9 @@ class ProtocolParserApp(FluentWindow):
         lay.addWidget(te)
         dlg.exec()
 
-    # ================================================================ 
+    # ================================================================
     # 串口控制（业务逻辑原样，仅替换 UI 调用）
-    # ================================================================ 
+    # ================================================================
 
     def _refresh_ports(self, *, silent: bool = False) -> bool:
         ports = SerialCollector.list_ports()
@@ -1156,9 +1155,9 @@ class ProtocolParserApp(FluentWindow):
         self.btn_start.setText("● 开始监控")
         self._set_status("已停止")
 
-    # ================================================================ 
+    # ================================================================
     # UI 回调（主线程）
-    # ================================================================ 
+    # ================================================================
 
     @Slot(object, float)
     def _on_ui_frame(self, result: ParseResult, ts: float) -> None:
@@ -1279,9 +1278,9 @@ class ProtocolParserApp(FluentWindow):
         self.tx_frame_count = 0
         self._update_stats_bar()
 
-    # ================================================================ 
+    # ================================================================
     # 发送（业务逻辑原样）
-    # ================================================================ 
+    # ================================================================
 
     def _set_send_mode(self, mode: str) -> None:
         self.send_mode = mode
@@ -1374,9 +1373,9 @@ class ProtocolParserApp(FluentWindow):
         self._tx_cycle_timer.start(max(10, self.tx_interval_ms))
         self._set_status("循环发送已开始")
 
-    # ================================================================ 
+    # ================================================================
     # 原始数据保存（业务逻辑原样）
-    # ================================================================ 
+    # ================================================================
 
     def _toggle_save_raw(self) -> None:
         self.save_raw_enabled = not self.save_raw_enabled
@@ -1540,9 +1539,9 @@ class ProtocolParserApp(FluentWindow):
                 pass
             self.save_raw_file = None
 
-    # ================================================================ 
+    # ================================================================
     # 指令库（简化但接口兼容）
-    # ================================================================ 
+    # ================================================================
 
     def _cmdlib_path(self, name: str) -> Path:
         return user_data_path("cmdlib") / f"{name}.json"
@@ -1732,9 +1731,9 @@ class ProtocolParserApp(FluentWindow):
         self._cmdlib_cycle_timer.timeout.connect(self._cmdlib_cycle_tick)
         self._cmdlib_cycle_timer.start(delay)
 
-    # ================================================================ 
+    # ================================================================
     # 其他 UI 事件
-    # ================================================================ 
+    # ================================================================
 
     def _toggle_send_panel(self) -> None:
         vis = not self.send_card.isVisible()
@@ -1896,10 +1895,14 @@ def main():
         except Exception:
             monitor_baud = 9600
 
-    # 高 DPI
+    # ---------- 高 DPI（尽量在创建 QApplication 前设置） ----------
+    # 优先用环境变量（Qt6 推荐方式），避免 SetProcessDpiAwareness 的「拒绝访问」
     if sys.platform == "win32":
+        os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+        os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
         try:
             from ctypes import windll
+            # 尝试 PER_MONITOR_AWARE_V2，失败则静默忽略（常见于已设置过 DPI 的进程）
             try:
                 windll.shcore.SetProcessDpiAwareness(2)
             except Exception:
@@ -1911,8 +1914,15 @@ def main():
             pass
 
     try:
+        # 1. 必须先创建 QApplication，再创建任何 QWidget / FluentWindow
         app = QApplication(sys.argv)
         app.setStyle("Fusion")
+
+        # 2. 主题必须在创建窗口之前设置（qfluentwidgets 官方推荐顺序）
+        setTheme(Theme.LIGHT)
+        setThemeColor(PALETTE["primary"])
+
+        # 3. 再创建主窗口
         window = ProtocolParserApp(monitor_port=monitor_port, monitor_baud=monitor_baud)
         window.show()
         return app.exec()
