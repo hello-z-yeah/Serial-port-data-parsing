@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     FluentWindow, setTheme, Theme, setThemeColor,
-    PrimaryPushButton, PushButton, LineEdit, ComboBox,
+    PrimaryPushButton, PushButton, LineEdit, ComboBox, EditableComboBox,
     CardWidget, BodyLabel, StrongBodyLabel, CaptionLabel,
     TextEdit, CheckBox, SpinBox, TableWidget, TreeWidget,
     SwitchButton, FluentIcon, InfoBar, InfoBarPosition,
@@ -600,8 +600,7 @@ class ProtocolParserApp(FluentWindow):
         row1.addWidget(self.btn_refresh_ports)
 
         row1.addWidget(BodyLabel("波特率："))
-        self.baud_combo = ComboBox()
-        self.baud_combo.setEditable(True)
+        self.baud_combo = EditableComboBox()
         self.baud_combo.addItems([
             "9600", "19200", "38400", "57600", "115200", "230400",
             "460800", "921600", "1000000", "1500000", "2000000",
@@ -1796,8 +1795,7 @@ class ProtocolParserApp(FluentWindow):
                 display_list.append(p["device"])
         port_combo.addItems(display_list)
         lay.addRow("串口:", port_combo)
-        baud_combo = ComboBox()
-        baud_combo.setEditable(True)
+        baud_combo = EditableComboBox()
         baud_combo.addItems(["9600", "115200", "921600", "1000000"])
         baud_combo.setCurrentText("9600")
         lay.addRow("波特率:", baud_combo)
