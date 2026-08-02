@@ -191,6 +191,7 @@ class AttributeEditorDialog(QDialog):
 
         for row, key in enumerate(keys):
             attr = self._attr_state[key]
+            # 选中
             chk = CheckBox()
             chk.setChecked(bool(attr.get("selected", True)))
             chk.stateChanged.connect(lambda state, k=key: self._on_check_changed(k, state))
@@ -201,6 +202,7 @@ class AttributeEditorDialog(QDialog):
             lay.addStretch()
             self.table.setCellWidget(row, COL_SELECTED, cell)
 
+            # attrID（只读）
             item_id = QTableWidgetItem(key)
             item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
             item_id.setData(Qt.UserRole, key)
@@ -247,27 +249,32 @@ class AttributeEditorDialog(QDialog):
         elif col == COL_CN_NAME:
             attr["cn_name"] = text
         elif col == COL_TYPEID:
+            # 尝试从显示文本解析 typeid
             for tn, tv in TYPEID_OPTIONS:
-                if text and tn.startswith(text.split()[0]):
+                if tn.startswith(text.split()[0]) if text else False:
                     attr["typeid"] = tv
                     break
             else:
+                # 尝试直接解析数字
                 try:
                     if text.lower().startswith("0x"):
                         attr["typeid"] = int(text, 16)
                     else:
+                        # "BOOL 0x00" 形式
                         for part in text.replace("(", " ").replace(")", " ").split():
                             if part.lower().startswith("0x") or part.isdigit():
                                 attr["typeid"] = int(part, 0)
                                 break
                 except Exception:
                     pass
+            # 刷新显示为标准格式
             self.table.blockSignals(True)
             item.setText(self._format_typeid(attr.get("typeid")))
             self.table.blockSignals(False)
         elif col == COL_ACCESS:
             attr["access"] = text
         elif col == COL_RANGE:
+            # 简单：整段作为 range，不拆 unit
             attr["range"] = text
         elif col == COL_ENUM:
             attr["enum"] = self._parse_enum_text(text)
@@ -285,6 +292,7 @@ class AttributeEditorDialog(QDialog):
     def _delete_selected(self) -> None:
         rows = set(idx.row() for idx in self.table.selectedIndexes())
         if not rows:
+            # 也支持删除未勾选的
             to_del = [k for k, a in self._attr_state.items() if not a.get("selected", True)]
         else:
             to_del = []
@@ -375,6 +383,7 @@ class AttributeEditorDialog(QDialog):
         self._refresh_table()
 
     def _on_save(self) -> None:
+        # 重建 attributes（只保留 selected=True 的）——与原版逻辑一致
         new_attributes: dict = {}
         for key, attr in self._attr_state.items():
             if not attr.get("selected", True):
