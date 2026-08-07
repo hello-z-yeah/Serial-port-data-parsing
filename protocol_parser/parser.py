@@ -332,9 +332,12 @@ def merge_protocol(base: dict, override: dict) -> dict:
       只用 override 的 name/description 覆盖
     - attributes：以 attrid 为键合并，override 覆盖/补充 base
     - enums：递归合并，override 覆盖 base
+
+    入参均 deepcopy，保证调用方传入的 base/override 不被原地污染。
     """
     import copy
     result = copy.deepcopy(base)
+    override = copy.deepcopy(override)
 
     # 基本元信息
     for key in ("product", "description", "version", "_imported_from"):

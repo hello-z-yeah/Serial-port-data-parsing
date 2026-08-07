@@ -323,7 +323,8 @@ class AutoReplyEngine:
 
             try:
                 normalized = self._ac.validate_attr_value(internal_id, raw_value)
-            except (ValueError, TypeError) as exc:
+            except Exception as exc:
+                # 归一化自定义校验异常，避免泄漏到上层导致半写
                 invalid.append(str(exc))
                 continue
 
@@ -355,7 +356,8 @@ class AutoReplyEngine:
         try:
             for attrid in writable_order:
                 self._ac.validate_attr_value(attrid, validated_values[attrid])
-        except (ValueError, TypeError) as exc:
+        except Exception as exc:
+            # 与一次校验一致：任何异常都归一化为空回复，防止半写
             self._warn(f"命令下发二次校验失败，整帧未执行且未回复成功消息 ID：{exc}")
             return []
 
@@ -384,12 +386,19 @@ class AutoReplyEngine:
                 )
             return replies
         except Exception as exc:
+            rollback_errors: list[str] = []
             for attrid, old in old_values.items():
                 try:
                     self._ac.set_attr_value(attrid, old)
-                except Exception:
-                    pass
+                except Exception as rb_exc:
+                    rollback_errors.append(f"0x{attrid:02X}:{rb_exc}")
             self._last_applied_attrids = []
+            if rollback_errors:
+                detail = "; ".join(rollback_errors)
+                self._warn(f"命令下发写入/组包失败且回滚部分失败（状态可能脏）：{exc} | {detail}")
+                raise RuntimeError(
+                    f"属性回滚失败，状态可能不一致：{detail}"
+                ) from exc
             self._warn(f"命令下发写入/组包失败，已回滚属性状态：{exc}")
             return []
 

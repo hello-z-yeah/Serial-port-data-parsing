@@ -1169,8 +1169,12 @@ class ProtocolParserApp(FluentWindow):
         self.bridge.tx_signal.connect(self._on_ui_tx)
         self.bridge.attr_updated_signal.connect(self._on_attr_updated)
         self.bridge.mcu_data_signal.connect(self._on_mcu_data)
-        self.bridge.storage_error_signal.connect(self._on_storage_error)
-        self.bridge.storage_drop_signal.connect(self._on_storage_drop)
+        self.bridge.storage_error_signal.connect(
+            self._on_storage_error, Qt.ConnectionType.QueuedConnection
+        )
+        self.bridge.storage_drop_signal.connect(
+            self._on_storage_drop, Qt.ConnectionType.QueuedConnection
+        )
         self.bridge.collector_stopped_signal.connect(self._on_collector_stopped)
 
         # 显示缓冲在 UI 构建前准备好。每个元素为 (文本, 颜色)。

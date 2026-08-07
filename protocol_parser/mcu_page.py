@@ -1666,6 +1666,12 @@ QTableView#AttributeTable::item:selected {{
 
         self.attr_table.setUpdatesEnabled(False)
         try:
+            # 重建前断开旧行控件信号并清空映射，避免产品切换后残留引用。
+            for check in list(self._attr_select_checks.values()):
+                try:
+                    check.stateChanged.disconnect(self._on_row_select_changed)
+                except (RuntimeError, TypeError):
+                    pass
             self.attr_table.clearContents()
             self.attr_table.setRowCount(len(entries))
             self._attr_row_by_id.clear()

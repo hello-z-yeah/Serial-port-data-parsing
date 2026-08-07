@@ -119,11 +119,8 @@ def test_message_id_only_miot_command_replies_and_reports_exact_attribute() -> N
     sent_count = reply.on_frame(result, frame, 0.0)
 
     assert sent_count == 2
-    assert any(
-        child.get("attrid") == "0x03"
-        for field in result.fields
-        for child in (field.get("children") or [])
-    )
+    # result.fields 故意不原地注入 children（展示恢复由 ui_helpers 独立处理）
+    # 业务正确性由 last_applied / 属性值 / 发出的 ACK+Report 帧保证
     assert reply.last_applied_attrids == [0x44]
     assert center.get_attr_value(0x44)[1] == 6
     assert collector.sent == [

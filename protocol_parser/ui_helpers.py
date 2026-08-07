@@ -1,10 +1,14 @@
 """Shared UI formatting helpers for the two-page serial tool."""
 from __future__ import annotations
+import logging
+
 from .exceptions import AttributeValidationError
 
 import json
 from datetime import datetime
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 
 def _typeid_name(typeid: int) -> str:
@@ -165,6 +169,7 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
             try:
                 internal_id = resolver(wire_id)
             except Exception:
+                _log.debug("resolve_wire_attrid failed for wire_id=%s", wire_id, exc_info=True)
                 internal_id = None
         if internal_id is None:
             internal_id = wire_id
@@ -175,6 +180,7 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
         try:
             entry = getter(internal_id)
         except Exception:
+            _log.debug("get_entry failed for internal_id=%s", internal_id, exc_info=True)
             entry = None
         if entry is None:
             continue

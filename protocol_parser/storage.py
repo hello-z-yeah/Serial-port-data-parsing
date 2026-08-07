@@ -17,7 +17,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+import logging
+
 from .exceptions import StorageOperationError
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -169,7 +173,7 @@ class RawDataWriter:
                 try:
                     self.on_drop(dropped)
                 except Exception:
-                    pass
+                    _log.exception("on_drop callback raised")
             return False
 
     def stop(self, *, drain: bool = True, timeout: float = 5.0) -> RawWriterStats:
@@ -207,12 +211,23 @@ class RawDataWriter:
         return self.stats()
 
     def _drain_queue_without_callbacks(self) -> None:
+        discarded = 0
         while True:
             try:
-                self._queue.get_nowait()
+                item = self._queue.get_nowait()
                 self._queue.task_done()
+                # _STOP 哨兵不计入丢弃
+                if item is not _STOP:
+                    discarded += 1
             except queue.Empty:
-                return
+                break
+        if discarded:
+            with self._state_lock:
+                self._dropped_records += discarded
+            _log.info(
+                "stop(drain=False) discarded %d queued records (counted into dropped_records)",
+                discarded,
+            )
 
     def _file_path(self, index: int) -> Path:
         suffix = "" if index == 0 else f"_{index:03d}"
@@ -296,7 +311,7 @@ class RawDataWriter:
             try:
                 self.on_error(message)
             except Exception:
-                pass
+                _log.exception("on_error callback raised")
 
     def _run(self) -> None:
         pending = bytearray()
