@@ -36,10 +36,16 @@ def test_leading_zero_pid_encodes_into_0x21_as_decimal_123() -> None:
 def test_hex_input_strict_whitelist_keeps_valid_inputs() -> None:
     assert parse_hex_input("A5 5A 03 20") == bytes.fromhex("A5 5A 03 20")
     assert parse_hex_input("0xA5,0x5A") == bytes.fromhex("A5 5A")
+    assert parse_hex_input("A55A") == bytes.fromhex("A55A")
+    assert parse_hex_input("0XA5 0xa5") == bytes.fromhex("A5A5")
     with pytest.raises(HexParseError):
         parse_hex_input("0xZZ11")
     with pytest.raises(HexParseError):
         parse_hex_input("A5G5")
+    # 畸形 token / 孤立 x / 夹心 0x 必须拒绝，防止静默清洗
+    for bad in ("A5x5A", "0xA5X5A", "0xAA0xBB", "xA5", "A5 x 5A", "A5,x,5A"):
+        with pytest.raises(HexParseError, match="非法|empty|空"):
+            parse_hex_input(bad)
 
 
 class _FakeAttrCenter:
@@ -92,8 +98,9 @@ def test_auto_reply_second_preflight_prevents_partial_write_and_ack() -> None:
     engine = AutoReplyEngine(None, cmd, ac)
     result = SimpleNamespace(fields=[{"name": "msg_id", "value": 7}])
     frame = SimpleNamespace(data=b"")
-    with pytest.raises(ValueError, match="second preflight rejected"):
-        engine._reply_cmd_dispatch(result, frame)
+    # 二次预检失败归一化为空回复：不写属性、不发 ACK，也不向外抛校验异常
+    replies = engine._reply_cmd_dispatch(result, frame)
+    assert replies == []
     assert ac.writes == []
     assert cmd.ack_count == 0
     assert ac.validate_calls == {1: 2, 2: 2}
@@ -103,7 +110,12 @@ def test_raw_writer_callbacks_are_bridged_through_qt_signals() -> None:
     gui = (ROOT / "protocol_parser" / "gui.py").read_text(encoding="utf-8")
     assert "storage_error_signal = Signal(str)" in gui
     assert "storage_drop_signal = Signal(int)" in gui
-    assert "self.bridge.storage_error_signal.connect(self._on_storage_error)" in gui
-    assert "self.bridge.storage_drop_signal.connect(self._on_storage_drop)" in gui
+    assert "self._on_storage_error" in gui and "storage_error_signal.connect" in gui
+    assert "self._on_storage_drop" in gui and "storage_drop_signal.connect" in gui
+    # QueuedConnection is applied by scripts/apply_buildfix34_large_files.py
+    assert (
+        "Qt.ConnectionType.QueuedConnection" in gui
+        or "self.bridge.storage_error_signal.connect(self._on_storage_error)" in gui
+    )
     assert "on_error=lambda message: self.bridge.storage_error_signal.emit(message)" in gui
     assert "on_drop=lambda count: self.bridge.storage_drop_signal.emit(count)" in gui
