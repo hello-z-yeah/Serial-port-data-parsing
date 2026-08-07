@@ -25,7 +25,10 @@ def _pid_to_uint32(pid: object) -> int:
     if not text:
         return 0
     try:
-        value = int(text, 0)
+        if text.lower().startswith("0x"):
+            value = int(text, 16)
+        else:
+            value = int(text, 10)  # 强制十进制，避免 "00123" 被 base=0 当成八进制失败
     except ValueError as exc:
         raise ProtocolConfigError(
             f"产品 PID 必须是十进制或 0x 前缀整数，实际为 {text!r}"
