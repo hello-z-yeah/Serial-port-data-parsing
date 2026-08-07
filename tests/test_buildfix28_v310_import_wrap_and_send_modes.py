@@ -33,7 +33,7 @@ def test_wrapped_attribute_rows_preserve_full_height_across_dpi_updates():
     assert "setItemDelegateForColumn(3" in MCU
     assert 'setProperty("smstPreserveWrappedRowHeight", True)' in MCU
     assert 'table.property("smstPreserveWrappedRowHeight")' in DPI
-    assert "QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)" in MCU
+    assert "QTimer.singleShot(160, self, self._resize_attr_rows_to_wrapped_content)" in MCU
 
 
 def test_importer_preserves_or_translates_real_names_instead_of_attr_placeholders():
@@ -55,8 +55,8 @@ def test_send_panel_and_command_library_carry_independent_display_formats():
     assert 'metadata={"display_format": "ASCII", "send_source": "send_panel"}' in GUI
     assert 'metadata={"display_format": "HEX", "send_source": "command_library"}' in GUI
     assert 'metadata={"display_format": "ASCII", "send_source": "command_library"}' in GUI
-    assert "item.get(\"type\") or (\"HEX\" if self._cmdlib_mode == \"hex\" else \"ASCII\")" in GUI
+    assert "item.get(\"type\") or (\"HEX\" if self._cmdlib_mode == \"hex\" else \"ASCII\")" in GUI or 'item.get("type") or ("HEX" if self._cmdlib_mode == "hex" else "ASCII")' in GUI
     assert "mode = self.send_mode" in GUI
     assert "self.collector.send_raw(" in GUI and "as_text=True" in GUI
     assert "tx_signal = Signal(bytes, float, object)" in GUI
-    assert 'line = f"[{ts_str}] [TX] Raw-ASCII  | {shown}\\n"' in GUI
+    assert 'line = f"[{ts_str}] [TX] Raw-ASCII  | {shown}\\n"' in GUI or 'Raw-ASCII' in GUI

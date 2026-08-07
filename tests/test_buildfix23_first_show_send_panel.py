@@ -48,10 +48,10 @@ def test_send_panel_is_editor_above_compact_actions():
 def test_mcu_page_delays_first_show_relayout_and_guards_invalid_geometry():
     source = MCU.read_text(encoding="utf-8")
     assert "def _relayout_all_mcu" in source
-    assert "QTimer.singleShot(0, self._relayout_all_mcu)" in source
-    assert "QTimer.singleShot(100, self._relayout_all_mcu)" in source
+    assert "QTimer.singleShot(0, self, self._relayout_all_mcu)" in source
+    assert "QTimer.singleShot(100, self, self._relayout_all_mcu)" in source
     assert "if splitter.contentsRect().width() <= 1:" in source
-    assert "QTimer.singleShot(50, self._rebalance_lower_panels)" in source
-    assert source.count("QTimer.singleShot(0, self._relayout_data_bar)") >= 1
+    assert "QTimer.singleShot(50, self, self._rebalance_lower_panels)" in source
+    assert source.count("QTimer.singleShot(0, self, self._relayout_data_bar)") >= 1
     assert source.count("width = self._preset_ideal_width()") >= 2
     assert "width = self._attr_ideal_width()" in source
