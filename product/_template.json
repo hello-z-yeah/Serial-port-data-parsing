@@ -1,0 +1,57 @@
+{
+  "product": "my_product",
+  "description": "我的产品功能协议（示例模板）",
+  "version": "1.0",
+  "system": true,
+  "protocol_version": "1",
+
+  "frame": {
+    "header": "0xA5A5",
+    "header_size": 2,
+    "ver": "0x03",
+    "ver_offset": 2,
+    "ver_size": 1,
+    "cmd_offset": 3,
+    "length_offset": 4,
+    "length_size": 2,
+    "length_byte_order": "big",
+    "checksum": {
+      "algorithm": "sum",
+      "length": 1,
+      "covers": "from_start_to_checksum_exclusive"
+    }
+  },
+
+  "enums": {
+    "errcode": {
+      "0": "OK",
+      "1": "ERROR"
+    }
+  },
+
+  "commands": [
+    {
+      "cmd_code": "0x01",
+      "name": "查询状态",
+      "description": "查询设备当前状态",
+      "request":  {"format": "raw", "name": "查询请求"},
+      "response": {"format": "attr_list", "name": "返回状态"}
+    }
+  ],
+
+  "attributes": {
+    "0x01": {
+      "name": "开关 on-off",
+      "typeid": 0,
+      "access": "读写",
+      "enum": {"0": "关", "1": "开"}
+    },
+    "0x02": {
+      "name": "亮度 brightness",
+      "typeid": 4,
+      "access": "读写",
+      "unit": "%",
+      "range": "0~100"
+    }
+  }
+}

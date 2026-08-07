@@ -1,0 +1,231 @@
+{
+  "product": "v3_serial",
+  "description": "串口接入标准协议V3.0（通用帧结构 + 21 条命令；属性表为空，由产品协议定义）",
+  "version": "3.0",
+  "system": true,
+  "protocol_version": "20260719",
+  "frame": {
+    "header": "0xA5A5",
+    "header_size": 2,
+    "ver": "0x03",
+    "ver_offset": 2,
+    "ver_size": 1,
+    "cmd_offset": 3,
+    "length_offset": 4,
+    "length_size": 2,
+    "length_byte_order": "big",
+    "checksum": {
+      "algorithm": "sum",
+      "length": 1,
+      "covers": "from_start_to_checksum_exclusive"
+    }
+  },
+  "enums": {
+    "errcode": {
+      "0": "OK",
+      "1": "ERROR",
+      "2": "操作不允许",
+      "3": "I/O错误",
+      "4": "没有对应的设备或地址",
+      "5": "内存不足",
+      "6": "设备忙",
+      "7": "无效参数",
+      "8": "该项功能未实现",
+      "9": "超时",
+      "10": "通信异常",
+      "11": "校验错误",
+      "12": "电量不足"
+    },
+    "module_status": {
+      "0": "设备连接到云平台成功",
+      "1": "模组配置成功正在连接路由器或者未连上路由器",
+      "2": "成功连接路由器正在连接云平台或者未连上云平台",
+      "3": "正在配网",
+      "4": "配网失败或者未配网",
+      "5": "进入低功耗休眠状态",
+      "6": "进入模组升级状态"
+    },
+    "heartbeat_resp": {
+      "0": "MCU重启后第一次心跳返回值",
+      "1": "正常心跳",
+      "2": "MCU端正在升级中"
+    },
+    "net_config_type": {
+      "1": "默认配网",
+      "2": "一键配网",
+      "3": "AP配网",
+      "4": "零配",
+      "5": "蓝牙配网",
+      "6": "遥控器配对",
+      "7": "蓝牙配网确认"
+    },
+    "ota_sign_type": {
+      "1": "MD5验签",
+      "2": "SHA1验签",
+      "3": "CRC32验签"
+    },
+    "product_test_status": {
+      "0": "产测成功并退出产测",
+      "1": "产测开始",
+      "2": "产测结果失败并退出产测"
+    },
+    "product_test_cmd": {
+      "1": "进入整机产测",
+      "2": "退出整机产测（强制退出）",
+      "3": "进入模组产测"
+    },
+    "mcu_status": {
+      "1": "进入低功耗休眠状态"
+    }
+  },
+  "commands": [
+    {
+      "cmd_code": "0x20",
+      "name": "心跳检测",
+      "description": "模组检测MCU是否存在或是否重启复位，10s发送一次",
+      "request":  {"format": "module_status", "name": "模组→MCU"},
+      "response": {"format": "heartbeat_resp", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x21",
+      "name": "查询设备信息",
+      "description": "模组查询设备信息，包含版本号、PID、Model、属性列表",
+      "request":  {"format": "raw", "name": "模组→MCU"},
+      "response": {"format": "dev_info", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x23",
+      "name": "设备配网",
+      "description": "MCU发送配网命令，重置设备进入配网模式",
+      "request":  {"format": "net_config", "name": "MCU→模组"},
+      "response": {"format": "raw", "name": "模组→MCU"}
+    },
+    {
+      "cmd_code": "0x22",
+      "name": "报告模组工作状态",
+      "description": "模组主动检测自身状态变化，将变化后的状态值及时告知MCU",
+      "request":  {"format": "module_status", "name": "模组→MCU"},
+      "response": {"format": "raw", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x01",
+      "name": "命令下发",
+      "description": "模组下发控制命令（消息id + 属性单元）",
+      "request":  {"format": "msg_id_then_attr", "name": "模组→MCU"},
+      "response": {"format": "msg_id", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x10",
+      "name": "状态上报",
+      "description": "MCU主动检测到自身属性值发生变化，及时上报变化值",
+      "request":  {"format": "attr_list", "name": "MCU→模组"},
+      "response": {"format": "raw", "name": "模组→MCU"}
+    },
+    {
+      "cmd_code": "0x24",
+      "name": "获取设备快照",
+      "description": "获取设备本身所有属性值",
+      "request":  {"format": "raw", "name": "模组→MCU"},
+      "response": {"format": "attr_list", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x03",
+      "name": "获取设备属性值",
+      "description": "模组查询指定属性",
+      "request":  {"format": "msg_id_then_attr_unit", "name": "模组→MCU"},
+      "response": {"format": "msg_id_then_attr", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x50",
+      "name": "获取模组信息",
+      "description": "测试工具获取模组信息",
+      "request":  {"format": "attr_unit", "name": "MCU→模组"},
+      "response": {"format": "errcode_then_attr", "name": "模组→MCU"}
+    },
+    {
+      "cmd_code": "0x51",
+      "name": "设置模组信息",
+      "description": "测试工具设置模组信息",
+      "request":  {"format": "attr_list", "name": "MCU→模组"},
+      "response": {"format": "errcode", "name": "模组→MCU"}
+    },
+    {
+      "cmd_code": "0x11",
+      "name": "设备上报事件",
+      "description": "MCU上报事件",
+      "request":  {"format": "event", "name": "MCU→模组"},
+      "response": {"format": "raw", "name": "模组→MCU"}
+    },
+    {
+      "cmd_code": "0x12",
+      "name": "模组下发行为",
+      "description": "模组下发行为",
+      "request":  {"format": "msg_id_then_action", "name": "模组→MCU"},
+      "response": {"format": "msg_id_then_action", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x25",
+      "name": "报告MCU工作状态",
+      "description": "MCU通知模组进入低功耗",
+      "request":  {"format": "mcu_status", "name": "MCU→模组"},
+      "response": {"format": "raw", "name": "模组→MCU"}
+    },
+    {
+      "cmd_code": "0x26",
+      "name": "获取时间",
+      "description": "MCU获取时间",
+      "request":  {"format": "get_time", "name": "MCU→模组"},
+      "response": {"format": "get_time_resp", "name": "模组→MCU"}
+    },
+    {
+      "cmd_code": "0x02",
+      "name": "服务设置",
+      "description": "MCU打开模组某项服务",
+      "request":  {"format": "service_set", "name": "MCU→模组"},
+      "response": {"format": "errcode", "name": "模组→MCU"}
+    },
+    {
+      "cmd_code": "0x60",
+      "name": "产测状态通知",
+      "description": "模组发送产测状态",
+      "request":  {"format": "product_test", "name": "模组→MCU"},
+      "response": {"format": "raw", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x61",
+      "name": "设置产测模式",
+      "description": "MCU设置产测模式",
+      "request":  {"format": "product_set", "name": "MCU→模组"},
+      "response": {"format": "raw", "name": "模组→MCU"}
+    },
+    {
+      "cmd_code": "0x30",
+      "name": "OTA升级启动",
+      "description": "模组通知MCU开始升级",
+      "request":  {"format": "ota_start", "name": "模组→MCU"},
+      "response": {"format": "errcode", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x31",
+      "name": "OTA升级包传输",
+      "description": "模组下发固件数据",
+      "request":  {"format": "partition_pkg", "name": "模组→MCU"},
+      "response": {"format": "errcode_then_partition", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x32",
+      "name": "查询固件数据校验",
+      "description": "模组查询固件数据CRC",
+      "request":  {"format": "raw", "name": "模组→MCU"},
+      "response": {"format": "ota_crc", "name": "MCU→模组"}
+    },
+    {
+      "cmd_code": "0x33",
+      "name": "固件验签",
+      "description": "模组开始固件验签",
+      "request":  {"format": "ota_verify", "name": "模组→MCU"},
+      "response": {"format": "errcode", "name": "MCU→模组"}
+    }
+  ],
+  "attributes": {}
+}
