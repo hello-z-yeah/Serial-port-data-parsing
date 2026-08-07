@@ -1,0 +1,91 @@
+diff --git a/protocol_parser/attr_center.py b/protocol_parser/attr_center.py
+index 49b2b8f..72a24d5 100644
+--- a/protocol_parser/attr_center.py
++++ b/protocol_parser/attr_center.py
+@@ -208,6 +208,7 @@ class AttrStateCenter:
+         self._wire_to_internal: dict[int, int] = {}
+         self._lock = RLock()
+         self._heartbeat_count = 0
++        self._generation = 0
+         self.load_warnings: list[str] = []
+ 
+     def load_product(self, cfg: dict) -> None:
+@@ -349,6 +350,9 @@ class AttrStateCenter:
+                 self.cfg = target_cfg
+                 self.load_warnings = warnings
+                 self._heartbeat_count = 0
++                # 产品/协议切换代数：任何异步回调必须携带捕获时的 generation，
++                # 若小于当前值则视为过期帧，丢弃写入，防止旧协议 ID 污染新状态。
++                self._generation += 1
+ 
+             except Exception:
+                 (
+@@ -716,13 +720,19 @@ class AttrStateCenter:
+                 unknown.append(wire_id)
+         return unknown
+ 
+-    def update_from_frame(self, result) -> list[int]:
+-        """从 ParseResult 更新属性，返回发生变化的 attrid。"""
++    def update_from_frame(self, result, *, expected_generation: int | None = None) -> list[int]:
++        """从 ParseResult 更新属性，返回发生变化的 attrid。
++
++        expected_generation: 若由异步回调传入，且小于当前 generation，则整帧丢弃，
++        防止跨产品切换时的幽灵回调把旧协议 Attribute ID 写入新状态中心。
++        """
+         if self._cmd_int(result) not in (0x10, 0x01, 0x24, 0x03):
+             return []
+         changed: list[int] = []
+         cmd_int = self._cmd_int(result)
+         with self._lock:
++            if expected_generation is not None and expected_generation != self._generation:
++                return []
+             for _, internal_id, raw_value in self._frame_attr_records(result):
+                 entry = self._attrs.get(internal_id) if internal_id is not None else None
+                 if entry is None:
+@@ -775,22 +785,34 @@ class AttrStateCenter:
+                 return int(attrid), 0, 2
+             return entry.attrid, copy.deepcopy(entry.current_value), entry.typeid
+ 
+-    def set_attr_value(self, attrid: int, value: Any) -> None:
++    def set_attr_value(self, attrid: int, value: Any, *, expected_generation: int | None = None) -> None:
+         with self._lock:
++            if expected_generation is not None and expected_generation != self._generation:
++                return
+             entry = self._attrs.get(int(attrid))
+             if entry is not None:
+                 entry.current_value = self.validate_attr_value(attrid, value)
+ 
+-    def apply_values_atomic(self, values: dict[int, Any]) -> dict[int, Any]:
++    def apply_values_atomic(
++        self,
++        values: dict[int, Any],
++        *,
++        expected_generation: int | None = None,
++    ) -> dict[int, Any]:
+         """在同一把锁下校验并写入多个属性，保证无中间态可见。
+ 
+         返回被修改属性的旧值快照，供调用方在后续失败时调用
+         :meth:`restore_values` 完整回滚。任一属性校验失败时，**不会**
+         修改任何属性，异常直接抛出。
++
++        expected_generation: 异步路径传入；若与当前 generation 不一致则丢弃整批写入，
++        返回空快照（调用方应视为未提交）。
+         """
+         if not values:
+             return {}
+         with self._lock:
++            if expected_generation is not None and expected_generation != self._generation:
++                return {}
+             normalized: dict[int, Any] = {}
+             for attrid, value in values.items():
+                 aid = int(attrid)
+@@ -896,3 +918,10 @@ class AttrStateCenter:
+     def heartbeat_count(self, value: int) -> None:
+         with self._lock:
+             self._heartbeat_count = max(0, int(value))
++
++    @property
++    def generation(self) -> int:
++        """Monotonic product/protocol generation. Bumped on every successful load_product."""
++        with self._lock:
++            return self._generation
