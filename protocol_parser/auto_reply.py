@@ -3,10 +3,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
+import threading
 from types import SimpleNamespace
 from typing import Callable, Any
 
+from .exceptions import AttributeValidationError, ValidationError
 from .parser import parse_attr_payload_fields
+
+_log = logging.getLogger(__name__)
+
+# 协议/产品校验类异常：应归一化为“拒绝本帧”，不应当作引擎崩溃。
+_VALIDATION_ERRORS = (AttributeValidationError, ValidationError, ValueError, TypeError)
 
 
 @dataclass
@@ -36,31 +44,38 @@ class AutoReplyEngine:
         self._rules: dict[int, ReplyRule] = {}
         self._low_power_active = False
         self._last_applied_attrids: list[int] = []
+        # 保护 enable/rules/role/low_power 等跨线程共享状态；
+        # on_frame 在串口线程，enable/set_role 在 GUI 线程。
+        self._lock = threading.RLock()
         self._register_mcu_rules()
 
     def set_collector(self, collector) -> None:
-        if collector is not self._collector:
-            self.reset_state()
-        self._collector = collector
+        with self._lock:
+            if collector is not self._collector:
+                self.reset_state()
+            self._collector = collector
 
     def set_before_send(self, callback: Callable[[int, str], None] | None) -> None:
-        self._on_before_send = callback
+        with self._lock:
+            self._on_before_send = callback
 
     def set_role(self, role: str) -> None:
-        self.reset_state()
-        self._role = "module" if str(role).lower() == "module" else "mcu"
-        if self._role == "mcu":
-            self._register_mcu_rules(preserve_enabled=True)
-        else:
-            self._rules = {}
+        with self._lock:
+            self.reset_state()
+            self._role = "module" if str(role).lower() == "module" else "mcu"
+            if self._role == "mcu":
+                self._register_mcu_rules(preserve_enabled=True)
+            else:
+                self._rules = {}
 
     def enable(self, enable: bool, *, enable_all_rules: bool = False) -> None:
-        new_value = bool(enable)
-        if new_value != self._enabled:
-            self.reset_state()
-        self._enabled = new_value
-        if self._enabled and enable_all_rules:
-            self.enable_all_rules()
+        with self._lock:
+            new_value = bool(enable)
+            if new_value != self._enabled:
+                self.reset_state()
+            self._enabled = new_value
+            if self._enabled and enable_all_rules:
+                self.enable_all_rules()
 
     def enable_all_rules(self) -> None:
         """Enable every registered MCU reply rule.
@@ -70,46 +85,56 @@ class AutoReplyEngine:
         global enable and make only part of the protocol stop responding.
         Users may still disable individual rows afterwards.
         """
-        for rule in self._rules.values():
-            rule.enabled = True
+        with self._lock:
+            for rule in self._rules.values():
+                rule.enabled = True
 
     @property
     def enabled(self) -> bool:
-        return self._enabled
+        with self._lock:
+            return self._enabled
 
     @property
     def role(self) -> str:
-        return self._role
+        with self._lock:
+            return self._role
 
     @property
     def rules(self) -> dict[int, ReplyRule]:
-        return self._rules
+        with self._lock:
+            return dict(self._rules)
 
     @property
     def low_power_active(self) -> bool:
-        return self._low_power_active
+        with self._lock:
+            return self._low_power_active
 
     @property
     def last_applied_attrids(self) -> list[int]:
         """Internal attribute IDs changed by the most recent handled command."""
-        return list(self._last_applied_attrids)
+        with self._lock:
+            return list(self._last_applied_attrids)
 
     def wake(self) -> bytes:
         """IO 唤醒：重置心跳计数器，返回首次心跳回复(0x00)"""
-        self._ac.reset_heartbeat_counter()
-        self._low_power_active = False
-        return self._cmd.build_heartbeat_reset()
+        with self._lock:
+            self._ac.reset_heartbeat_counter()
+            self._low_power_active = False
+            return self._cmd.build_heartbeat_reset()
 
     def reset_state(self) -> None:
         """Reset connection/product scoped automatic-reply state."""
-        self._low_power_active = False
-        self._last_applied_attrids = []
-        self._ac.reset_heartbeat_counter()
+        # 允许在已持有 self._lock 时调用（RLock 可重入）
+        with self._lock:
+            self._low_power_active = False
+            self._last_applied_attrids = []
+            self._ac.reset_heartbeat_counter()
 
     def set_rule_enabled(self, cmd_code: int, enabled: bool) -> None:
-        rule = self._rules.get(int(cmd_code) & 0xFF)
-        if rule is not None:
-            rule.enabled = bool(enabled)
+        with self._lock:
+            rule = self._rules.get(int(cmd_code) & 0xFF)
+            if rule is not None:
+                rule.enabled = bool(enabled)
 
     def _register_mcu_rules(self, preserve_enabled: bool = False) -> None:
         old = {code: rule.enabled for code, rule in self._rules.items()} if preserve_enabled else {}
@@ -156,31 +181,44 @@ class AutoReplyEngine:
             try:
                 self._on_error(message)
             except Exception:
-                pass
+                _log.exception("auto_reply on_error callback raised")
 
     def on_frame(self, result, frame, ts: float) -> int:
         del ts
-        self._last_applied_attrids = []
-        if not self._enabled or self._role != "mcu" or self._collector is None:
-            return 0
-        cmd_int = self._cmd_int(result)
-        # 低功耗模式下跳过心跳回复（协议要求低功耗时停止心跳）
-        if cmd_int == 0x20 and self._low_power_active:
-            return 0
-        rule = self._rules.get(cmd_int)
-        if rule is None:
-            if cmd_int == 0x01:
-                self._warn("收到命令下发，但当前产品没有注册 0x01 自动回复规则")
-            return 0
-        if not rule.enabled:
-            if cmd_int == 0x01:
-                self._warn("收到命令下发，但 0x01 自动回复规则已关闭")
-            return 0
-        direction = str(getattr(result, "direction", "") or "")
-        if direction and "MCU→模组" in direction:
-            return 0
-        try:
-            payloads = rule.action(result, frame)
+        # 决策与组包在锁内，实际 send 在锁外，避免与 GUI/采集线程互相阻塞。
+        with self._lock:
+            self._last_applied_attrids = []
+            if not self._enabled or self._role != "mcu" or self._collector is None:
+                return 0
+            cmd_int = self._cmd_int(result)
+            # 低功耗模式下跳过心跳回复（协议要求低功耗时停止心跳）
+            if cmd_int == 0x20 and self._low_power_active:
+                return 0
+            rule = self._rules.get(cmd_int)
+            if rule is None:
+                if cmd_int == 0x01:
+                    self._warn("收到命令下发，但当前产品没有注册 0x01 自动回复规则")
+                return 0
+            if not rule.enabled:
+                if cmd_int == 0x01:
+                    self._warn("收到命令下发，但 0x01 自动回复规则已关闭")
+                return 0
+            direction = str(getattr(result, "direction", "") or "")
+            if direction and "MCU→模组" in direction:
+                return 0
+            rule_name = rule.name
+            collector = self._collector
+            before_send = self._on_before_send
+            try:
+                payloads = rule.action(result, frame)
+            except _VALIDATION_ERRORS as exc:
+                self._warn(f"自动回复校验失败（{rule_name}）：{exc}")
+                return 0
+            except Exception as exc:
+                # 非预期异常：记完整 traceback，仍不打断串口接收线程
+                _log.exception("自动回复内部异常（%s）", rule_name)
+                self._warn(f"自动回复失败（{rule_name}）：{exc}")
+                return 0
             if payloads is None:
                 return 0
             if isinstance(payloads, (bytes, bytearray)):
@@ -189,27 +227,25 @@ class AutoReplyEngine:
                 payload_list = [bytes(p) for p in payloads if p]
             if not payload_list:
                 return 0
-            for payload in payload_list:
+
+        for payload in payload_list:
+            try:
+                collector.send(
+                    payload,
+                    metadata={"auto_reply": True, "rule_name": rule_name},
+                )
+            except TypeError as exc:
+                # Backward compatibility for lightweight collectors used by
+                # integrations/tests that implement send(data) only.
+                if "metadata" not in str(exc) and "unexpected keyword" not in str(exc):
+                    raise
+                collector.send(payload)
+            if before_send is not None:
                 try:
-                    self._collector.send(
-                        payload,
-                        metadata={"auto_reply": True, "rule_name": rule.name},
-                    )
-                except TypeError as exc:
-                    # Backward compatibility for lightweight collectors used by
-                    # integrations/tests that implement send(data) only.
-                    if "metadata" not in str(exc) and "unexpected keyword" not in str(exc):
-                        raise
-                    self._collector.send(payload)
-                if self._on_before_send is not None:
-                    try:
-                        self._on_before_send(1, rule.name)
-                    except Exception:
-                        pass
-            return len(payload_list)
-        except Exception as exc:  # 自动回复失败不能中断串口接收线程
-            self._warn(f"自动回复失败（{rule.name}）：{exc}")
-            return 0
+                    before_send(1, rule_name)
+                except Exception:
+                    _log.exception("auto_reply on_before_send callback raised")
+        return len(payload_list)
 
     def _reply_heartbeat(self, result, frame) -> bytes:
         del result, frame
@@ -280,18 +316,24 @@ class AutoReplyEngine:
         # the exact same parser used by the normal receive path.
         if not records:
             raw_data = bytes(getattr(frame, "data", b"") or b"")
-            if len(raw_data) > 1:
+            msg_id_len = self._msg_id_prefix_length(
+                getattr(frame, "cmd_code", 0x01),
+                getattr(self._ac, "cfg", None),
+            )
+            if len(raw_data) > msg_id_len:
                 try:
                     fallback_fields = parse_attr_payload_fields(
-                        raw_data[1:], self._ac.cfg, force_report=False
+                        raw_data[msg_id_len:], self._ac.cfg, force_report=False
                     )
                     fallback_result = SimpleNamespace(fields=fallback_fields)
                     records = self._ac.get_frame_attr_records(fallback_result)
-
                     # 恢复出的属性仅用于本函数 records；不原地修改 result.fields，
                     # 避免同一 ParseResult 被展示层/其他逻辑复用时产生串扰。
                     # 实时日志展示由 ui_helpers._recover_display_attr_fields 独立处理。
+                except _VALIDATION_ERRORS as exc:
+                    self._warn(f"命令下发属性恢复解析失败：{exc}")
                 except Exception as exc:
+                    _log.exception("命令下发属性恢复解析内部异常")
                     self._warn(f"命令下发属性恢复解析失败：{exc}")
 
         if not records:
@@ -323,9 +365,13 @@ class AutoReplyEngine:
 
             try:
                 normalized = self._ac.validate_attr_value(internal_id, raw_value)
-            except Exception as exc:
-                # 归一化自定义校验异常，避免泄漏到上层导致半写
+            except _VALIDATION_ERRORS as exc:
                 invalid.append(str(exc))
+                continue
+            except Exception as exc:
+                # 非预期内部错误：记 traceback，本帧仍整帧拒绝，避免半写
+                _log.exception("命令下发属性校验内部异常 attr=0x%02X", internal_id)
+                invalid.append(f"内部错误：{exc}")
                 continue
 
             if internal_id not in writable_order:
@@ -352,27 +398,46 @@ class AutoReplyEngine:
                 + "、".join(f"0x{aid:02X}" for aid in read_only)
             )
 
-        # 二次预检：保证 set_attr_value 前全部仍合法
+        if not writable_order:
+            # 全部为只读：属性被忽略但仍回复成功消息 ID（与历史行为一致）
+            # 未知/非法值已在上文整帧拒绝，不会走到这里。
+            return [self._cmd.build_cmd_ack_resp(msg_id)]
+
+        # 二次预检：保证提交前全部仍合法（与一次校验分离，便于测试与竞态窗口）
         try:
             for attrid in writable_order:
                 self._ac.validate_attr_value(attrid, validated_values[attrid])
+        except _VALIDATION_ERRORS as exc:
+            self._warn(f"命令下发二次校验失败，整帧未执行且未回复成功消息 ID：{exc}")
+            return []
         except Exception as exc:
-            # 与一次校验一致：任何异常都归一化为空回复，防止半写
+            _log.exception("命令下发二次校验内部异常")
             self._warn(f"命令下发二次校验失败，整帧未执行且未回复成功消息 ID：{exc}")
             return []
 
-        # 写前快照，写入或组包失败时回滚，保证状态与协议回复一致
-        old_values: dict[int, Any] = {}
-        for attrid in writable_order:
-            entry = self._ac.get_entry(attrid)
-            if entry is not None:
-                old_values[attrid] = entry.current_value
+        # 原子批量写入（AttrStateCenter 事务接口）；测试用假对象回退到顺序写入
+        values_to_write = {aid: validated_values[aid] for aid in writable_order}
+        try:
+            if hasattr(self._ac, "apply_values_atomic"):
+                old_values = self._ac.apply_values_atomic(values_to_write)
+            else:
+                old_values = {}
+                for attrid, value in values_to_write.items():
+                    entry = self._ac.get_entry(attrid)
+                    if entry is not None:
+                        old_values[attrid] = getattr(entry, "current_value", None)
+                    self._ac.set_attr_value(attrid, value)
+        except _VALIDATION_ERRORS as exc:
+            self._warn(f"命令下发写入校验失败，整帧未执行且未回复成功消息 ID：{exc}")
+            return []
+        except Exception as exc:
+            _log.exception("命令下发原子写入内部异常")
+            self._warn(f"命令下发写入失败，整帧未执行且未回复成功消息 ID：{exc}")
+            return []
+
+        self._last_applied_attrids = list(writable_order)
 
         try:
-            for attrid in writable_order:
-                self._ac.set_attr_value(attrid, validated_values[attrid])
-            self._last_applied_attrids = list(writable_order)
-
             replies: list[bytes] = [self._cmd.build_cmd_ack_resp(msg_id)]
             reportable = [
                 attrid
@@ -386,21 +451,50 @@ class AutoReplyEngine:
                 )
             return replies
         except Exception as exc:
-            rollback_errors: list[str] = []
-            for attrid, old in old_values.items():
-                try:
-                    self._ac.set_attr_value(attrid, old)
-                except Exception as rb_exc:
-                    rollback_errors.append(f"0x{attrid:02X}:{rb_exc}")
-            self._last_applied_attrids = []
-            if rollback_errors:
-                detail = "; ".join(rollback_errors)
-                self._warn(f"命令下发写入/组包失败且回滚部分失败（状态可能脏）：{exc} | {detail}")
+            # 组包失败：用 AttrStateCenter 事务接口一次性回滚
+            try:
+                if hasattr(self._ac, "restore_values"):
+                    self._ac.restore_values(old_values)
+                else:
+                    for attrid, old in old_values.items():
+                        self._ac.set_attr_value(attrid, old)
+            except Exception as rb_exc:
+                _log.exception("属性事务回滚失败")
+                self._last_applied_attrids = []
+                self._warn(
+                    f"命令下发组包失败且回滚失败（状态可能脏）：{exc} | {rb_exc}"
+                )
                 raise RuntimeError(
-                    f"属性回滚失败，状态可能不一致：{detail}"
+                    f"属性回滚失败，状态可能不一致：{rb_exc}"
                 ) from exc
+            self._last_applied_attrids = []
+            _log.exception("命令下发组包失败，已回滚属性状态")
             self._warn(f"命令下发写入/组包失败，已回滚属性状态：{exc}")
             return []
+
+    @staticmethod
+    def _msg_id_prefix_length(cmd_code: int = 0x01, cfg: dict | None = None) -> int:
+        """从协议配置推断命令 payload 中消息 ID 前缀字节数。
+
+        V3 默认 1 字节；若命令 request.format 指明更大宽度或自定义布局，
+        优先尊重配置，避免硬编码偏移。
+        """
+        del cmd_code  # 预留：可按命令差异化
+        # 当前内置 V3 与产品 JSON 的 msg_id* 格式均为 1 字节
+        # 允许 cfg.frame.msg_id_size / cfg.__msg_id_width__ 显式覆盖
+        if isinstance(cfg, dict):
+            frame = cfg.get("frame") if isinstance(cfg.get("frame"), dict) else {}
+            for key in ("msg_id_size", "msg_id_width", "__msg_id_width__"):
+                raw = frame.get(key, cfg.get(key))
+                if raw is None:
+                    continue
+                try:
+                    size = int(raw)
+                    if size > 0:
+                        return size
+                except (TypeError, ValueError):
+                    continue
+        return 1
 
     @staticmethod
     def _extract_action_id(result) -> int:
@@ -474,7 +568,10 @@ class AutoReplyEngine:
                 value = item.get("value", item.get("default", entry.current_value))
                 try:
                     value = self._ac.validate_attr_value(attrid, value)
-                except ValueError:
+                except _VALIDATION_ERRORS:
+                    value = entry.current_value
+                except Exception:
+                    _log.exception("Action 输出属性校验内部异常 attr=0x%02X", attrid)
                     value = entry.current_value
                 result.append((attrid, value, entry.typeid))
                 continue

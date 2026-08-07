@@ -171,11 +171,16 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
             except Exception:
                 _log.debug("resolve_wire_attrid failed for wire_id=%s", wire_id, exc_info=True)
                 internal_id = None
+
+        # 映射失败时绝不把 wire_id 当作 internal_id，避免张冠李戴显示错误名称/单位。
+        # 无映射时仅展示线协议 serialId 原始值。
         if internal_id is None:
-            internal_id = wire_id
+            parts.append(f"属性(线ID 0x{int(wire_id) & 0xFF:02X})")
+            continue
 
         getter = getattr(attr_center, "get_entry", None)
         if not callable(getter):
+            parts.append(f"属性(线ID 0x{int(wire_id) & 0xFF:02X})")
             continue
         try:
             entry = getter(internal_id)
@@ -183,6 +188,7 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
             _log.debug("get_entry failed for internal_id=%s", internal_id, exc_info=True)
             entry = None
         if entry is None:
+            parts.append(f"属性(线ID 0x{int(wire_id) & 0xFF:02X})")
             continue
 
         # 展示层只做只读格式化，不调用 validate_attr_value，避免副作用/开销耦合。

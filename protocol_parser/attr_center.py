@@ -781,6 +781,46 @@ class AttrStateCenter:
             if entry is not None:
                 entry.current_value = self.validate_attr_value(attrid, value)
 
+    def apply_values_atomic(self, values: dict[int, Any]) -> dict[int, Any]:
+        """在同一把锁下校验并写入多个属性，保证无中间态可见。
+
+        返回被修改属性的旧值快照，供调用方在后续失败时调用
+        :meth:`restore_values` 完整回滚。任一属性校验失败时，**不会**
+        修改任何属性，异常直接抛出。
+        """
+        if not values:
+            return {}
+        with self._lock:
+            normalized: dict[int, Any] = {}
+            for attrid, value in values.items():
+                aid = int(attrid)
+                entry = self._attrs.get(aid)
+                if entry is None:
+                    raise AttributeValidationError(f"未知属性 0x{aid & 0xFF:02X}")
+                # validate_attr_value 使用同一把 RLock，可重入
+                normalized[aid] = self.validate_attr_value(aid, value)
+
+            old_values: dict[int, Any] = {}
+            for aid, value in normalized.items():
+                entry = self._attrs[aid]
+                old_values[aid] = copy.deepcopy(entry.current_value)
+                entry.current_value = value
+            return old_values
+
+    def restore_values(self, old_values: dict[int, Any]) -> None:
+        """在同一把锁下恢复一组属性值（事务回滚）。
+
+        忽略快照中已不存在的 attrid；不重新校验，避免回滚路径因校验
+        规则变化而再次失败。
+        """
+        if not old_values:
+            return
+        with self._lock:
+            for attrid, value in old_values.items():
+                entry = self._attrs.get(int(attrid))
+                if entry is not None:
+                    entry.current_value = value
+
     def set_batch_value(self, attrid: int, value: Any) -> None:
         with self._lock:
             entry = self._attrs.get(int(attrid))

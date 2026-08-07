@@ -1,0 +1,1912 @@
+diff --git a/BUILDFIX30_REPORT.md b/BUILDFIX30_REPORT.md
+deleted file mode 100644
+index e39492f..0000000
+--- a/BUILDFIX30_REPORT.md
++++ /dev/null
+@@ -1,78 +0,0 @@
+-# Super Max Serial Tool v3.1.0 — BuildFix30
+-
+-## 修复目标
+-
+-修复导入产品 JSON 后，模拟 MCU 对 `0x21` 设备信息请求生成的回复帧与产品导出文件中的真实设备信息不一致的问题。
+-
+-## 两个帧的差异结论
+-
+-用户提供的正确帧与 BuildFix29 生成帧都具有正确的本帧校验和，因此问题不是校验算法，而是设备信息数据段来源错误：
+-
+-| 项目 | 正确帧 | BuildFix29 错误帧 |
+-|---|---:|---:|
+-| Data Length | `0x00BA` | `0x00B4` |
+-| 设备版本前缀 | `00 00 09` | `01 00 00` |
+-| F3 映射长度 | `0x0096`（150 B） | `0x0090`（144 B） |
+-| F3 映射项数 | 25 项 × 6 B | 24 项 × 6 B |
+-| 首项映射 | `02 00 0B 00 00 01` | `00 00 02 00 00 01` |
+-| 最终 CHK | `E0` | `A2` |
+-
+-正确帧中的 `Base.expandRules` 已经给出了协议规定的 serialId 顺序、typeid、SIID 和 PIID。BuildFix29 未成功读取这段原始元数据时，会从界面保留的属性和 `services` 顺序重新构建 F3 表，导致：
+-
+-1. 版本退回对话框默认值 `1.0.0`；
+-2. 被属性选择器过滤的属性不再进入 F3；
+-3. F3 顺序改成 JSON service/property 遍历顺序；
+-4. typeid、serialId、SIID/PIID 组合与设备真实映射不一致。
+-
+-## 修复内容
+-
+-### 1. `Base.expandRules` 成为 0x21 的权威数据源
+-
+-- 导入 JSON 时提取并保存规范化的 `device_info_expand_rules`。
+-- 生成设备信息回复时，只要原始 JSON 存在 `Base.expandRules`，逐字节复用该扩展区。
+-- 属性选择、属性排序和属性表显示不再改变 0x21 的 F3 映射。
+-- 明确存在但格式错误的 expandRules 会给出配置错误，不再静默回退到重新生成的错误帧。
+-
+-### 2. `Base.version` 成为设备信息版本前缀的权威来源
+-
+-- 自动读取 `Base.version` 并保存到 `product_info.device_info_version`。
+-- 0x21 优先使用该值，而不是导入窗口默认的 `1.0.0`。
+-- 本次用户帧恢复为 `00 00 09`。
+-
+-### 3. 兼容历史已保存产品
+-
+-编码时可从 `source_function_json` 自动恢复元数据，无需强制重新导入。支持：
+-
+-- `Base` / `base` 大小写差异；
+-- `expandRules` / `expand_rules`；
+-- `data`、`result`、`payload` 等包装层；
+-- 被 JSON 再编码一至两次的字符串；
+-- UTF-8 BOM 和常见 HEX 分隔符。
+-
+-### 4. 导入与编辑路径统一
+-
+-- 新导入产品会保存规范化 expandRules 和设备信息版本。
+-- 修改旧产品时保留已有设备信息元数据。
+-- 从文件加载和直接粘贴 JSON 使用同一解析逻辑。
+-
+-## 回归验证
+-
+-新增用户帧逐字节回归测试，验证以下情况均生成完全一致的正确帧：
+-
+-- UI 中 MCU 版本仍为 `1.0.0`，但源 JSON 的 `Base.version` 为 `[0,0,9]`；
+-- 属性编辑器只保留少量属性；
+-- `services` 顺序与 F3 serial 顺序不同；
+-- `Base` 使用小写及 `expand_rules`；
+-- `source_function_json` 被双层 JSON 编码；
+-- 历史配置只有 source JSON，没有独立 `device_info_expand_rules` 字段。
+-
+-验证结果：
+-
+-- `compileall`：通过
+-- 自动测试：171 项全部通过
+-- 应用身份：`Super Max Serial Tool 3.1.0 / SuperMaxSerialTool.exe`
+-- 正确帧逐字节比较：通过
+-
+-## 未修改内容
+-
+-未修改串口收发线程、0x21 请求识别、自动回复开关、属性状态中心、快照/状态上报、UI 布局和安装程序版本。应用版本保持 `v3.1.0`。
+diff --git a/BUILDFIX31_REPORT.md b/BUILDFIX31_REPORT.md
+deleted file mode 100644
+index 43a9a5d..0000000
+--- a/BUILDFIX31_REPORT.md
++++ /dev/null
+@@ -1,54 +0,0 @@
+-# Super Max Serial Tool v3.1.0 — BuildFix31
+-
+-基于用户上传的 `SMST_3.1.0.zip` / BuildFix30 源码，仅执行本轮 4 个定向补丁要求；未修改 UI 布局、串口协议骨架或 RawDataWriter 内部线程逻辑。
+-
+-## 补丁 1：PID 前导零
+-
+-文件：`protocol_parser/dev_info_encoder.py`
+-
+-- `_pid_to_uint32()` 不再使用 `int(text, 0)`。
+-- `0x` 前缀明确按 16 进制解析，其余字符串强制按十进制解析。
+-- `00123` 正确得到 123；`0x7B` 得到 123；非法字符串继续抛 `ProtocolConfigError`。
+-- 新增 0x21 编码回归：PID `00123` 的 F7 字段包含 `06 F7 00 00 00 7B`。
+-
+-## 补丁 2：0x01 自动回复写入二次预检
+-
+-文件：`protocol_parser/auto_reply.py`
+-
+-- 保持 unknown / invalid 拒绝路径、ACK 顺序与状态上报逻辑不变。
+-- 在任何 `set_attr_value()` 之前，对 `writable_order` 的全部属性再次调用 `validate_attr_value()`。
+-- 若二次预检期间任一属性失败，则此前没有发生任何写入，也不会生成 ACK，从而保持事务语义。
+-
+-## 补丁 3：HEX 输入严格白名单
+-
+-文件：`protocol_parser/parser.py`
+-
+-- 在原有清理与 `_RE_PREFIXED_HEX` / `findall` 流程之前增加字符白名单。
+-- 合法：`A5 5A 03 20`、`0xA5,0x5A`。
+-- 非法：`0xZZ11`、`A5G5` 立即抛 `HexParseError`，不再静默清理后继续发送。
+-- 后续原有 HEX 清理/解析逻辑未改。
+-
+-## 补丁 4：RawDataWriter 跨线程 UI hardening
+-
+-检查结果：BuildFix30 当前代码已经满足要求，无需重复改写。
+-
+-现有结构：
+-
+-- `UiBridge.storage_error_signal = Signal(str)`
+-- `UiBridge.storage_drop_signal = Signal(int)`
+-- 两个信号分别连接 `_on_storage_error` / `_on_storage_drop`
+-- `RawDataWriter(on_error=...)` 仅执行 `self.bridge.storage_error_signal.emit(...)`
+-- `RawDataWriter(on_drop=...)` 仅执行 `self.bridge.storage_drop_signal.emit(...)`
+-
+-因此后台写盘线程不会直接操作 QWidget；本轮只新增回归测试锁定该结构，没有修改布局，也没有修改 `storage.py`。
+-
+-## 验证
+-
+-- `python -m compileall -q protocol_parser tests exe_entry.py`：通过
+-- 全部自动测试：**176 passed**
+-- BuildFix31 定向测试：**5 passed**
+-- 应用身份：`Super Max Serial Tool 3.1.0 / SuperMaxSerialTool.exe`：通过
+-
+-## 发布说明
+-
+-为避免误运行旧代码构建出的安装包，本源码包不携带上传压缩包中的旧 `release/*.exe`。请在 Windows 上运行 `SMST_Build_Manager.pyw` 重新构建 v3.1.0 安装包。
+diff --git a/BUILDFIX32_REPORT.md b/BUILDFIX32_REPORT.md
+deleted file mode 100644
+index 19e10e1..0000000
+--- a/BUILDFIX32_REPORT.md
++++ /dev/null
+@@ -1,58 +0,0 @@
+-# Super Max Serial Tool v3.1.0 — BuildFix32
+-
+-基于 `Super Max Serial Tool v3.1.0 BuildFix31`，本轮只做两项显示层修改：
+-
+-1. 实时属性表 ID 列显示线协议 `serialId`；内部 `attrid` 与业务索引保持不变。
+-2. 模拟 MCU 左侧数据日志中，0x10 状态上报和 0x01 命令下发的属性语义追加 `Typeid / Attrid / Data`。
+-
+-未修改 UI 布局、表格列数/列宽、产品导入 ID 计算、串口收发、0x01 事务、自动回复或编码逻辑。
+-
+-## 1. 实时属性表显示 wire serialId
+-
+-文件：`protocol_parser/mcu_page.py`
+-
+-- `refresh_attr_table()` 在刷新前调用 `build_snapshot_attrid_map(center.cfg)` 获取与 0x21 / 0x24 / 0x10 共用的 canonical 映射。
+-- ID 列显示 `internal attrid -> wire serialId` 映射后的值。
+-- `_attr_row_by_id`、复选框字典、发送输入框字典、属性上报回调仍全部使用 `entry.attrid` 内部 ID。
+-- 映射不可用时仅在显示层回退到内部 ID，不影响业务逻辑。
+-- 未启用可选补丁 C：当前 canonical 映射已能覆盖显式 `snapshot_wire_id` 和 MIOT `services/properties` 产品，无需改写 AttrStateCenter 配置。
+-
+-## 2. 0x10 / 0x01 日志追加线字段
+-
+-文件：`protocol_parser/ui_helpers.py`
+-
+-`_format_attr_semantics()` 在原有中文属性语义后追加：
+-
+-```text
+-Typeid:XX Attrid:XX Data:...
+-```
+-
+-其中：
+-
+-- `Typeid`：优先使用解析候选字段中的 typeid，缺失时回退产品属性 typeid。
+-- `Attrid`：直接使用帧中解析出的 wire attrid / serialId，不进行内部 ID 替换。
+-- `Data`：定长整数按线上字节宽度以大写 HEX 补齐显示；bytes 直接显示 HEX；字符串/数组保留短文本。
+-
+-示例：
+-
+-```text
+-[TX] A5 A5 03 10 00 03 02 04 05 ...
+-  → 状态上报 (0x10) | MCU→模组 | 照明-模式YHQ Typeid:02 Attrid:04 Data:05
+-```
+-
+-## 验证
+-
+-- BuildFix32 定向测试：3 passed
+-- 全部自动测试：179 passed
+-- `python -m compileall -q .`：通过
+-- 应用版本保持：3.1.0
+-
+-新增回归覆盖：
+-
+-- 实时属性 ID 列只改变显示值，内部行索引仍使用内部 attrid。
+-- 0x10：`02 04 05` 显示 `Typeid:02 Attrid:04 Data:05`。
+-- 0x01：消息 ID 后的 `02 04 05` 同样显示线字段，且保留消息 ID 与中文语义。
+-
+-## 发布说明
+-
+-本包不携带旧的 `build/` / `dist/` Windows 构建产物，避免误运行未包含 BuildFix32 修改的旧 EXE。请在 Windows 上运行 `SMST_Build_Manager.pyw` 重新构建 v3.1.0 安装包。
+diff --git a/BUILDFIX33.patch b/BUILDFIX33.patch
+deleted file mode 100644
+index 5e2c24b..0000000
+--- a/BUILDFIX33.patch
++++ /dev/null
+@@ -1 +0,0 @@
+-SEE_LOCAL_ARTIFACTS_apply_with_git_apply
+\ No newline at end of file
+diff --git a/BUILDFIX33_REPORT.md b/BUILDFIX33_REPORT.md
+deleted file mode 100644
+index 58b1ce8..0000000
+--- a/BUILDFIX33_REPORT.md
++++ /dev/null
+@@ -1,46 +0,0 @@
+-# BuildFix33 — hardening P0/P1
+-
+-基于 `v3.1.0` / `ecacfe4`。不改 UI 布局、不改协议骨架。
+-
+-分支：`fix/hardening-p0-p1`
+-
+-## 已直接合入源码（可直接用）
+-
+-| 文件 | 内容 |
+-|------|------|
+-| `protocol_parser/auto_reply.py` | 0x01 真事务：写前快照、失败回滚、统一异常、不改 `result.fields` |
+-| `protocol_parser/storage.py` | stop 超时保留 `_thread`；文档化 `drain=False` |
+-| `protocol_parser/ui_helpers.py` | 展示层不再调用 `validate_attr_value` |
+-
+-## 大文件以 patch 交付（需应用一次）
+-
+-因单次 API 推送体积限制，`parser.py` / `mcu_page.py` 以 patch 形式提交：
+-
+-| 文件 | 内容 |
+-|------|------|
+-| `patches/parser_strict_hex_and_cache.patch` | HEX 严格 token + builtin 锁/deepcopy |
+-| `patches/mcu_page_qtimer_context.patch` | QTimer 带 `self` receiver + IO 唤醒生命周期 |
+-| `scripts/apply_buildfix33_patches.py` | 一键应用上述两个 patch |
+-
+-### 应用方式（仓库根目录）
+-
+-```bash
+-git checkout fix/hardening-p0-p1
+-python scripts/apply_buildfix33_patches.py
+-git add protocol_parser/parser.py protocol_parser/mcu_page.py
+-git commit -m "fix(parser,mcu_page): apply BuildFix33 patches to source"
+-git push origin fix/hardening-p0-p1
+-```
+-
+-应用后源码与本地验证一致：
+-
+-- `parse_hex_input('A5x5A')` 抛 `HexParseError`
+-- `get_builtin_v3()` 返回 deepcopy
+-- 全部 `QTimer.singleShot` 带 `self` receiver
+-
+-## 未改
+-
+-- GUI 布局 / 列宽
+-- PID（BuildFix31）
+-- wire serialId 显示 / 日志 Typeid 字段（BuildFix32）
+-- RawDataWriter → GUI Signal 绑定（BuildFix31）
+diff --git a/buildfix35_hardening_complete.patch b/buildfix35_hardening_complete.patch
+deleted file mode 100644
+index c4e9f5a..0000000
+--- a/buildfix35_hardening_complete.patch
++++ /dev/null
+@@ -1,214 +0,0 @@
+-diff --git a/protocol_parser/auto_reply.py b/protocol_parser/auto_reply.py
+-index 98319af..53d908f 100644
+---- a/protocol_parser/auto_reply.py
+-+++ b/protocol_parser/auto_reply.py
+-@@ -323,7 +323,8 @@ class AutoReplyEngine:
+- 
+-             try:
+-                 normalized = self._ac.validate_attr_value(internal_id, raw_value)
+--            except (ValueError, TypeError) as exc:
+-+            except Exception as exc:
+-+                # 归一化自定义校验异常，避免泄漏到上层导致半写
+-                 invalid.append(str(exc))
+-                 continue
+- 
+-@@ -355,7 +356,8 @@ class AutoReplyEngine:
+-         try:
+-             for attrid in writable_order:
+-                 self._ac.validate_attr_value(attrid, validated_values[attrid])
+--        except (ValueError, TypeError) as exc:
+-+        except Exception as exc:
+-+            # 与一次校验一致：任何异常都归一化为空回复，防止半写
+-             self._warn(f"命令下发二次校验失败，整帧未执行且未回复成功消息 ID：{exc}")
+-             return []
+- 
+-@@ -384,12 +386,19 @@ class AutoReplyEngine:
+-                 )
+-             return replies
+-         except Exception as exc:
+-+            rollback_errors: list[str] = []
+-             for attrid, old in old_values.items():
+-                 try:
+-                     self._ac.set_attr_value(attrid, old)
+--                except Exception:
+--                    pass
+-+                except Exception as rb_exc:
+-+                    rollback_errors.append(f"0x{attrid:02X}:{rb_exc}")
+-             self._last_applied_attrids = []
+-+            if rollback_errors:
+-+                detail = "; ".join(rollback_errors)
+-+                self._warn(f"命令下发写入/组包失败且回滚部分失败（状态可能脏）：{exc} | {detail}")
+-+                raise RuntimeError(
+-+                    f"属性回滚失败，状态可能不一致：{detail}"
+-+                ) from exc
+-             self._warn(f"命令下发写入/组包失败，已回滚属性状态：{exc}")
+-             return []
+- 
+-diff --git a/protocol_parser/gui.py b/protocol_parser/gui.py
+-index 0723c7e..1d64389 100644
+---- a/protocol_parser/gui.py
+-+++ b/protocol_parser/gui.py
+-@@ -1169,8 +1169,12 @@ class ProtocolParserApp(FluentWindow):
+-         self.bridge.tx_signal.connect(self._on_ui_tx)
+-         self.bridge.attr_updated_signal.connect(self._on_attr_updated)
+-         self.bridge.mcu_data_signal.connect(self._on_mcu_data)
+--        self.bridge.storage_error_signal.connect(self._on_storage_error)
+--        self.bridge.storage_drop_signal.connect(self._on_storage_drop)
+-+        self.bridge.storage_error_signal.connect(
+-+            self._on_storage_error, Qt.ConnectionType.QueuedConnection
+-+        )
+-+        self.bridge.storage_drop_signal.connect(
+-+            self._on_storage_drop, Qt.ConnectionType.QueuedConnection
+-+        )
+-         self.bridge.collector_stopped_signal.connect(self._on_collector_stopped)
+- 
+-         # 显示缓冲在 UI 构建前准备好。每个元素为 (文本, 颜色)。
+-diff --git a/protocol_parser/mcu_page.py b/protocol_parser/mcu_page.py
+-index 08ccc2e..5a1f282 100644
+---- a/protocol_parser/mcu_page.py
+-+++ b/protocol_parser/mcu_page.py
+-@@ -1666,6 +1666,12 @@ QTableView#AttributeTable::item:selected {{
+- 
+-         self.attr_table.setUpdatesEnabled(False)
+-         try:
+-+            # 重建前断开旧行控件信号并清空映射，避免产品切换后残留引用。
+-+            for check in list(self._attr_select_checks.values()):
+-+                try:
+-+                    check.stateChanged.disconnect(self._on_row_select_changed)
+-+                except (RuntimeError, TypeError):
+-+                    pass
+-             self.attr_table.clearContents()
+-             self.attr_table.setRowCount(len(entries))
+-             self._attr_row_by_id.clear()
+-diff --git a/protocol_parser/parser.py b/protocol_parser/parser.py
+-index 59a1a90..206f670 100644
+---- a/protocol_parser/parser.py
+-+++ b/protocol_parser/parser.py
+-@@ -332,9 +332,12 @@ def merge_protocol(base: dict, override: dict) -> dict:
+-       只用 override 的 name/description 覆盖
+-     - attributes：以 attrid 为键合并，override 覆盖/补充 base
+-     - enums：递归合并，override 覆盖 base
+-+
+-+    入参均 deepcopy，保证调用方传入的 base/override 不被原地污染。
+-     """
+-     import copy
+-     result = copy.deepcopy(base)
+-+    override = copy.deepcopy(override)
+- 
+-     # 基本元信息
+-     for key in ("product", "description", "version", "_imported_from"):
+-diff --git a/protocol_parser/storage.py b/protocol_parser/storage.py
+-index b3b7f94..a4ddcd7 100644
+---- a/protocol_parser/storage.py
+-+++ b/protocol_parser/storage.py
+-@@ -17,8 +17,12 @@ from datetime import datetime
+- from pathlib import Path
+- from typing import Callable
+- 
+-+import logging
+-+
+- from .exceptions import StorageOperationError
+- 
+-+_log = logging.getLogger(__name__)
+-+
+- 
+- @dataclass(frozen=True)
+- class RawWriterStats:
+-@@ -169,7 +173,7 @@ class RawDataWriter:
+-                 try:
+-                     self.on_drop(dropped)
+-                 except Exception:
+--                    pass
+-+                    _log.exception("on_drop callback raised")
+-             return False
+- 
+-     def stop(self, *, drain: bool = True, timeout: float = 5.0) -> RawWriterStats:
+-@@ -207,12 +211,23 @@ class RawDataWriter:
+-         return self.stats()
+- 
+-     def _drain_queue_without_callbacks(self) -> None:
+-+        discarded = 0
+-         while True:
+-             try:
+--                self._queue.get_nowait()
+-+                item = self._queue.get_nowait()
+-                 self._queue.task_done()
+-+                # _STOP 哨兵不计入丢弃
+-+                if item is not _STOP:
+-+                    discarded += 1
+-             except queue.Empty:
+--                return
+-+                break
+-+        if discarded:
+-+            with self._state_lock:
+-+                self._dropped_records += discarded
+-+            _log.info(
+-+                "stop(drain=False) discarded %d queued records (counted into dropped_records)",
+-+                discarded,
+-+            )
+- 
+-     def _file_path(self, index: int) -> Path:
+-         suffix = "" if index == 0 else f"_{index:03d}"
+-@@ -296,7 +311,7 @@ class RawDataWriter:
+-             try:
+-                 self.on_error(message)
+-             except Exception:
+--                pass
+-+                _log.exception("on_error callback raised")
+- 
+-     def _run(self) -> None:
+-         pending = bytearray()
+-diff --git a/protocol_parser/ui_helpers.py b/protocol_parser/ui_helpers.py
+-index ea81244..1a1c8db 100644
+---- a/protocol_parser/ui_helpers.py
+-+++ b/protocol_parser/ui_helpers.py
+-@@ -1,11 +1,15 @@
+- """Shared UI formatting helpers for the two-page serial tool."""
+- from __future__ import annotations
+-+import logging
+-+
+- from .exceptions import AttributeValidationError
+- 
+- import json
+- from datetime import datetime
+- from typing import Any
+- 
+-+_log = logging.getLogger(__name__)
+-+
+- 
+- def _typeid_name(typeid: int) -> str:
+-     names = {
+-@@ -165,6 +169,7 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
+-             try:
+-                 internal_id = resolver(wire_id)
+-             except Exception:
+-+                _log.debug("resolve_wire_attrid failed for wire_id=%s", wire_id, exc_info=True)
+-                 internal_id = None
+-         if internal_id is None:
+-             internal_id = wire_id
+-@@ -175,6 +180,7 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
+-         try:
+-             entry = getter(internal_id)
+-         except Exception:
+-+            _log.debug("get_entry failed for internal_id=%s", internal_id, exc_info=True)
+-             entry = None
+-         if entry is None:
+-             continue
+-diff --git a/tests/test_miot_command_auto_reply_wire_mapping.py b/tests/test_miot_command_auto_reply_wire_mapping.py
+-index fd6f95c..9ceaba4 100644
+---- a/tests/test_miot_command_auto_reply_wire_mapping.py
+-+++ b/tests/test_miot_command_auto_reply_wire_mapping.py
+-@@ -119,11 +119,8 @@ def test_message_id_only_miot_command_replies_and_reports_exact_attribute() -> N
+-     sent_count = reply.on_frame(result, frame, 0.0)
+- 
+-     assert sent_count == 2
+--    assert any(
+--        child.get("attrid") == "0x03"
+--        for field in result.fields
+--        for child in (field.get("children") or [])
+--    )
+-+    # result.fields 故意不原地注入 children（展示恢复由 ui_helpers 独立处理）
+-+    # 业务正确性由 last_applied / 属性值 / 发出的 ACK+Report 帧保证
+-     assert reply.last_applied_attrids == [0x44]
+-     assert center.get_attr_value(0x44)[1] == 6
+-     assert collector.sent == [
+diff --git a/buildfix35_residual_only.patch b/buildfix35_residual_only.patch
+deleted file mode 100644
+index 31d2d36..0000000
+--- a/buildfix35_residual_only.patch
++++ /dev/null
+@@ -1,161 +0,0 @@
+-diff --git a/protocol_parser/auto_reply.py b/protocol_parser/auto_reply.py
+-index 98319af..53d908f 100644
+---- a/protocol_parser/auto_reply.py
+-+++ b/protocol_parser/auto_reply.py
+-@@ -323,7 +323,8 @@ class AutoReplyEngine:
+- 
+-             try:
+-                 normalized = self._ac.validate_attr_value(internal_id, raw_value)
+--            except (ValueError, TypeError) as exc:
+-+            except Exception as exc:
+-+                # 归一化自定义校验异常，避免泄漏到上层导致半写
+-                 invalid.append(str(exc))
+-                 continue
+- 
+-@@ -355,7 +356,8 @@ class AutoReplyEngine:
+-         try:
+-             for attrid in writable_order:
+-                 self._ac.validate_attr_value(attrid, validated_values[attrid])
+--        except (ValueError, TypeError) as exc:
+-+        except Exception as exc:
+-+            # 与一次校验一致：任何异常都归一化为空回复，防止半写
+-             self._warn(f"命令下发二次校验失败，整帧未执行且未回复成功消息 ID：{exc}")
+-             return []
+- 
+-@@ -384,12 +386,19 @@ class AutoReplyEngine:
+-                 )
+-             return replies
+-         except Exception as exc:
+-+            rollback_errors: list[str] = []
+-             for attrid, old in old_values.items():
+-                 try:
+-                     self._ac.set_attr_value(attrid, old)
+--                except Exception:
+--                    pass
+-+                except Exception as rb_exc:
+-+                    rollback_errors.append(f"0x{attrid:02X}:{rb_exc}")
+-             self._last_applied_attrids = []
+-+            if rollback_errors:
+-+                detail = "; ".join(rollback_errors)
+-+                self._warn(f"命令下发写入/组包失败且回滚部分失败（状态可能脏）：{exc} | {detail}")
+-+                raise RuntimeError(
+-+                    f"属性回滚失败，状态可能不一致：{detail}"
+-+                ) from exc
+-             self._warn(f"命令下发写入/组包失败，已回滚属性状态：{exc}")
+-             return []
+- 
+-diff --git a/protocol_parser/storage.py b/protocol_parser/storage.py
+-index b3b7f94..a4ddcd7 100644
+---- a/protocol_parser/storage.py
+-+++ b/protocol_parser/storage.py
+-@@ -17,8 +17,12 @@ from datetime import datetime
+- from pathlib import Path
+- from typing import Callable
+- 
+-+import logging
+-+
+- from .exceptions import StorageOperationError
+- 
+-+_log = logging.getLogger(__name__)
+-+
+- 
+- @dataclass(frozen=True)
+- class RawWriterStats:
+-@@ -169,7 +173,7 @@ class RawDataWriter:
+-                 try:
+-                     self.on_drop(dropped)
+-                 except Exception:
+--                    pass
+-+                    _log.exception("on_drop callback raised")
+-             return False
+- 
+-     def stop(self, *, drain: bool = True, timeout: float = 5.0) -> RawWriterStats:
+-@@ -207,12 +211,23 @@ class RawDataWriter:
+-         return self.stats()
+- 
+-     def _drain_queue_without_callbacks(self) -> None:
+-+        discarded = 0
+-         while True:
+-             try:
+--                self._queue.get_nowait()
+-+                item = self._queue.get_nowait()
+-                 self._queue.task_done()
+-+                # _STOP 哨兵不计入丢弃
+-+                if item is not _STOP:
+-+                    discarded += 1
+-             except queue.Empty:
+--                return
+-+                break
+-+        if discarded:
+-+            with self._state_lock:
+-+                self._dropped_records += discarded
+-+            _log.info(
+-+                "stop(drain=False) discarded %d queued records (counted into dropped_records)",
+-+                discarded,
+-+            )
+- 
+-     def _file_path(self, index: int) -> Path:
+-         suffix = "" if index == 0 else f"_{index:03d}"
+-@@ -296,7 +311,7 @@ class RawDataWriter:
+-             try:
+-                 self.on_error(message)
+-             except Exception:
+--                pass
+-+                _log.exception("on_error callback raised")
+- 
+-     def _run(self) -> None:
+-         pending = bytearray()
+-diff --git a/protocol_parser/ui_helpers.py b/protocol_parser/ui_helpers.py
+-index ea81244..1a1c8db 100644
+---- a/protocol_parser/ui_helpers.py
+-+++ b/protocol_parser/ui_helpers.py
+-@@ -1,11 +1,15 @@
+- """Shared UI formatting helpers for the two-page serial tool."""
+- from __future__ import annotations
+-+import logging
+-+
+- from .exceptions import AttributeValidationError
+- 
+- import json
+- from datetime import datetime
+- from typing import Any
+- 
+-+_log = logging.getLogger(__name__)
+-+
+- 
+- def _typeid_name(typeid: int) -> str:
+-     names = {
+-@@ -165,6 +169,7 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
+-             try:
+-                 internal_id = resolver(wire_id)
+-             except Exception:
+-+                _log.debug("resolve_wire_attrid failed for wire_id=%s", wire_id, exc_info=True)
+-                 internal_id = None
+-         if internal_id is None:
+-             internal_id = wire_id
+-@@ -175,6 +180,7 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
+-         try:
+-             entry = getter(internal_id)
+-         except Exception:
+-+            _log.debug("get_entry failed for internal_id=%s", internal_id, exc_info=True)
+-             entry = None
+-         if entry is None:
+-             continue
+-diff --git a/tests/test_miot_command_auto_reply_wire_mapping.py b/tests/test_miot_command_auto_reply_wire_mapping.py
+-index fd6f95c..9ceaba4 100644
+---- a/tests/test_miot_command_auto_reply_wire_mapping.py
+-+++ b/tests/test_miot_command_auto_reply_wire_mapping.py
+-@@ -119,11 +119,8 @@ def test_message_id_only_miot_command_replies_and_reports_exact_attribute() -> N
+-     sent_count = reply.on_frame(result, frame, 0.0)
+- 
+-     assert sent_count == 2
+--    assert any(
+--        child.get("attrid") == "0x03"
+--        for field in result.fields
+--        for child in (field.get("children") or [])
+--    )
+-+    # result.fields 故意不原地注入 children（展示恢复由 ui_helpers 独立处理）
+-+    # 业务正确性由 last_applied / 属性值 / 发出的 ACK+Report 帧保证
+-     assert reply.last_applied_attrids == [0x44]
+-     assert center.get_attr_value(0x44)[1] == 6
+-     assert collector.sent == [
+diff --git a/patches/buildfix34_gui_queued_connection.patch b/patches/buildfix34_gui_queued_connection.patch
+deleted file mode 100644
+index 29aee8b..0000000
+--- a/patches/buildfix34_gui_queued_connection.patch
++++ /dev/null
+@@ -1,15 +0,0 @@
+---- a/protocol_parser/gui.py
+-+++ b/protocol_parser/gui.py
+-@@ -1169,8 +1169,12 @@ class ProtocolParserApp(FluentWindow):
+-         self.bridge.tx_signal.connect(self._on_ui_tx)
+-         self.bridge.attr_updated_signal.connect(self._on_attr_updated)
+-         self.bridge.mcu_data_signal.connect(self._on_mcu_data)
+--        self.bridge.storage_error_signal.connect(self._on_storage_error)
+--        self.bridge.storage_drop_signal.connect(self._on_storage_drop)
+-+        self.bridge.storage_error_signal.connect(
+-+            self._on_storage_error, Qt.ConnectionType.QueuedConnection
+-+        )
+-+        self.bridge.storage_drop_signal.connect(
+-+            self._on_storage_drop, Qt.ConnectionType.QueuedConnection
+-+        )
+-         self.bridge.collector_stopped_signal.connect(self._on_collector_stopped)
+diff --git a/patches/buildfix34_mcu_refresh_disconnect.patch b/patches/buildfix34_mcu_refresh_disconnect.patch
+deleted file mode 100644
+index 2b65498..0000000
+--- a/patches/buildfix34_mcu_refresh_disconnect.patch
++++ /dev/null
+@@ -1,15 +0,0 @@
+---- a/protocol_parser/mcu_page.py
+-+++ b/protocol_parser/mcu_page.py
+-@@ -1666,6 +1666,12 @@
+- 
+-         self.attr_table.setUpdatesEnabled(False)
+-         try:
+-+            # 重建前断开旧行控件信号并清空映射，避免产品切换后残留引用。
+-+            for check in list(self._attr_select_checks.values()):
+-+                try:
+-+                    check.stateChanged.disconnect(self._on_row_select_changed)
+-+                except (RuntimeError, TypeError):
+-+                    pass
+-             self.attr_table.clearContents()
+-             self.attr_table.setRowCount(len(entries))
+-             self._attr_row_by_id.clear()
+diff --git a/patches/buildfix34_parser_merge_deepcopy.patch b/patches/buildfix34_parser_merge_deepcopy.patch
+deleted file mode 100644
+index b6e67f0..0000000
+--- a/patches/buildfix34_parser_merge_deepcopy.patch
++++ /dev/null
+@@ -1,15 +0,0 @@
+---- a/protocol_parser/parser.py
+-+++ b/protocol_parser/parser.py
+-@@ -332,9 +332,12 @@ def merge_protocol(base: dict, override: dict) -> dict:
+-       只用 override 的 name/description 覆盖
+-     - attributes：以 attrid 为键合并，override 覆盖/补充 base
+-     - enums：递归合并，override 覆盖 base
+-+
+-+    入参均 deepcopy，保证调用方传入的 base/override 不被原地污染。
+-     """
+-     import copy
+-     result = copy.deepcopy(base)
+-+    override = copy.deepcopy(override)
+- 
+-     # 基本元信息
+-     for key in ("product", "description", "version", "_imported_from"):
+diff --git a/patches/mcu_page_qtimer_context.patch b/patches/mcu_page_qtimer_context.patch
+deleted file mode 100644
+index ee24c19..0000000
+--- a/patches/mcu_page_qtimer_context.patch
++++ /dev/null
+@@ -1,169 +0,0 @@
+---- a/protocol_parser/mcu_page.py
+-+++ b/protocol_parser/mcu_page.py
+-@@ -484,7 +484,7 @@
+-             self._remeasure_attr_columns()
+-             self._resize_attr_rows_to_wrapped_content()
+-             self._schedule_attr_row_resize(0)
+--            QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
+-+            QTimer.singleShot(160, self, self._resize_attr_rows_to_wrapped_content)
+-             self._apply_preset_table_widths()
+-             self.attr_card.setMinimumWidth(min(self._attr_ideal_width(), 320))
+-             self.preset_card.setMinimumWidth(min(self._preset_ideal_width(), 320))
+-@@ -503,7 +503,7 @@
+-             QEvent.Type.FontChange,
+-             QEvent.Type.ScreenChangeInternal,
+-         ):
+--            QTimer.singleShot(0, self.apply_dpi_metrics)
+-+            QTimer.singleShot(0, self, self.apply_dpi_metrics)
+- 
+-     def _relayout_operation_bar(self) -> None:
+-         """Wrap the product/action bar according to available logical width."""
+-@@ -920,7 +920,7 @@
+- 
+-     def _schedule_lower_panel_rebalance(self) -> None:
+-         """等待 Qt 完成本轮可见性更新后再重新分配 splitter 空间。"""
+--        QTimer.singleShot(0, self._rebalance_lower_panels)
+-+        QTimer.singleShot(0, self, self._rebalance_lower_panels)
+- 
+-     def _on_splitter_moved(self, pos: int, index: int) -> None:
+-         """记录用户手动拖动调整后的侧栏宽度，供后续重分配时保留。"""
+-@@ -1072,7 +1072,7 @@
+-         """在列宽和 cellWidget 几何稳定后防抖重算全部属性行高。"""
+-         timer = getattr(self, "_attr_row_resize_timer", None)
+-         if timer is None:
+--            QTimer.singleShot(max(0, int(delay_ms)), self._resize_attr_rows_to_wrapped_content)
+-+            QTimer.singleShot(max(0, int(delay_ms)), self, self._resize_attr_rows_to_wrapped_content)
+-             return
+-         timer.setInterval(max(0, int(delay_ms)))
+-         timer.start()
+-@@ -1100,7 +1100,7 @@
+-         if any(column in self._attr_wrapped_column_maximums for column in selected):
+-             self._resize_attr_rows_to_wrapped_content()
+-             self._schedule_attr_row_resize(0)
+--            QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
+-+            QTimer.singleShot(160, self, self._resize_attr_rows_to_wrapped_content)
+-             # 产品切换前若曾记住旧的超宽侧栏，按新的内容理想宽度收回；
+-             # 否则名称列虽然已变窄，splitter 仍可能保留旧宽度造成大片空白。
+-             ideal_width = self._attr_ideal_width()
+-@@ -1200,6 +1200,9 @@
+-         """预置命令面板的理想宽度，随侧栏字号同步扩展。"""
+-         return max(400, round(400 * self._side_font_point_size / 10.0))
+- 
+-+    def _clear_rebalancing(self) -> None:
+-+        self._rebalancing = False
+-+
+-     def _rebalance_lower_panels(self) -> None:
+-         """重新分配横向三栏：实时数据 | 实时属性 | 预置命令。
+- 
+-         原则：
+-@@ -1226,7 +1229,7 @@
+-         if splitter.contentsRect().width() <= 1:
+-             # 页面可见但布局几何尚未完成时，稍后再分配；隐藏页不循环排队。
+-             if self.isVisible():
+--                QTimer.singleShot(50, self._rebalance_lower_panels)
+-+                QTimer.singleShot(50, self, self._rebalance_lower_panels)
+-             return
+- 
+-         # isHidden() 只反映控件自身是否被显式隐藏，不受父容器可见性影响。
+-@@ -1253,7 +1256,7 @@
+-             try:
+-                 splitter.setSizes([data_height, attr_height, preset_height])
+-             finally:
+--                QTimer.singleShot(0, lambda: setattr(self, "_rebalancing", False))
+-+                QTimer.singleShot(0, self, self._clear_rebalancing)
+-             return
+- 
+-         attr_w = 0
+-@@ -1293,14 +1296,14 @@
+-         sizes = self._allocate_panel_sizes(total, data_min, attr_w, preset_w)
+-         splitter.setSizes(sizes)
+-         self._rebalancing = True
+--        QTimer.singleShot(0, lambda: setattr(self, "_rebalancing", False))
+-+        QTimer.singleShot(0, self, self._clear_rebalancing)
+- 
+-     def _relayout_all_mcu(self) -> None:
+-         """统一触发本页所有自适应布局。"""
+--        QTimer.singleShot(0, self._relayout_data_bar)
+--        QTimer.singleShot(0, self._relayout_attr_header)
+--        QTimer.singleShot(0, self._relayout_autoreply_header)
+--        QTimer.singleShot(0, self._layout_common_commands)
+-+        QTimer.singleShot(0, self, self._relayout_data_bar)
+-+        QTimer.singleShot(0, self, self._relayout_attr_header)
+-+        QTimer.singleShot(0, self, self._relayout_autoreply_header)
+-+        QTimer.singleShot(0, self, self._layout_common_commands)
+-         self._relayout_operation_bar()
+-         # 等产品操作栏完成换行高度变化后再分配三栏宽度，避免
+-         # content_splitter 在同一事件循环里读到过时的可视高度。
+--        QTimer.singleShot(0, self._rebalance_lower_panels)
+-+        QTimer.singleShot(0, self, self._rebalance_lower_panels)
+- 
+-     def _on_product_combo_changed(self, index: int) -> None:
+-         del index
+-@@ -1323,14 +1326,14 @@
+-         self._remeasure_attr_columns()
+-         self._resize_attr_rows_to_wrapped_content()
+-         self._schedule_attr_row_resize(0)
+--        QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
+--        QTimer.singleShot(0, self._rebalance_lower_panels)
+-+        QTimer.singleShot(160, self, self._resize_attr_rows_to_wrapped_content)
+-+        QTimer.singleShot(0, self, self._rebalance_lower_panels)
+- 
+-     def showEvent(self, event) -> None:  # type: ignore[override]
+-         super().showEvent(event)
+-         # 子卡片的 contentsRect 在同步 showEvent 阶段仍可能为 0，延迟两次重排。
+--        QTimer.singleShot(0, self._relayout_all_mcu)
+-+        QTimer.singleShot(0, self, self._relayout_all_mcu)
+-         if not self._first_show_relayout_done:
+-             self._first_show_relayout_done = True
+--            QTimer.singleShot(100, self._relayout_all_mcu)
+-+            QTimer.singleShot(100, self, self._relayout_all_mcu)
+-         # 本页拥有独立的固定 HEX 协议解析通道；不读取、不修改页面1的
+-         # HEX/ASCII 与原始/协议解析按钮状态。
+- 
+-@@ -1750,7 +1753,7 @@
+-         self._remeasure_attr_columns()
+-         self._resize_attr_rows_to_wrapped_content()
+-         self._schedule_attr_row_resize(0)
+--        QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
+-+        QTimer.singleShot(160, self, self._resize_attr_rows_to_wrapped_content)
+-         # cellWidget 的最终 sizeHint 可能要到本轮布局结束后才稳定，再补一次
+-         # 防抖测量，保证枚举按钮组和“输入框+上报”完整显示。
+-         self._schedule_attr_column_remeasure()
+-@@ -2406,6 +2409,24 @@
+-             btn.setText("开启低功耗服务")
+-         self._send_preset_builder(lambda: frame, "低功耗服务")
+- 
+-+    def _run_pending_io_wake_send(self) -> None:
+-+        cb = getattr(self, "_pending_io_wake_send", None)
+-+        self._pending_io_wake_send = None
+-+        if callable(cb):
+-+            try:
+-+                cb()
+-+            except RuntimeError:
+-+                pass
+-+
+-+    def _run_pending_io_wake_restore(self) -> None:
+-+        cb = getattr(self, "_pending_io_wake_restore", None)
+-+        self._pending_io_wake_restore = None
+-+        if callable(cb):
+-+            try:
+-+                cb()
+-+            except RuntimeError:
+-+                pass
+-+
+-     def _on_io_wake(self) -> None:
+-         """IO 唤醒模拟：50ms 拉高 + 50ms 预留 → 首次心跳返回 0x00
+- 
+-@@ -2453,8 +2474,10 @@
+-             self.btn_io_wake.setEnabled(True)
+-             self.btn_io_wake.setText("IO 唤醒")
+- 
+--        QTimer.singleShot(50, _send_reset_heartbeat)
+--        QTimer.singleShot(100, _restore_button)
+-+        self._pending_io_wake_send = _send_reset_heartbeat
+-+        self._pending_io_wake_restore = _restore_button
+-+        QTimer.singleShot(50, self, self._run_pending_io_wake_send)
+-+        QTimer.singleShot(100, self, self._run_pending_io_wake_restore)
+- 
+-     def _update_lp_status(self, in_low_power: bool) -> None:
+-         if in_low_power:
+diff --git a/patches/parser_strict_hex_and_cache.patch b/patches/parser_strict_hex_and_cache.patch
+deleted file mode 100644
+index f0e6f58..0000000
+--- a/patches/parser_strict_hex_and_cache.patch
++++ /dev/null
+@@ -1,84 +0,0 @@
+---- a/protocol_parser/parser.py
+-+++ b/protocol_parser/parser.py
+-@@ -9,6 +9,9 @@
+- """
+- from __future__ import annotations
+- 
+-+import copy
+-+import threading
+-+
+- import json
+- import math
+- import re
+-@@ -271,6 +274,7 @@
+- 
+- # ---------- 内置 V3.0 协议（CLI/GUI 共用，避免 CLI 依赖 gui.py） ----------
+- _builtin_v3: dict | None = None
+-+_builtin_v3_lock = threading.Lock()
+- 
+- 
+- def _default_protocol_dir() -> Path:
+-@@ -309,11 +313,13 @@
+-     """获取内置串口 3.0 基础协议（模块级缓存）。
+- 
+-     CLI / GUI 共用，这样 CLI 不用依赖 gui.py（避免在没装 tkinter 的环境运行失败）。
+-+    返回 deepcopy 快照，避免调用方修改嵌套结构污染全局缓存。
+-     """
+-     global _builtin_v3
+--    if refresh or _builtin_v3 is None:
+--        _builtin_v3 = _load_builtin_v3_fallback()
+--    return _builtin_v3
+-+    with _builtin_v3_lock:
+-+        if refresh or _builtin_v3 is None:
+-+            _builtin_v3 = _load_builtin_v3_fallback()
+-+        return copy.deepcopy(_builtin_v3)
+- 
+- 
+- def merge_protocol(base: dict, override: dict) -> dict:
+-@@ -419,33 +425,26 @@
+- def parse_hex_input(text: str) -> bytes:
+-     """把用户输入的 hex 字符串解析为 bytes。
+- 
+--    严格版本（修复了旧实现的全局 replace('0x','') 静默错删）：
+--      1) 仅“词首合法”的 0xHEX（0x 前不是字母数字，0x 后紧跟 hex）才剥掉前缀；
+--         - 合法： 0xAA,0xBB ; (0xAA 0xBB) ; 0x01 0x02
+--         - 不合法（夹在字符串中间）： AA0x11（A 是字母数字，所以整体视作文本，0x 不应剥）
+--      2) 对“残留脏 0x”（后跟非 hex，或夹在字母数字里）直接删掉 0x 两个字符，
+--         再对剩下文本 findall 纯 hex 段合并，严格判断奇偶。
+-+    严格 token 语法（拒绝孤立 x/X 及任意夹心畸形输入）：
+-+      - 仅允许一个或多个 token，token 为可选 0x/0X 前缀 + 十六进制字符
+-+      - token 之间只能用空白或逗号分隔
+-+      - 合法：A5 5A、0xA5,0x5A、A55A
+-+      - 非法：A5x5A、0xZZ11、A5G5、xA5
+-     """
+-     if text is None:
+-         raise HexParseError("输入为空")
+--    raw = str(text)
+-+    raw = str(text).strip()
+-+    if not raw:
+-+        raise HexParseError("输入为空")
+- 
+--    # 严格白名单：只允许 hex 字符、0x 前缀、空白、逗号
+--    # 含其他字符直接失败，避免 "0xZZ11" 被静默变成 "11"
+--    if re.search(r"[^0-9a-fA-FxX\s,\n\r]", raw):
+-+    # 整串必须匹配 token 语法；任意孤立 x/X 或其它字符直接失败
+-+    if not re.fullmatch(r"(?i)(?:0x)?[0-9a-f]+(?:[\s,]+(?:0x)?[0-9a-f]+)*", raw):
+-         raise HexParseError(
+--            f"HEX 输入包含非法字符，仅允许 0-9/a-f/A-F、0x 前缀、空格与逗号：{raw!r}"
+-+            f"HEX 输入格式非法，仅允许 0x 前缀或纯十六进制，用空格/逗号分隔：{raw!r}"
+-         )
+- 
+--    # Step 1: 合法 0xHEX （词首，前面不是字母数字）→ 剥 0x 前缀，保留后面 hex
+--    s1 = _RE_PREFIXED_HEX.sub(lambda m: m.group(1), raw)
+--    # Step 2: 剔除残留 0x（两种情形都删 0x 两个字符）：
+--    #   a) 前面是字母数字（如 AA0x11 里的 0x，整体不合法，不要拼成 AA11 假通过）
+--    #   b) 后跟非 hex（如 0xZZ11 里的 0x，后跟 Z 不合法，避免残留 0 造成假偶数）
+--    s2 = re.sub(r"(?i)(?<=[0-9a-zA-Z])0x|0x(?![0-9a-f])", "", s1)
+--
+--    # Step 3: 纯 hex 段合并
+--    joined = "".join(_RE_PURE_HEX.findall(s2))
+-+    tokens = re.findall(r"(?i)(?:0x)?[0-9a-f]+", raw)
+-+    joined = "".join(t[2:] if t.lower().startswith("0x") else t for t in tokens)
+-     if not joined:
+-         raise HexParseError("输入中没有任何可解析的 hex 字符")
+-     if len(joined) % 2 != 0:
+diff --git a/protocol_parser/attr_center.py b/protocol_parser/attr_center.py
+index 6f66c5c..7b17845 100644
+--- a/protocol_parser/attr_center.py
++++ b/protocol_parser/attr_center.py
+@@ -781,6 +781,46 @@ class AttrStateCenter:
+             if entry is not None:
+                 entry.current_value = self.validate_attr_value(attrid, value)
+ 
++    def apply_values_atomic(self, values: dict[int, Any]) -> dict[int, Any]:
++        """在同一把锁下校验并写入多个属性，保证无中间态可见。
++
++        返回被修改属性的旧值快照，供调用方在后续失败时调用
++        :meth:`restore_values` 完整回滚。任一属性校验失败时，**不会**
++        修改任何属性，异常直接抛出。
++        """
++        if not values:
++            return {}
++        with self._lock:
++            normalized: dict[int, Any] = {}
++            for attrid, value in values.items():
++                aid = int(attrid)
++                entry = self._attrs.get(aid)
++                if entry is None:
++                    raise AttributeValidationError(f"未知属性 0x{aid & 0xFF:02X}")
++                # validate_attr_value 使用同一把 RLock，可重入
++                normalized[aid] = self.validate_attr_value(aid, value)
++
++            old_values: dict[int, Any] = {}
++            for aid, value in normalized.items():
++                entry = self._attrs[aid]
++                old_values[aid] = copy.deepcopy(entry.current_value)
++                entry.current_value = value
++            return old_values
++
++    def restore_values(self, old_values: dict[int, Any]) -> None:
++        """在同一把锁下恢复一组属性值（事务回滚）。
++
++        忽略快照中已不存在的 attrid；不重新校验，避免回滚路径因校验
++        规则变化而再次失败。
++        """
++        if not old_values:
++            return
++        with self._lock:
++            for attrid, value in old_values.items():
++                entry = self._attrs.get(int(attrid))
++                if entry is not None:
++                    entry.current_value = value
++
+     def set_batch_value(self, attrid: int, value: Any) -> None:
+         with self._lock:
+             entry = self._attrs.get(int(attrid))
+diff --git a/protocol_parser/auto_reply.py b/protocol_parser/auto_reply.py
+index 53d908f..50c13bf 100644
+--- a/protocol_parser/auto_reply.py
++++ b/protocol_parser/auto_reply.py
+@@ -3,11 +3,19 @@ from __future__ import annotations
+ 
+ from dataclasses import dataclass
+ import json
++import logging
++import threading
+ from types import SimpleNamespace
+ from typing import Callable, Any
+ 
++from .exceptions import AttributeValidationError, ValidationError
+ from .parser import parse_attr_payload_fields
+ 
++_log = logging.getLogger(__name__)
++
++# 协议/产品校验类异常：应归一化为“拒绝本帧”，不应当作引擎崩溃。
++_VALIDATION_ERRORS = (AttributeValidationError, ValidationError, ValueError, TypeError)
++
+ 
+ @dataclass
+ class ReplyRule:
+@@ -36,31 +44,38 @@ class AutoReplyEngine:
+         self._rules: dict[int, ReplyRule] = {}
+         self._low_power_active = False
+         self._last_applied_attrids: list[int] = []
++        # 保护 enable/rules/role/low_power 等跨线程共享状态；
++        # on_frame 在串口线程，enable/set_role 在 GUI 线程。
++        self._lock = threading.RLock()
+         self._register_mcu_rules()
+ 
+     def set_collector(self, collector) -> None:
+-        if collector is not self._collector:
+-            self.reset_state()
+-        self._collector = collector
++        with self._lock:
++            if collector is not self._collector:
++                self.reset_state()
++            self._collector = collector
+ 
+     def set_before_send(self, callback: Callable[[int, str], None] | None) -> None:
+-        self._on_before_send = callback
++        with self._lock:
++            self._on_before_send = callback
+ 
+     def set_role(self, role: str) -> None:
+-        self.reset_state()
+-        self._role = "module" if str(role).lower() == "module" else "mcu"
+-        if self._role == "mcu":
+-            self._register_mcu_rules(preserve_enabled=True)
+-        else:
+-            self._rules = {}
++        with self._lock:
++            self.reset_state()
++            self._role = "module" if str(role).lower() == "module" else "mcu"
++            if self._role == "mcu":
++                self._register_mcu_rules(preserve_enabled=True)
++            else:
++                self._rules = {}
+ 
+     def enable(self, enable: bool, *, enable_all_rules: bool = False) -> None:
+-        new_value = bool(enable)
+-        if new_value != self._enabled:
+-            self.reset_state()
+-        self._enabled = new_value
+-        if self._enabled and enable_all_rules:
+-            self.enable_all_rules()
++        with self._lock:
++            new_value = bool(enable)
++            if new_value != self._enabled:
++                self.reset_state()
++            self._enabled = new_value
++            if self._enabled and enable_all_rules:
++                self.enable_all_rules()
+ 
+     def enable_all_rules(self) -> None:
+         """Enable every registered MCU reply rule.
+@@ -70,46 +85,56 @@ class AutoReplyEngine:
+         global enable and make only part of the protocol stop responding.
+         Users may still disable individual rows afterwards.
+         """
+-        for rule in self._rules.values():
+-            rule.enabled = True
++        with self._lock:
++            for rule in self._rules.values():
++                rule.enabled = True
+ 
+     @property
+     def enabled(self) -> bool:
+-        return self._enabled
++        with self._lock:
++            return self._enabled
+ 
+     @property
+     def role(self) -> str:
+-        return self._role
++        with self._lock:
++            return self._role
+ 
+     @property
+     def rules(self) -> dict[int, ReplyRule]:
+-        return self._rules
++        with self._lock:
++            return dict(self._rules)
+ 
+     @property
+     def low_power_active(self) -> bool:
+-        return self._low_power_active
++        with self._lock:
++            return self._low_power_active
+ 
+     @property
+     def last_applied_attrids(self) -> list[int]:
+         """Internal attribute IDs changed by the most recent handled command."""
+-        return list(self._last_applied_attrids)
++        with self._lock:
++            return list(self._last_applied_attrids)
+ 
+     def wake(self) -> bytes:
+         """IO 唤醒：重置心跳计数器，返回首次心跳回复(0x00)"""
+-        self._ac.reset_heartbeat_counter()
+-        self._low_power_active = False
+-        return self._cmd.build_heartbeat_reset()
++        with self._lock:
++            self._ac.reset_heartbeat_counter()
++            self._low_power_active = False
++            return self._cmd.build_heartbeat_reset()
+ 
+     def reset_state(self) -> None:
+         """Reset connection/product scoped automatic-reply state."""
+-        self._low_power_active = False
+-        self._last_applied_attrids = []
+-        self._ac.reset_heartbeat_counter()
++        # 允许在已持有 self._lock 时调用（RLock 可重入）
++        with self._lock:
++            self._low_power_active = False
++            self._last_applied_attrids = []
++            self._ac.reset_heartbeat_counter()
+ 
+     def set_rule_enabled(self, cmd_code: int, enabled: bool) -> None:
+-        rule = self._rules.get(int(cmd_code) & 0xFF)
+-        if rule is not None:
+-            rule.enabled = bool(enabled)
++        with self._lock:
++            rule = self._rules.get(int(cmd_code) & 0xFF)
++            if rule is not None:
++                rule.enabled = bool(enabled)
+ 
+     def _register_mcu_rules(self, preserve_enabled: bool = False) -> None:
+         old = {code: rule.enabled for code, rule in self._rules.items()} if preserve_enabled else {}
+@@ -156,31 +181,44 @@ class AutoReplyEngine:
+             try:
+                 self._on_error(message)
+             except Exception:
+-                pass
++                _log.exception("auto_reply on_error callback raised")
+ 
+     def on_frame(self, result, frame, ts: float) -> int:
+         del ts
+-        self._last_applied_attrids = []
+-        if not self._enabled or self._role != "mcu" or self._collector is None:
+-            return 0
+-        cmd_int = self._cmd_int(result)
+-        # 低功耗模式下跳过心跳回复（协议要求低功耗时停止心跳）
+-        if cmd_int == 0x20 and self._low_power_active:
+-            return 0
+-        rule = self._rules.get(cmd_int)
+-        if rule is None:
+-            if cmd_int == 0x01:
+-                self._warn("收到命令下发，但当前产品没有注册 0x01 自动回复规则")
+-            return 0
+-        if not rule.enabled:
+-            if cmd_int == 0x01:
+-                self._warn("收到命令下发，但 0x01 自动回复规则已关闭")
+-            return 0
+-        direction = str(getattr(result, "direction", "") or "")
+-        if direction and "MCU→模组" in direction:
+-            return 0
+-        try:
+-            payloads = rule.action(result, frame)
++        # 决策与组包在锁内，实际 send 在锁外，避免与 GUI/采集线程互相阻塞。
++        with self._lock:
++            self._last_applied_attrids = []
++            if not self._enabled or self._role != "mcu" or self._collector is None:
++                return 0
++            cmd_int = self._cmd_int(result)
++            # 低功耗模式下跳过心跳回复（协议要求低功耗时停止心跳）
++            if cmd_int == 0x20 and self._low_power_active:
++                return 0
++            rule = self._rules.get(cmd_int)
++            if rule is None:
++                if cmd_int == 0x01:
++                    self._warn("收到命令下发，但当前产品没有注册 0x01 自动回复规则")
++                return 0
++            if not rule.enabled:
++                if cmd_int == 0x01:
++                    self._warn("收到命令下发，但 0x01 自动回复规则已关闭")
++                return 0
++            direction = str(getattr(result, "direction", "") or "")
++            if direction and "MCU→模组" in direction:
++                return 0
++            rule_name = rule.name
++            collector = self._collector
++            before_send = self._on_before_send
++            try:
++                payloads = rule.action(result, frame)
++            except _VALIDATION_ERRORS as exc:
++                self._warn(f"自动回复校验失败（{rule_name}）：{exc}")
++                return 0
++            except Exception as exc:
++                # 非预期异常：记完整 traceback，仍不打断串口接收线程
++                _log.exception("自动回复内部异常（%s）", rule_name)
++                self._warn(f"自动回复失败（{rule_name}）：{exc}")
++                return 0
+             if payloads is None:
+                 return 0
+             if isinstance(payloads, (bytes, bytearray)):
+@@ -189,27 +227,25 @@ class AutoReplyEngine:
+                 payload_list = [bytes(p) for p in payloads if p]
+             if not payload_list:
+                 return 0
+-            for payload in payload_list:
++
++        for payload in payload_list:
++            try:
++                collector.send(
++                    payload,
++                    metadata={"auto_reply": True, "rule_name": rule_name},
++                )
++            except TypeError as exc:
++                # Backward compatibility for lightweight collectors used by
++                # integrations/tests that implement send(data) only.
++                if "metadata" not in str(exc) and "unexpected keyword" not in str(exc):
++                    raise
++                collector.send(payload)
++            if before_send is not None:
+                 try:
+-                    self._collector.send(
+-                        payload,
+-                        metadata={"auto_reply": True, "rule_name": rule.name},
+-                    )
+-                except TypeError as exc:
+-                    # Backward compatibility for lightweight collectors used by
+-                    # integrations/tests that implement send(data) only.
+-                    if "metadata" not in str(exc) and "unexpected keyword" not in str(exc):
+-                        raise
+-                    self._collector.send(payload)
+-                if self._on_before_send is not None:
+-                    try:
+-                        self._on_before_send(1, rule.name)
+-                    except Exception:
+-                        pass
+-            return len(payload_list)
+-        except Exception as exc:  # 自动回复失败不能中断串口接收线程
+-            self._warn(f"自动回复失败（{rule.name}）：{exc}")
+-            return 0
++                    before_send(1, rule_name)
++                except Exception:
++                    _log.exception("auto_reply on_before_send callback raised")
++        return len(payload_list)
+ 
+     def _reply_heartbeat(self, result, frame) -> bytes:
+         del result, frame
+@@ -280,18 +316,24 @@ class AutoReplyEngine:
+         # the exact same parser used by the normal receive path.
+         if not records:
+             raw_data = bytes(getattr(frame, "data", b"") or b"")
+-            if len(raw_data) > 1:
++            msg_id_len = self._msg_id_prefix_length(
++                getattr(frame, "cmd_code", 0x01),
++                getattr(self._ac, "cfg", None),
++            )
++            if len(raw_data) > msg_id_len:
+                 try:
+                     fallback_fields = parse_attr_payload_fields(
+-                        raw_data[1:], self._ac.cfg, force_report=False
++                        raw_data[msg_id_len:], self._ac.cfg, force_report=False
+                     )
+                     fallback_result = SimpleNamespace(fields=fallback_fields)
+                     records = self._ac.get_frame_attr_records(fallback_result)
+-
+                     # 恢复出的属性仅用于本函数 records；不原地修改 result.fields，
+                     # 避免同一 ParseResult 被展示层/其他逻辑复用时产生串扰。
+                     # 实时日志展示由 ui_helpers._recover_display_attr_fields 独立处理。
++                except _VALIDATION_ERRORS as exc:
++                    self._warn(f"命令下发属性恢复解析失败：{exc}")
+                 except Exception as exc:
++                    _log.exception("命令下发属性恢复解析内部异常")
+                     self._warn(f"命令下发属性恢复解析失败：{exc}")
+ 
+         if not records:
+@@ -323,10 +365,14 @@ class AutoReplyEngine:
+ 
+             try:
+                 normalized = self._ac.validate_attr_value(internal_id, raw_value)
+-            except Exception as exc:
+-                # 归一化自定义校验异常，避免泄漏到上层导致半写
++            except _VALIDATION_ERRORS as exc:
+                 invalid.append(str(exc))
+                 continue
++            except Exception as exc:
++                # 非预期内部错误：记 traceback，本帧仍整帧拒绝，避免半写
++                _log.exception("命令下发属性校验内部异常 attr=0x%02X", internal_id)
++                invalid.append(f"内部错误：{exc}")
++                continue
+ 
+             if internal_id not in writable_order:
+                 writable_order.append(internal_id)
+@@ -352,27 +398,46 @@ class AutoReplyEngine:
+                 + "、".join(f"0x{aid:02X}" for aid in read_only)
+             )
+ 
+-        # 二次预检：保证 set_attr_value 前全部仍合法
++        if not writable_order:
++            # 全部为只读：属性被忽略但仍回复成功消息 ID（与历史行为一致）
++            # 未知/非法值已在上文整帧拒绝，不会走到这里。
++            return [self._cmd.build_cmd_ack_resp(msg_id)]
++
++        # 二次预检：保证提交前全部仍合法（与一次校验分离，便于测试与竞态窗口）
+         try:
+             for attrid in writable_order:
+                 self._ac.validate_attr_value(attrid, validated_values[attrid])
++        except _VALIDATION_ERRORS as exc:
++            self._warn(f"命令下发二次校验失败，整帧未执行且未回复成功消息 ID：{exc}")
++            return []
+         except Exception as exc:
+-            # 与一次校验一致：任何异常都归一化为空回复，防止半写
++            _log.exception("命令下发二次校验内部异常")
+             self._warn(f"命令下发二次校验失败，整帧未执行且未回复成功消息 ID：{exc}")
+             return []
+ 
+-        # 写前快照，写入或组包失败时回滚，保证状态与协议回复一致
+-        old_values: dict[int, Any] = {}
+-        for attrid in writable_order:
+-            entry = self._ac.get_entry(attrid)
+-            if entry is not None:
+-                old_values[attrid] = entry.current_value
+-
++        # 原子批量写入（AttrStateCenter 事务接口）；测试用假对象回退到顺序写入
++        values_to_write = {aid: validated_values[aid] for aid in writable_order}
+         try:
+-            for attrid in writable_order:
+-                self._ac.set_attr_value(attrid, validated_values[attrid])
+-            self._last_applied_attrids = list(writable_order)
++            if hasattr(self._ac, "apply_values_atomic"):
++                old_values = self._ac.apply_values_atomic(values_to_write)
++            else:
++                old_values = {}
++                for attrid, value in values_to_write.items():
++                    entry = self._ac.get_entry(attrid)
++                    if entry is not None:
++                        old_values[attrid] = getattr(entry, "current_value", None)
++                    self._ac.set_attr_value(attrid, value)
++        except _VALIDATION_ERRORS as exc:
++            self._warn(f"命令下发写入校验失败，整帧未执行且未回复成功消息 ID：{exc}")
++            return []
++        except Exception as exc:
++            _log.exception("命令下发原子写入内部异常")
++            self._warn(f"命令下发写入失败，整帧未执行且未回复成功消息 ID：{exc}")
++            return []
++
++        self._last_applied_attrids = list(writable_order)
+ 
++        try:
+             replies: list[bytes] = [self._cmd.build_cmd_ack_resp(msg_id)]
+             reportable = [
+                 attrid
+@@ -386,22 +451,51 @@ class AutoReplyEngine:
+                 )
+             return replies
+         except Exception as exc:
+-            rollback_errors: list[str] = []
+-            for attrid, old in old_values.items():
+-                try:
+-                    self._ac.set_attr_value(attrid, old)
+-                except Exception as rb_exc:
+-                    rollback_errors.append(f"0x{attrid:02X}:{rb_exc}")
+-            self._last_applied_attrids = []
+-            if rollback_errors:
+-                detail = "; ".join(rollback_errors)
+-                self._warn(f"命令下发写入/组包失败且回滚部分失败（状态可能脏）：{exc} | {detail}")
++            # 组包失败：用 AttrStateCenter 事务接口一次性回滚
++            try:
++                if hasattr(self._ac, "restore_values"):
++                    self._ac.restore_values(old_values)
++                else:
++                    for attrid, old in old_values.items():
++                        self._ac.set_attr_value(attrid, old)
++            except Exception as rb_exc:
++                _log.exception("属性事务回滚失败")
++                self._last_applied_attrids = []
++                self._warn(
++                    f"命令下发组包失败且回滚失败（状态可能脏）：{exc} | {rb_exc}"
++                )
+                 raise RuntimeError(
+-                    f"属性回滚失败，状态可能不一致：{detail}"
++                    f"属性回滚失败，状态可能不一致：{rb_exc}"
+                 ) from exc
++            self._last_applied_attrids = []
++            _log.exception("命令下发组包失败，已回滚属性状态")
+             self._warn(f"命令下发写入/组包失败，已回滚属性状态：{exc}")
+             return []
+ 
++    @staticmethod
++    def _msg_id_prefix_length(cmd_code: int = 0x01, cfg: dict | None = None) -> int:
++        """从协议配置推断命令 payload 中消息 ID 前缀字节数。
++
++        V3 默认 1 字节；若命令 request.format 指明更大宽度或自定义布局，
++        优先尊重配置，避免硬编码偏移。
++        """
++        del cmd_code  # 预留：可按命令差异化
++        # 当前内置 V3 与产品 JSON 的 msg_id* 格式均为 1 字节
++        # 允许 cfg.frame.msg_id_size / cfg.__msg_id_width__ 显式覆盖
++        if isinstance(cfg, dict):
++            frame = cfg.get("frame") if isinstance(cfg.get("frame"), dict) else {}
++            for key in ("msg_id_size", "msg_id_width", "__msg_id_width__"):
++                raw = frame.get(key, cfg.get(key))
++                if raw is None:
++                    continue
++                try:
++                    size = int(raw)
++                    if size > 0:
++                        return size
++                except (TypeError, ValueError):
++                    continue
++        return 1
++
+     @staticmethod
+     def _extract_action_id(result) -> int:
+         for field_obj in getattr(result, "fields", None) or []:
+@@ -474,7 +568,10 @@ class AutoReplyEngine:
+                 value = item.get("value", item.get("default", entry.current_value))
+                 try:
+                     value = self._ac.validate_attr_value(attrid, value)
+-                except ValueError:
++                except _VALIDATION_ERRORS:
++                    value = entry.current_value
++                except Exception:
++                    _log.exception("Action 输出属性校验内部异常 attr=0x%02X", attrid)
+                     value = entry.current_value
+                 result.append((attrid, value, entry.typeid))
+                 continue
+diff --git a/protocol_parser/storage.py b/protocol_parser/storage.py
+index a4ddcd7..92f8e8b 100644
+--- a/protocol_parser/storage.py
++++ b/protocol_parser/storage.py
+@@ -185,16 +185,20 @@ class RawDataWriter:
+ 
+         若 join 超时：保留 ``_thread`` 引用，禁止在半停止状态下 start 新线程；
+         调用方可稍后再次调用 stop() 重试，直到成功。
++
++        start/stop 的状态切换均在 ``_state_lock`` 保护下完成；join 在锁外
++        执行，避免与 worker 回调互相死锁。
+         """
+-        self._accepting = False
+-        self._stop_requested.set()
++        with self._state_lock:
++            self._accepting = False
++            self._stop_requested.set()
++            thread = self._thread
+         if not drain:
+             self._drain_queue_without_callbacks()
+         try:
+             self._queue.put_nowait(_STOP)
+         except queue.Full:
+             pass
+-        thread = self._thread
+         if thread is not None and thread is not threading.current_thread():
+             thread.join(timeout=max(0.0, float(timeout)))
+             if thread.is_alive():
+@@ -202,7 +206,9 @@ class RawDataWriter:
+                     "原始数据写入线程未能在限定时间内停止；请稍后重试 stop()，勿直接 start"
+                 )
+         with self._state_lock:
+-            self._thread = None
++            # 仅清理本次 stop 对应的线程引用，避免覆盖并发 start 的新线程
++            if self._thread is thread:
++                self._thread = None
+         try:
+             self._close_file(sync=True)
+         except Exception as exc:
+diff --git a/protocol_parser/ui_helpers.py b/protocol_parser/ui_helpers.py
+index 1a1c8db..a57c6fa 100644
+--- a/protocol_parser/ui_helpers.py
++++ b/protocol_parser/ui_helpers.py
+@@ -171,11 +171,16 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
+             except Exception:
+                 _log.debug("resolve_wire_attrid failed for wire_id=%s", wire_id, exc_info=True)
+                 internal_id = None
++
++        # 映射失败时绝不把 wire_id 当作 internal_id，避免张冠李戴显示错误名称/单位。
++        # 无映射时仅展示线协议 serialId 原始值。
+         if internal_id is None:
+-            internal_id = wire_id
++            parts.append(f"属性(线ID 0x{int(wire_id) & 0xFF:02X})")
++            continue
+ 
+         getter = getattr(attr_center, "get_entry", None)
+         if not callable(getter):
++            parts.append(f"属性(线ID 0x{int(wire_id) & 0xFF:02X})")
+             continue
+         try:
+             entry = getter(internal_id)
+@@ -183,6 +188,7 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
+             _log.debug("get_entry failed for internal_id=%s", internal_id, exc_info=True)
+             entry = None
+         if entry is None:
++            parts.append(f"属性(线ID 0x{int(wire_id) & 0xFF:02X})")
+             continue
+ 
+         # 展示层只做只读格式化，不调用 validate_attr_value，避免副作用/开销耦合。
+diff --git a/scripts/apply_buildfix33_patches.py b/scripts/apply_buildfix33_patches.py
+deleted file mode 100644
+index 72b1cae..0000000
+--- a/scripts/apply_buildfix33_patches.py
++++ /dev/null
+@@ -1,245 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply BuildFix33 remaining fixes (parser + mcu_page).
+-
+-Windows / macOS / Linux 通用，不依赖系统 patch 命令。
+-
+-在仓库根目录执行：
+-
+-    python scripts/apply_buildfix33_patches.py
+-
+-然后：
+-
+-    git add protocol_parser/parser.py protocol_parser/mcu_page.py
+-    git commit -m "fix(parser,mcu_page): apply BuildFix33 patches to source"
+-    git push origin fix/hardening-p0-p1
+-"""
+-from __future__ import annotations
+-
+-import re
+-import sys
+-from pathlib import Path
+-
+-ROOT = Path(__file__).resolve().parents[1]
+-
+-
+-def _parse_hunk_header(line: str):
+-    m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+-    if not m:
+-        return None
+-    return (
+-        int(m.group(1)),
+-        int(m.group(2) or "1"),
+-        int(m.group(3)),
+-        int(m.group(4) or "1"),
+-    )
+-
+-
+-def apply_unified_patch(target: Path, patch_text: str) -> None:
+-    lines = patch_text.splitlines()
+-    i = 0
+-    while i < len(lines) and not lines[i].startswith("@@"):
+-        i += 1
+-    if i >= len(lines):
+-        raise RuntimeError(f"patch has no hunks: {target}")
+-
+-    orig_lines = target.read_text(encoding="utf-8").splitlines()
+-    result: list[str] = []
+-    orig_idx = 0
+-
+-    while i < len(lines):
+-        header = lines[i]
+-        parsed = _parse_hunk_header(header)
+-        if parsed is None:
+-            if header.startswith("---") or header.startswith("+++") or not header.strip():
+-                i += 1
+-                continue
+-            raise RuntimeError(f"unexpected patch line: {header!r}")
+-        old_start, _old_count, _new_start, _new_count = parsed
+-        i += 1
+-
+-        while orig_idx < old_start - 1:
+-            result.append(orig_lines[orig_idx])
+-            orig_idx += 1
+-
+-        while i < len(lines) and not lines[i].startswith("@@"):
+-            row = lines[i]
+-            if row.startswith("\\"):
+-                i += 1
+-                continue
+-            if not row or row[0] not in " +-":
+-                if row.startswith("---") or row.startswith("+++"):
+-                    break
+-                raise RuntimeError(f"bad hunk line: {row!r}")
+-            tag, body = row[0], row[1:]
+-            if tag == " ":
+-                if orig_idx >= len(orig_lines) or orig_lines[orig_idx] != body:
+-                    got = orig_lines[orig_idx] if orig_idx < len(orig_lines) else "<EOF>"
+-                    raise RuntimeError(
+-                        f"context mismatch in {target.name} at line {orig_idx + 1}:\n"
+-                        f"  expected: {body!r}\n"
+-                        f"  got:      {got!r}"
+-                    )
+-                result.append(body)
+-                orig_idx += 1
+-            elif tag == "-":
+-                if orig_idx >= len(orig_lines) or orig_lines[orig_idx] != body:
+-                    got = orig_lines[orig_idx] if orig_idx < len(orig_lines) else "<EOF>"
+-                    raise RuntimeError(
+-                        f"delete mismatch in {target.name} at line {orig_idx + 1}:\n"
+-                        f"  expected: {body!r}\n"
+-                        f"  got:      {got!r}"
+-                    )
+-                orig_idx += 1
+-            elif tag == "+":
+-                result.append(body)
+-            i += 1
+-
+-    while orig_idx < len(orig_lines):
+-        result.append(orig_lines[orig_idx])
+-        orig_idx += 1
+-
+-    text = "\n".join(result)
+-    if target.read_text(encoding="utf-8").endswith("\n"):
+-        text += "\n"
+-    target.write_text(text, encoding="utf-8")
+-
+-
+-def fix_mcu_page(path: Path) -> None:
+-    """Surgical transforms that tolerate surrounding code drift."""
+-    text = path.read_text(encoding="utf-8")
+-
+-    def _fix_method_timers(s: str) -> tuple[str, int]:
+-        pattern = re.compile(
+-            r"QTimer\.singleShot\((.*?),\s*self\.([A-Za-z_][A-Za-z0-9_]*)\s*\)",
+-            re.S,
+-        )
+-        count = 0
+-        pieces: list[str] = []
+-        pos = 0
+-        for m in pattern.finditer(s):
+-            if ", self, self." in m.group(0):
+-                continue
+-            pieces.append(s[pos:m.start()])
+-            pieces.append(f"QTimer.singleShot({m.group(1)}, self, self.{m.group(2)})")
+-            pos = m.end()
+-            count += 1
+-        pieces.append(s[pos:])
+-        return "".join(pieces), count
+-
+-    text, n1 = _fix_method_timers(text)
+-
+-    text, n2 = re.subn(
+-        r'QTimer\.singleShot\(\s*0\s*,\s*lambda:\s*setattr\(self,\s*["\']_rebalancing["\']\s*,\s*False\)\s*\)',
+-        "QTimer.singleShot(0, self, self._clear_rebalancing)",
+-        text,
+-    )
+-    text, n2b = re.subn(
+-        r'QTimer\.singleShot\(0, lambda: setattr\(self, "_rebalancing", False\)\)',
+-        "QTimer.singleShot(0, self, self._clear_rebalancing)",
+-        text,
+-    )
+-    n2 += n2b
+-
+-    if "def _clear_rebalancing" not in text:
+-        anchor = "    def _rebalance_lower_panels(self) -> None:"
+-        helper = (
+-            "    def _clear_rebalancing(self) -> None:\n"
+-            "        self._rebalancing = False\n"
+-            "\n"
+-        )
+-        if anchor not in text:
+-            raise RuntimeError("cannot find _rebalance_lower_panels to insert helper")
+-        text = text.replace(anchor, helper + anchor, 1)
+-
+-    if "def _run_pending_io_wake_send" not in text:
+-        anchor = "    def _on_io_wake(self) -> None:"
+-        helpers = '''    def _run_pending_io_wake_send(self) -> None:
+-        cb = getattr(self, "_pending_io_wake_send", None)
+-        self._pending_io_wake_send = None
+-        if callable(cb):
+-            try:
+-                cb()
+-            except RuntimeError:
+-                pass
+-
+-    def _run_pending_io_wake_restore(self) -> None:
+-        cb = getattr(self, "_pending_io_wake_restore", None)
+-        self._pending_io_wake_restore = None
+-        if callable(cb):
+-            try:
+-                cb()
+-            except RuntimeError:
+-                pass
+-
+-'''
+-        if anchor not in text:
+-            raise RuntimeError("cannot find _on_io_wake to insert helpers")
+-        text = text.replace(anchor, helpers + anchor, 1)
+-
+-    text, n3 = re.subn(
+-        r"QTimer\.singleShot\(\s*50\s*,\s*_send_reset_heartbeat\s*\)\s*\n\s*"
+-        r"QTimer\.singleShot\(\s*100\s*,\s*_restore_button\s*\)",
+-        "self._pending_io_wake_send = _send_reset_heartbeat\n"
+-        "        self._pending_io_wake_restore = _restore_button\n"
+-        "        QTimer.singleShot(50, self, self._run_pending_io_wake_send)\n"
+-        "        QTimer.singleShot(100, self, self._run_pending_io_wake_restore)",
+-        text,
+-    )
+-
+-    unsafe = [
+-        ln
+-        for ln in text.splitlines()
+-        if "QTimer.singleShot" in ln and ", self," not in ln and "lambda" not in ln
+-    ]
+-    if unsafe:
+-        raise RuntimeError("still have unsafe QTimer.singleShot lines:\n" + "\n".join(unsafe))
+-
+-    path.write_text(text, encoding="utf-8")
+-    print(f"  mcu_page transforms: method-timers={n1}, rebalance-lambda={n2}, wake={n3}")
+-
+-
+-def main() -> int:
+-    parser = ROOT / "protocol_parser" / "parser.py"
+-    mcu = ROOT / "protocol_parser" / "mcu_page.py"
+-    parser_patch = ROOT / "patches" / "parser_strict_hex_and_cache.patch"
+-
+-    if not parser.exists() or not mcu.exists():
+-        print("请在仓库根目录运行本脚本", file=sys.stderr)
+-        return 1
+-
+-    ptxt = parser.read_text(encoding="utf-8")
+-    if "_builtin_v3_lock" in ptxt and "fullmatch" in ptxt:
+-        print(f"跳过（已应用）: {parser.relative_to(ROOT)}")
+-    else:
+-        if not parser_patch.exists():
+-            print(f"缺少 patch: {parser_patch}", file=sys.stderr)
+-            return 1
+-        print(f"应用 {parser_patch.relative_to(ROOT)} -> {parser.relative_to(ROOT)}")
+-        try:
+-            apply_unified_patch(parser, parser_patch.read_text(encoding="utf-8"))
+-        except Exception as exc:
+-            print(f"失败: {exc}", file=sys.stderr)
+-            return 1
+-        print("  OK")
+-
+-    mtxt = mcu.read_text(encoding="utf-8")
+-    if "def _run_pending_io_wake_send" in mtxt and "QTimer.singleShot(0, self, self.apply_dpi_metrics)" in mtxt:
+-        print(f"跳过（已应用）: {mcu.relative_to(ROOT)}")
+-    else:
+-        print(f"应用 surgical fix -> {mcu.relative_to(ROOT)}")
+-        try:
+-            fix_mcu_page(mcu)
+-        except Exception as exc:
+-            print(f"失败: {exc}", file=sys.stderr)
+-            return 1
+-        print("  OK")
+-
+-    print("全部完成。请执行：")
+-    print("  git add protocol_parser/parser.py protocol_parser/mcu_page.py")
+-    print('  git commit -m "fix(parser,mcu_page): apply BuildFix33 patches to source"')
+-    print("  git push origin fix/hardening-p0-p1")
+-    return 0
+-
+-
+-if __name__ == "__main__":
+-    raise SystemExit(main())
+diff --git a/scripts/apply_buildfix34_large_files.py b/scripts/apply_buildfix34_large_files.py
+deleted file mode 100644
+index 548aac5..0000000
+--- a/scripts/apply_buildfix34_large_files.py
++++ /dev/null
+@@ -1,108 +0,0 @@
+-#!/usr/bin/env python3
+-"""Apply BuildFix34 residual edits to large source files (gui/mcu_page/parser).
+-
+-Windows-safe pure Python. Run from repo root after pulling fix/hardening-p0-p1:
+-
+-    python scripts/apply_buildfix34_large_files.py
+-"""
+-from __future__ import annotations
+-
+-from pathlib import Path
+-
+-ROOT = Path(__file__).resolve().parents[1]
+-
+-
+-def fix_gui() -> None:
+-    p = ROOT / "protocol_parser" / "gui.py"
+-    t = p.read_text(encoding="utf-8")
+-    if "QueuedConnection" in t and "storage_error_signal.connect" in t:
+-        # already has QueuedConnection somewhere near storage signals
+-        if "storage_error_signal.connect(\n            self._on_storage_error, Qt.ConnectionType.QueuedConnection" in t.replace("\r\n", "\n"):
+-            print("gui already OK")
+-            return
+-    old = (
+-        "        self.bridge.storage_error_signal.connect(self._on_storage_error)\n"
+-        "        self.bridge.storage_drop_signal.connect(self._on_storage_drop)\n"
+-    )
+-    new = (
+-        "        self.bridge.storage_error_signal.connect(\n"
+-        "            self._on_storage_error, Qt.ConnectionType.QueuedConnection\n"
+-        "        )\n"
+-        "        self.bridge.storage_drop_signal.connect(\n"
+-        "            self._on_storage_drop, Qt.ConnectionType.QueuedConnection\n"
+-        "        )\n"
+-    )
+-    if old not in t:
+-        if "QueuedConnection" in t:
+-            print("gui already OK")
+-            return
+-        raise SystemExit("gui pattern not found")
+-    p.write_text(t.replace(old, new, 1), encoding="utf-8")
+-    print("gui OK")
+-
+-
+-def fix_mcu() -> None:
+-    p = ROOT / "protocol_parser" / "mcu_page.py"
+-    t = p.read_text(encoding="utf-8")
+-    if "断开旧行控件信号并清空映射" in t:
+-        print("mcu already OK")
+-        return
+-    old = (
+-        "        self.attr_table.setUpdatesEnabled(False)\n"
+-        "        try:\n"
+-        "            self.attr_table.clearContents()\n"
+-    )
+-    new = (
+-        "        self.attr_table.setUpdatesEnabled(False)\n"
+-        "        try:\n"
+-        "            # 重建前断开旧行控件信号并清空映射，避免产品切换后残留引用。\n"
+-        "            for check in list(self._attr_select_checks.values()):\n"
+-        "                try:\n"
+-        "                    check.stateChanged.disconnect(self._on_row_select_changed)\n"
+-        "                except (RuntimeError, TypeError):\n"
+-        "                    pass\n"
+-        "            self.attr_table.clearContents()\n"
+-    )
+-    if old not in t:
+-        raise SystemExit("mcu pattern not found")
+-    p.write_text(t.replace(old, new, 1), encoding="utf-8")
+-    print("mcu OK")
+-
+-
+-def fix_parser() -> None:
+-    p = ROOT / "protocol_parser" / "parser.py"
+-    t = p.read_text(encoding="utf-8")
+-    if "override = copy.deepcopy(override)" in t:
+-        print("parser already OK")
+-        return
+-    old = (
+-        "    import copy\n"
+-        "    result = copy.deepcopy(base)\n\n"
+-        "    # 基本元信息\n"
+-    )
+-    new = (
+-        "    import copy\n"
+-        "    result = copy.deepcopy(base)\n"
+-        "    override = copy.deepcopy(override)\n\n"
+-        "    # 基本元信息\n"
+-    )
+-    if old not in t:
+-        raise SystemExit("parser pattern not found")
+-    t2 = t.replace(old, new, 1)
+-    needle = "    - enums：递归合并，override 覆盖 base\n    \"\"\""
+-    insert = (
+-        "    - enums：递归合并，override 覆盖 base\n\n"
+-        "    入参均 deepcopy，保证调用方传入的 base/override 不被原地污染。\n"
+-        "    \"\"\""
+-    )
+-    if needle in t2 and "入参均 deepcopy" not in t2:
+-        t2 = t2.replace(needle, insert, 1)
+-    p.write_text(t2, encoding="utf-8")
+-    print("parser OK")
+-
+-
+-if __name__ == "__main__":
+-    fix_gui()
+-    fix_mcu()
+-    fix_parser()
+-    print("done")

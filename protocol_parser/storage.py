@@ -185,16 +185,20 @@ class RawDataWriter:
 
         若 join 超时：保留 ``_thread`` 引用，禁止在半停止状态下 start 新线程；
         调用方可稍后再次调用 stop() 重试，直到成功。
+
+        start/stop 的状态切换均在 ``_state_lock`` 保护下完成；join 在锁外
+        执行，避免与 worker 回调互相死锁。
         """
-        self._accepting = False
-        self._stop_requested.set()
+        with self._state_lock:
+            self._accepting = False
+            self._stop_requested.set()
+            thread = self._thread
         if not drain:
             self._drain_queue_without_callbacks()
         try:
             self._queue.put_nowait(_STOP)
         except queue.Full:
             pass
-        thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=max(0.0, float(timeout)))
             if thread.is_alive():
@@ -202,7 +206,9 @@ class RawDataWriter:
                     "原始数据写入线程未能在限定时间内停止；请稍后重试 stop()，勿直接 start"
                 )
         with self._state_lock:
-            self._thread = None
+            # 仅清理本次 stop 对应的线程引用，避免覆盖并发 start 的新线程
+            if self._thread is thread:
+                self._thread = None
         try:
             self._close_file(sync=True)
         except Exception as exc:
