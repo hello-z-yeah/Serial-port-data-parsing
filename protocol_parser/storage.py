@@ -7,6 +7,7 @@ observable instead of being silently ignored.
 """
 from __future__ import annotations
 
+import errno
 import os
 import glob
 import queue
@@ -160,21 +161,23 @@ class RawDataWriter:
             raise TypeError("raw writer data must be bytes")
         if not data:
             return True
-        if not self._accepting:
-            return False
-        try:
-            self._queue.put_nowait((float(ts), str(prefix), bytes(data)))
-            return True
-        except queue.Full:
-            with self._state_lock:
+        # _accepting 校验与入队必须在同一把锁内，避免 stop() 置 False 并
+        # drain/放哨兵之后，生产者仍插入落在 _STOP 之后的记录。
+        with self._state_lock:
+            if not self._accepting:
+                return False
+            try:
+                self._queue.put_nowait((float(ts), str(prefix), bytes(data)))
+                return True
+            except queue.Full:
                 self._dropped_records += 1
                 dropped = self._dropped_records
-            if self.on_drop is not None and (dropped == 1 or dropped % 100 == 0):
-                try:
-                    self.on_drop(dropped)
-                except Exception:
-                    _log.exception("on_drop callback raised")
-            return False
+        if self.on_drop is not None and (dropped == 1 or dropped % 100 == 0):
+            try:
+                self.on_drop(dropped)
+            except Exception:
+                _log.exception("on_drop callback raised")
+        return False
 
     def stop(self, *, drain: bool = True, timeout: float = 5.0) -> RawWriterStats:
         """Stop the background writer.
@@ -188,18 +191,28 @@ class RawDataWriter:
 
         start/stop 的状态切换均在 ``_state_lock`` 保护下完成；join 在锁外
         执行，避免与 worker 回调互相死锁。
+
+        若在 worker 线程自身（例如 on_error 回调）内调用 stop()：只置停机标志
+        并投入哨兵，**不** join / 不关文件 / 不清 thread 引用，收尾交给
+        worker 最外层 finally，避免死锁与过早关闭句柄。
         """
         with self._state_lock:
             self._accepting = False
             self._stop_requested.set()
             thread = self._thread
-        if not drain:
+        is_worker_thread = (
+            thread is not None and threading.current_thread() is thread
+        )
+        if not drain and not is_worker_thread:
             self._drain_queue_without_callbacks()
         try:
             self._queue.put_nowait(_STOP)
         except queue.Full:
             pass
-        if thread is not None and thread is not threading.current_thread():
+        if is_worker_thread:
+            # 收尾由 worker 的 try/finally 完成
+            return self.stats()
+        if thread is not None:
             thread.join(timeout=max(0.0, float(timeout)))
             if thread.is_alive():
                 raise StorageOperationError(
@@ -282,10 +295,24 @@ class RawDataWriter:
             if sync:
                 try:
                     os.fsync(fp.fileno())
-                except (OSError, AttributeError):
+                except AttributeError:
+                    # 无 fileno（假文件对象）时忽略
                     pass
+                except OSError as exc:
+                    # 仅忽略明确表示句柄不支持 fsync 的 errno；
+                    # 磁盘满等致命错误向上抛出并标记失败。
+                    _ignorable = {errno.EINVAL, errno.ENOTSUP}
+                    eop = getattr(errno, "EOPNOTSUPP", None)
+                    if eop is not None:
+                        _ignorable.add(eop)
+                    if exc.errno not in _ignorable:
+                        self._fail(exc)
+                        raise
         finally:
-            fp.close()
+            try:
+                fp.close()
+            except Exception:
+                pass
 
     def _rotate(self) -> None:
         self._close_file(sync=True)

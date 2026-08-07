@@ -1,0 +1,725 @@
+diff --git a/protocol_parser/attr_center.py b/protocol_parser/attr_center.py
+index 7b17845..49b2b8f 100644
+--- a/protocol_parser/attr_center.py
++++ b/protocol_parser/attr_center.py
+@@ -821,6 +821,18 @@ class AttrStateCenter:
+                 if entry is not None:
+                     entry.current_value = value
+ 
++    def get_snapshot(self) -> dict[int, Any]:
++        """返回全部属性 current_value 的深拷贝快照（事务起点）。"""
++        with self._lock:
++            return {
++                aid: copy.deepcopy(entry.current_value)
++                for aid, entry in self._attrs.items()
++            }
++
++    def restore_snapshot(self, snapshot: dict[int, Any]) -> None:
++        """用完整快照原子恢复属性值（与 get_snapshot 配对）。"""
++        self.restore_values(snapshot)
++
+     def set_batch_value(self, attrid: int, value: Any) -> None:
+         with self._lock:
+             entry = self._attrs.get(int(attrid))
+diff --git a/protocol_parser/auto_reply.py b/protocol_parser/auto_reply.py
+index 50c13bf..c6e8b07 100644
+--- a/protocol_parser/auto_reply.py
++++ b/protocol_parser/auto_reply.py
+@@ -2,6 +2,7 @@
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass
++import inspect
+ import json
+ import logging
+ import threading
+@@ -17,6 +18,19 @@ _log = logging.getLogger(__name__)
+ _VALIDATION_ERRORS = (AttributeValidationError, ValidationError, ValueError, TypeError)
+ 
+ 
++def _require_u8(value: Any, label: str = "值") -> int:
++    """严格单字节边界：拒绝隐式 & 0xFF 截断导致的指令撞车。"""
++    try:
++        iv = int(value)
++    except (TypeError, ValueError) as exc:
++        raise AttributeValidationError(f"{label} 不是整数：{value!r}") from exc
++    if not 0 <= iv <= 0xFF:
++        raise AttributeValidationError(
++            f"{label} 超出单字节范围 0–255：{iv}"
++        )
++    return iv
++
++
+ @dataclass
+ class ReplyRule:
+     name: str
+@@ -47,6 +61,7 @@ class AutoReplyEngine:
+         # 保护 enable/rules/role/low_power 等跨线程共享状态；
+         # on_frame 在串口线程，enable/set_role 在 GUI 线程。
+         self._lock = threading.RLock()
++        self._send_supports_metadata = self._detect_send_metadata(collector)
+         self._register_mcu_rules()
+ 
+     def set_collector(self, collector) -> None:
+@@ -54,6 +69,28 @@ class AutoReplyEngine:
+             if collector is not self._collector:
+                 self.reset_state()
+             self._collector = collector
++            self._send_supports_metadata = self._detect_send_metadata(collector)
++
++    @staticmethod
++    def _detect_send_metadata(collector) -> bool:
++        """缓存 collector.send 是否接受 metadata 参数，避免运行时 TypeError 文本匹配。"""
++        if collector is None:
++            return False
++        send = getattr(collector, "send", None)
++        if not callable(send):
++            return False
++        try:
++            sig = inspect.signature(send)
++        except (TypeError, ValueError):
++            # 内置/C 扩展等无法取签名时，保守假设不支持 keyword
++            return False
++        params = sig.parameters
++        if "metadata" in params:
++            return True
++        # 存在 **kwargs 时也允许传入 metadata
++        return any(
++            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
++        )
+ 
+     def set_before_send(self, callback: Callable[[int, str], None] | None) -> None:
+         with self._lock:
+@@ -171,8 +208,8 @@ class AutoReplyEngine:
+             name = str(field_obj.get("name") or "").lower().replace("_", "")
+             if name in ("消息id", "消息id", "msgid", "messageid"):
+                 try:
+-                    return int(field_obj.get("value", 0)) & 0xFF
+-                except (TypeError, ValueError):
++                    return _require_u8(field_obj.get("value", 0), "消息ID")
++                except AttributeValidationError:
+                     return 0
+         return 0
+ 
+@@ -209,6 +246,7 @@ class AutoReplyEngine:
+             rule_name = rule.name
+             collector = self._collector
+             before_send = self._on_before_send
++            supports_metadata = self._send_supports_metadata
+             try:
+                 payloads = rule.action(result, frame)
+             except _VALIDATION_ERRORS as exc:
+@@ -229,16 +267,12 @@ class AutoReplyEngine:
+                 return 0
+ 
+         for payload in payload_list:
+-            try:
++            if supports_metadata:
+                 collector.send(
+                     payload,
+                     metadata={"auto_reply": True, "rule_name": rule_name},
+                 )
+-            except TypeError as exc:
+-                # Backward compatibility for lightweight collectors used by
+-                # integrations/tests that implement send(data) only.
+-                if "metadata" not in str(exc) and "unexpected keyword" not in str(exc):
+-                    raise
++            else:
+                 collector.send(payload)
+             if before_send is not None:
+                 try:
+@@ -504,8 +538,8 @@ class AutoReplyEngine:
+             name = str(field_obj.get("name") or "").lower().replace("_", "")
+             if "action" in name or "行为" in name:
+                 try:
+-                    return int(field_obj.get("value", 0)) & 0xFF
+-                except (TypeError, ValueError):
++                    return _require_u8(field_obj.get("value", 0), "Action ID")
++                except AttributeValidationError:
+                     return 0
+         return 0
+ 
+@@ -540,7 +574,15 @@ class AutoReplyEngine:
+                 resolved = int(str(raw_id), 16) if str(raw_id).lower().startswith("0x") else int(raw_id)
+             except (TypeError, ValueError):
+                 continue
+-            if (resolved & 0xFF) == (action_id & 0xFF):
++            try:
++                resolved_u8 = _require_u8(resolved, "Action serialId")
++            except AttributeValidationError:
++                continue
++            try:
++                action_u8 = _require_u8(action_id, "Action ID")
++            except AttributeValidationError:
++                return []
++            if resolved_u8 == action_u8:
+                 target = item
+                 break
+         if not isinstance(target, dict):
+@@ -561,7 +603,8 @@ class AutoReplyEngine:
+             raw_id = item.get("serialId", item.get("attrid", item.get("iid", item.get("id"))))
+             try:
+                 attrid = int(str(raw_id), 16) if str(raw_id).lower().startswith("0x") else int(raw_id)
+-            except (TypeError, ValueError):
++                attrid = _require_u8(attrid, "属性ID")
++            except (TypeError, ValueError, AttributeValidationError):
+                 continue
+             entry = self._ac.get_entry(attrid)
+             if entry is not None:
+@@ -580,7 +623,11 @@ class AutoReplyEngine:
+             except (TypeError, ValueError):
+                 typeid = 2
+             value = item.get("value", item.get("default", 0))
+-            result.append((attrid & 0xFF, value, typeid))
++            try:
++                attrid_u8 = _require_u8(attrid, "属性ID")
++            except AttributeValidationError:
++                continue
++            result.append((attrid_u8, value, typeid))
+         return result
+ 
+     def _reply_action(self, result, frame) -> bytes:
+diff --git a/protocol_parser/gui.py b/protocol_parser/gui.py
+index 1d64389..542dbbc 100644
+--- a/protocol_parser/gui.py
++++ b/protocol_parser/gui.py
+@@ -253,7 +253,7 @@ def _schedule_combo_popup_font_sync(combo: QWidget) -> None:
+             return
+         _sync_combo_popup_font(current)
+ 
+-    QTimer.singleShot(0, _apply)
++    QTimer.singleShot(0, combo, _apply)
+ 
+ 
+ def _sync_combo_popup_font(combo: QWidget) -> None:
+@@ -1195,12 +1195,12 @@ class ProtocolParserApp(FluentWindow):
+ 
+         # 构建首屏。协议文件解析、串口扫描和产品数据延后到事件循环启动后。
+         self._build_ui()
+-        QTimer.singleShot(0, self._align_title_bar_left)
+-        QTimer.singleShot(50, self._align_title_bar_left)
+-        QTimer.singleShot(0, self._adapt_navigation_for_width)
+-        QTimer.singleShot(0, lambda: self._apply_resolution_adaptive_metrics(force=True))
++        QTimer.singleShot(0, self, self._align_title_bar_left)
++        QTimer.singleShot(50, self, self._align_title_bar_left)
++        QTimer.singleShot(0, self, self._adapt_navigation_for_width)
++        QTimer.singleShot(0, self, lambda: self._apply_resolution_adaptive_metrics(force=True))
+         self._schedule_splitter_rebalance()
+-        QTimer.singleShot(1, self._deferred_startup_stage_protocols)
++        QTimer.singleShot(1, self, self._deferred_startup_stage_protocols)
+         self._set_status("正在初始化…")
+ 
+     # ================================================================
+@@ -1266,7 +1266,7 @@ class ProtocolParserApp(FluentWindow):
+         try:
+             self._load_protocols()
+         finally:
+-            QTimer.singleShot(1, self._deferred_startup_stage_ports)
++            QTimer.singleShot(1, self, self._deferred_startup_stage_ports)
+ 
+     def _deferred_startup_stage_ports(self) -> None:
+         """协议列表就绪后再扫描系统串口。"""
+@@ -1275,7 +1275,7 @@ class ProtocolParserApp(FluentWindow):
+         finally:
+             self._port_watch_timer.start(3000)
+             if self._monitor_port:
+-                QTimer.singleShot(1, self._apply_monitor_args)
++                QTimer.singleShot(1, self, self._apply_monitor_args)
+             self._startup_ready = True
+             self._set_status("就绪")
+ 
+@@ -1694,7 +1694,7 @@ class ProtocolParserApp(FluentWindow):
+         if page is not None:
+             rebalance = getattr(page, "_rebalance_splitter", None)
+             if callable(rebalance):
+-                QTimer.singleShot(0, rebalance)
++                QTimer.singleShot(0, page, rebalance)
+ 
+         mcu = getattr(self, "mcu_page", None)
+         if mcu is not None and mcu.isVisible():
+@@ -1722,20 +1722,20 @@ class ProtocolParserApp(FluentWindow):
+                     self._smst_screen_change_connected = True
+                 except Exception:
+                     pass
+-        QTimer.singleShot(0, lambda: self._apply_resolution_adaptive_metrics(force=True))
++        QTimer.singleShot(0, self, lambda: self._apply_resolution_adaptive_metrics(force=True))
+         # 首次显示保留 0/100ms 双保险；后续置顶切换等 show() 只需一次，
+         # 避免同一几何重复进行 4~6 轮全量重排。
+-        QTimer.singleShot(0, self._relayout_all_panels)
++        QTimer.singleShot(0, self, self._relayout_all_panels)
+         if not self._first_show_relayout_done:
+             self._first_show_relayout_done = True
+-            QTimer.singleShot(100, self._relayout_all_panels)
++            QTimer.singleShot(100, self, self._relayout_all_panels)
+ 
+     def _on_window_screen_changed(self, screen) -> None:
+         del screen
+         self._last_ui_scale_key = None
+-        QTimer.singleShot(0, lambda: self._apply_resolution_adaptive_metrics(force=True))
+-        QTimer.singleShot(0, self._relayout_all_panels)
+-        QTimer.singleShot(100, self._relayout_all_panels)
++        QTimer.singleShot(0, self, lambda: self._apply_resolution_adaptive_metrics(force=True))
++        QTimer.singleShot(0, self, self._relayout_all_panels)
++        QTimer.singleShot(100, self, self._relayout_all_panels)
+ 
+     def resizeEvent(self, event) -> None:
+         super().resizeEvent(event)
+@@ -1863,7 +1863,7 @@ class ProtocolParserApp(FluentWindow):
+             )
+         except Exception:
+             pass
+-        QTimer.singleShot(0, self._update_shared_page_scroll_policy)
++        QTimer.singleShot(0, self, self._update_shared_page_scroll_policy)
+ 
+         # 双页签互斥：监控中禁止切换到另一个页签，防止 Word/JSON 协议冲突。
+         # 真正的拦截在重写的 switchTo() 中完成（切换发生前拦截，无动画）。
+@@ -1874,16 +1874,16 @@ class ProtocolParserApp(FluentWindow):
+             self.navigationInterface.setExpandWidth(190)
+             self.navigationInterface.expand(useAni=False)
+             self._adjust_navigation_menu_position()
+-            QTimer.singleShot(0, self._adjust_navigation_menu_position)
+-            QTimer.singleShot(80, self._adjust_navigation_menu_position)
+-            QTimer.singleShot(0, self._adapt_navigation_for_width)
++            QTimer.singleShot(0, self, self._adjust_navigation_menu_position)
++            QTimer.singleShot(80, self, self._adjust_navigation_menu_position)
++            QTimer.singleShot(0, self, self._adapt_navigation_for_width)
+         except Exception:
+             pass
+         # 展开左侧导航后，某些 qfluentwidgets 版本会自动显示返回箭头。
+         # 该按钮在本工具中没有用途，延迟隐藏以覆盖导航内部的异步刷新。
+         self._hide_navigation_back_button()
+-        QTimer.singleShot(0, self._hide_navigation_back_button)
+-        QTimer.singleShot(80, self._hide_navigation_back_button)
++        QTimer.singleShot(0, self, self._hide_navigation_back_button)
++        QTimer.singleShot(80, self, self._hide_navigation_back_button)
+ 
+         # 旧的单页右侧懒加载容器废弃。
+         self.main_splitter = None
+@@ -1993,7 +1993,7 @@ class ProtocolParserApp(FluentWindow):
+             wrapper.layout().invalidate()
+             wrapper.layout().activate()
+         self.updateGeometry()
+-        QTimer.singleShot(0, self._update_shared_page_scroll_policy)
++        QTimer.singleShot(0, self, self._update_shared_page_scroll_policy)
+ 
+     def _update_shared_page_scroll_policy(self, *_args) -> None:
+         """接收页使用垂直滚动兜底，模拟 MCU 页保持自身 splitter 自适应。"""
+@@ -2093,7 +2093,7 @@ class ProtocolParserApp(FluentWindow):
+                 )
+                 return
+         super().switchTo(interface)
+-        QTimer.singleShot(0, self._update_shared_page_scroll_policy)
++        QTimer.singleShot(0, self, self._update_shared_page_scroll_policy)
+ 
+     def get_protocol_dir(self) -> Path:
+         return get_protocol_dir()
+diff --git a/protocol_parser/parser.py b/protocol_parser/parser.py
+index 9c479af..faaf273 100644
+--- a/protocol_parser/parser.py
++++ b/protocol_parser/parser.py
+@@ -336,6 +336,29 @@ def merge_protocol(base: dict, override: dict) -> dict:
+     入参均 deepcopy，保证调用方传入的 base/override 不被原地污染。
+     """
+     import copy
++
++    if not isinstance(base, dict) or not isinstance(override, dict):
++        raise ProtocolConfigError("协议配置必须是 dict（Invalid protocol JSON format）")
++
++    # 形状校验：避免未经验证的 Product JSON 在合并时触发 AttributeError/TypeError 闪退
++    for label, src in (("base", base), ("override", override)):
++        if "attributes" in src and not isinstance(src["attributes"], dict):
++            raise ProtocolConfigError(
++                f"{label}.attributes 必须是 dictionary，实际为 {type(src['attributes']).__name__}"
++            )
++        if "enums" in src and not isinstance(src["enums"], dict):
++            raise ProtocolConfigError(
++                f"{label}.enums 必须是 dictionary，实际为 {type(src['enums']).__name__}"
++            )
++        if "commands" in src and not isinstance(src["commands"], list):
++            raise ProtocolConfigError(
++                f"{label}.commands 必须是 list，实际为 {type(src['commands']).__name__}"
++            )
++        if "frame" in src and src["frame"] is not None and not isinstance(src["frame"], dict):
++            raise ProtocolConfigError(
++                f"{label}.frame 必须是 dictionary，实际为 {type(src['frame']).__name__}"
++            )
++
+     result = copy.deepcopy(base)
+     override = copy.deepcopy(override)
+ 
+@@ -440,6 +463,12 @@ def parse_hex_input(text: str) -> bytes:
+     if not raw:
+         raise HexParseError("输入为空")
+ 
++    # 拒绝空 token：A5,,5A / A5, ,5A 等连续逗号（允许首尾空白）
++    if re.search(r",\s*,", raw):
++        raise HexParseError(
++            f"HEX 输入含空 token（连续逗号），不允许：{raw!r}"
++        )
++
+     # 整串必须匹配 token 语法；任意孤立 x/X 或其它字符直接失败
+     if not re.fullmatch(r"(?i)(?:0x)?[0-9a-f]+(?:[\s,]+(?:0x)?[0-9a-f]+)*", raw):
+         raise HexParseError(
+diff --git a/protocol_parser/storage.py b/protocol_parser/storage.py
+index 92f8e8b..e93cc23 100644
+--- a/protocol_parser/storage.py
++++ b/protocol_parser/storage.py
+@@ -7,6 +7,7 @@ observable instead of being silently ignored.
+ """
+ from __future__ import annotations
+ 
++import errno
+ import os
+ import glob
+ import queue
+@@ -160,21 +161,23 @@ class RawDataWriter:
+             raise TypeError("raw writer data must be bytes")
+         if not data:
+             return True
+-        if not self._accepting:
+-            return False
+-        try:
+-            self._queue.put_nowait((float(ts), str(prefix), bytes(data)))
+-            return True
+-        except queue.Full:
+-            with self._state_lock:
++        # _accepting 校验与入队必须在同一把锁内，避免 stop() 置 False 并
++        # drain/放哨兵之后，生产者仍插入落在 _STOP 之后的记录。
++        with self._state_lock:
++            if not self._accepting:
++                return False
++            try:
++                self._queue.put_nowait((float(ts), str(prefix), bytes(data)))
++                return True
++            except queue.Full:
+                 self._dropped_records += 1
+                 dropped = self._dropped_records
+-            if self.on_drop is not None and (dropped == 1 or dropped % 100 == 0):
+-                try:
+-                    self.on_drop(dropped)
+-                except Exception:
+-                    _log.exception("on_drop callback raised")
+-            return False
++        if self.on_drop is not None and (dropped == 1 or dropped % 100 == 0):
++            try:
++                self.on_drop(dropped)
++            except Exception:
++                _log.exception("on_drop callback raised")
++        return False
+ 
+     def stop(self, *, drain: bool = True, timeout: float = 5.0) -> RawWriterStats:
+         """Stop the background writer.
+@@ -188,18 +191,28 @@ class RawDataWriter:
+ 
+         start/stop 的状态切换均在 ``_state_lock`` 保护下完成；join 在锁外
+         执行，避免与 worker 回调互相死锁。
++
++        若在 worker 线程自身（例如 on_error 回调）内调用 stop()：只置停机标志
++        并投入哨兵，**不** join / 不关文件 / 不清 thread 引用，收尾交给
++        worker 最外层 finally，避免死锁与过早关闭句柄。
+         """
+         with self._state_lock:
+             self._accepting = False
+             self._stop_requested.set()
+             thread = self._thread
+-        if not drain:
++        is_worker_thread = (
++            thread is not None and threading.current_thread() is thread
++        )
++        if not drain and not is_worker_thread:
+             self._drain_queue_without_callbacks()
+         try:
+             self._queue.put_nowait(_STOP)
+         except queue.Full:
+             pass
+-        if thread is not None and thread is not threading.current_thread():
++        if is_worker_thread:
++            # 收尾由 worker 的 try/finally 完成
++            return self.stats()
++        if thread is not None:
+             thread.join(timeout=max(0.0, float(timeout)))
+             if thread.is_alive():
+                 raise StorageOperationError(
+@@ -282,10 +295,24 @@ class RawDataWriter:
+             if sync:
+                 try:
+                     os.fsync(fp.fileno())
+-                except (OSError, AttributeError):
++                except AttributeError:
++                    # 无 fileno（假文件对象）时忽略
+                     pass
++                except OSError as exc:
++                    # 仅忽略明确表示句柄不支持 fsync 的 errno；
++                    # 磁盘满等致命错误向上抛出并标记失败。
++                    _ignorable = {errno.EINVAL, errno.ENOTSUP}
++                    eop = getattr(errno, "EOPNOTSUPP", None)
++                    if eop is not None:
++                        _ignorable.add(eop)
++                    if exc.errno not in _ignorable:
++                        self._fail(exc)
++                        raise
+         finally:
+-            fp.close()
++            try:
++                fp.close()
++            except Exception:
++                pass
+ 
+     def _rotate(self) -> None:
+         self._close_file(sync=True)
+diff --git a/tests/test_buildfix23_first_show_send_panel.py b/tests/test_buildfix23_first_show_send_panel.py
+index 851b4d1..b738106 100644
+--- a/tests/test_buildfix23_first_show_send_panel.py
++++ b/tests/test_buildfix23_first_show_send_panel.py
+@@ -8,8 +8,8 @@ MCU = ROOT / "protocol_parser" / "mcu_page.py"
+ def test_main_window_delays_a_complete_first_show_relayout():
+     source = GUI.read_text(encoding="utf-8")
+     assert "def _relayout_all_panels" in source
+-    assert "QTimer.singleShot(0, self._relayout_all_panels)" in source
+-    assert "QTimer.singleShot(100, self._relayout_all_panels)" in source
++    assert "QTimer.singleShot(0, self, self._relayout_all_panels)" in source
++    assert "QTimer.singleShot(100, self, self._relayout_all_panels)" in source
+     relayout = source.split("def _relayout_all_panels", 1)[1].split("def showEvent", 1)[0]
+     for call in (
+         "self._update_shared_toolbar_placement()",
+diff --git a/tests/test_buildfix37_storage_hex_atomicity.py b/tests/test_buildfix37_storage_hex_atomicity.py
+new file mode 100644
+index 0000000..326affb
+--- /dev/null
++++ b/tests/test_buildfix37_storage_hex_atomicity.py
+@@ -0,0 +1,235 @@
++"""Regression tests for BuildFix37: storage lifecycle, strict HEX, atomic rollback, u8 bounds."""
++from __future__ import annotations
++
++import threading
++import time
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++from protocol_parser.attr_center import AttrStateCenter
++from protocol_parser.auto_reply import AutoReplyEngine, _require_u8
++from protocol_parser.exceptions import AttributeValidationError
++from protocol_parser.parser import HexParseError, ProtocolConfigError, merge_protocol, parse_hex_input
++from protocol_parser.storage import RawDataWriter
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def test_strict_hex_tokenization() -> None:
++    with pytest.raises(HexParseError):
++        parse_hex_input("A5,,5A")
++    with pytest.raises(HexParseError):
++        parse_hex_input("A5, ,5A")
++    with pytest.raises(HexParseError):
++        parse_hex_input("A5,,")
++    # still accept normal forms
++    assert parse_hex_input("A5 5A") == bytes.fromhex("A55A")
++    assert parse_hex_input("0xA5,0x5A") == bytes.fromhex("A55A")
++
++
++def test_merge_protocol_shape_guard() -> None:
++    with pytest.raises(ProtocolConfigError):
++        merge_protocol([], {})  # type: ignore[arg-type]
++    with pytest.raises(ProtocolConfigError):
++        merge_protocol({"attributes": []}, {})
++    with pytest.raises(ProtocolConfigError):
++        merge_protocol({"commands": {}}, {})
++    # valid minimal
++    out = merge_protocol({"product": "a", "commands": []}, {"product": "b"})
++    assert out["product"] == "b"
++
++
++def test_wire_id_overflow() -> None:
++    with pytest.raises(AttributeValidationError):
++        _require_u8(0x101, "属性ID")
++    with pytest.raises(AttributeValidationError):
++        _require_u8(-1, "Action ID")
++    assert _require_u8(0x00, "x") == 0
++    assert _require_u8(0xFF, "x") == 0xFF
++
++
++def test_auto_reply_rollback_atomicity() -> None:
++    """组包失败时，AttrStateCenter 事务接口必须把已写入属性全部回滚。"""
++
++    class _Center:
++        def __init__(self) -> None:
++            self.cfg = {}
++            self.values = {1: 0, 2: 0}
++            self.writes: list[tuple[int, object]] = []
++
++        def get_frame_attr_records(self, result):
++            return [(1, 1, 10), (2, 2, 20)]
++
++        def get_entry(self, attrid: int):
++            return SimpleNamespace(access="读写", current_value=self.values.get(attrid, 0))
++
++        def validate_attr_value(self, attrid: int, value):
++            return value
++
++        def apply_values_atomic(self, values: dict[int, object]) -> dict[int, object]:
++            old = {k: self.values[k] for k in values}
++            for aid, val in values.items():
++                self.values[aid] = val
++                self.writes.append((aid, val))
++            return old
++
++        def restore_values(self, old_values: dict[int, object]) -> None:
++            for aid, val in old_values.items():
++                self.values[aid] = val
++
++        def reset_heartbeat_counter(self) -> None:
++            return None
++
++    class _Cmd:
++        def build_cmd_ack_resp(self, msg_id: int) -> bytes:
++            raise RuntimeError("ack build failed")
++
++        def build_attr_report(self, attrids, values) -> bytes:
++            return b"REPORT"
++
++    center = _Center()
++    engine = AutoReplyEngine(None, _Cmd(), center)
++    result = SimpleNamespace(fields=[{"name": "msg_id", "value": 1}])
++    frame = SimpleNamespace(data=b"")
++    replies = engine._reply_cmd_dispatch(result, frame)
++    assert replies == []
++    # 两个属性都曾被写入，但组包失败后必须全部回滚
++    assert center.values[1] == 0
++    assert center.values[2] == 0
++    assert center.writes == [(1, 10), (2, 20)]
++
++
++def test_raw_data_writer_concurrency(tmp_path: Path) -> None:
++    """高频 enqueue 与 stop 并发：不得在 _STOP 之后继续落盘，stop 必须稳定返回。"""
++    written_lock = threading.Lock()
++    records_after_stop: list[bytes] = []
++    stop_seen = threading.Event()
++
++    class TrackingFile:
++        def __init__(self, path: Path, mode: str) -> None:
++            self._fp = open(path, mode)  # noqa: SIM115
++            self._path = path
++
++        def write(self, data: bytes) -> int:
++            if stop_seen.is_set():
++                with written_lock:
++                    records_after_stop.append(bytes(data))
++            return self._fp.write(data)
++
++        def flush(self) -> None:
++            self._fp.flush()
++
++        def fileno(self) -> int:
++            return self._fp.fileno()
++
++        def close(self) -> None:
++            self._fp.close()
++
++    def opener(path, mode):
++        return TrackingFile(Path(path), mode)
++
++    writer = RawDataWriter(
++        directory=tmp_path,
++        basename="conc",
++        queue_size=2000,
++        batch_bytes=1024,
++        batch_interval=0.05,
++        opener=opener,
++    )
++    writer.start()
++
++    stop_flag = threading.Event()
++    errors: list[BaseException] = []
++
++    def producer(n: int) -> None:
++        try:
++            for i in range(200):
++                if stop_flag.is_set():
++                    break
++                writer.enqueue(f"P{n}-{i}".encode(), time.time(), prefix="T")
++        except BaseException as exc:  # noqa: BLE001
++            errors.append(exc)
++
++    threads = [threading.Thread(target=producer, args=(i,), daemon=True) for i in range(10)]
++    for th in threads:
++        th.start()
++    time.sleep(0.05)
++    stop_flag.set()
++    stop_seen.set()
++    stats = writer.stop(drain=True, timeout=5.0)
++    for th in threads:
++        th.join(timeout=2.0)
++
++    assert not errors
++    assert stats is not None
++    # stop 之后不应再有新的写盘（允许已在 worker 手中的少量在途记录）
++    # 关键约束：stop 返回后再次 enqueue 必须失败
++    assert writer.enqueue(b"late", time.time()) is False
++
++
++def test_on_error_stop_safely(tmp_path: Path) -> None:
++    """on_error 回调内调用 stop() 不得死锁，也不得在 worker 结束前过早清句柄。"""
++    stopped = threading.Event()
++    errors: list[str] = []
++
++    def on_error(msg: str) -> None:
++        errors.append(msg)
++        # 在 worker 线程内重入 stop
++        try:
++            writer.stop(drain=False, timeout=1.0)
++        except Exception as exc:  # noqa: BLE001
++            errors.append(f"stop-failed:{exc}")
++        stopped.set()
++
++    writer = RawDataWriter(
++        directory=tmp_path,
++        basename="safe",
++        queue_size=16,
++        batch_bytes=1,
++        batch_interval=0.01,
++        on_error=on_error,
++    )
++    writer.start()
++
++    # 注入一个会触发写失败的 opener：第一次 open 正常，写时抛错
++    real_open = writer._opener
++
++    class BoomFile:
++        def __init__(self, fp) -> None:
++            self._fp = fp
++
++        def write(self, data: bytes) -> int:
++            raise OSError("disk full simulation")
++
++        def flush(self) -> None:
++            self._fp.flush()
++
++        def fileno(self) -> int:
++            return self._fp.fileno()
++
++        def close(self) -> None:
++            self._fp.close()
++
++    def boom_opener(path, mode):
++        return BoomFile(real_open(path, mode))
++
++    writer._opener = boom_opener
++    # 强制重新打开文件使后续写走 BoomFile：通过 rotate 路径较难，直接换 _file
++    if writer._file is not None:
++        try:
++            writer._file.close()
++        except Exception:
++            pass
++        writer._file = BoomFile(real_open(writer._file_path(writer._file_index), "ab"))
++
++    assert writer.enqueue(b"boom", time.time()) is True
++    # 等待 worker 触发 _fail -> on_error -> stop
++    assert stopped.wait(timeout=3.0), "on_error was not invoked"
++    # 再从外部 stop 应可稳定返回
++    stats = writer.stop(drain=False, timeout=3.0)
++    assert stats is not None
++    assert writer.running is False
++    assert any("disk full" in e or "原始数据保存已停止" in e for e in errors)

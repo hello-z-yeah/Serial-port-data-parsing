@@ -821,6 +821,18 @@ class AttrStateCenter:
                 if entry is not None:
                     entry.current_value = value
 
+    def get_snapshot(self) -> dict[int, Any]:
+        """返回全部属性 current_value 的深拷贝快照（事务起点）。"""
+        with self._lock:
+            return {
+                aid: copy.deepcopy(entry.current_value)
+                for aid, entry in self._attrs.items()
+            }
+
+    def restore_snapshot(self, snapshot: dict[int, Any]) -> None:
+        """用完整快照原子恢复属性值（与 get_snapshot 配对）。"""
+        self.restore_values(snapshot)
+
     def set_batch_value(self, attrid: int, value: Any) -> None:
         with self._lock:
             entry = self._attrs.get(int(attrid))

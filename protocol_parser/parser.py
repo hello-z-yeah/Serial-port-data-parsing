@@ -336,6 +336,29 @@ def merge_protocol(base: dict, override: dict) -> dict:
     入参均 deepcopy，保证调用方传入的 base/override 不被原地污染。
     """
     import copy
+
+    if not isinstance(base, dict) or not isinstance(override, dict):
+        raise ProtocolConfigError("协议配置必须是 dict（Invalid protocol JSON format）")
+
+    # 形状校验：避免未经验证的 Product JSON 在合并时触发 AttributeError/TypeError 闪退
+    for label, src in (("base", base), ("override", override)):
+        if "attributes" in src and not isinstance(src["attributes"], dict):
+            raise ProtocolConfigError(
+                f"{label}.attributes 必须是 dictionary，实际为 {type(src['attributes']).__name__}"
+            )
+        if "enums" in src and not isinstance(src["enums"], dict):
+            raise ProtocolConfigError(
+                f"{label}.enums 必须是 dictionary，实际为 {type(src['enums']).__name__}"
+            )
+        if "commands" in src and not isinstance(src["commands"], list):
+            raise ProtocolConfigError(
+                f"{label}.commands 必须是 list，实际为 {type(src['commands']).__name__}"
+            )
+        if "frame" in src and src["frame"] is not None and not isinstance(src["frame"], dict):
+            raise ProtocolConfigError(
+                f"{label}.frame 必须是 dictionary，实际为 {type(src['frame']).__name__}"
+            )
+
     result = copy.deepcopy(base)
     override = copy.deepcopy(override)
 
@@ -439,6 +462,12 @@ def parse_hex_input(text: str) -> bytes:
     raw = str(text).strip()
     if not raw:
         raise HexParseError("输入为空")
+
+    # 拒绝空 token：A5,,5A / A5, ,5A 等连续逗号（允许首尾空白）
+    if re.search(r",\s*,", raw):
+        raise HexParseError(
+            f"HEX 输入含空 token（连续逗号），不允许：{raw!r}"
+        )
 
     # 整串必须匹配 token 语法；任意孤立 x/X 或其它字符直接失败
     if not re.fullmatch(r"(?i)(?:0x)?[0-9a-f]+(?:[\s,]+(?:0x)?[0-9a-f]+)*", raw):

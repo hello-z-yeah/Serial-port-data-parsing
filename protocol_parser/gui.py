@@ -253,7 +253,7 @@ def _schedule_combo_popup_font_sync(combo: QWidget) -> None:
             return
         _sync_combo_popup_font(current)
 
-    QTimer.singleShot(0, _apply)
+    QTimer.singleShot(0, combo, _apply)
 
 
 def _sync_combo_popup_font(combo: QWidget) -> None:
@@ -1195,12 +1195,12 @@ class ProtocolParserApp(FluentWindow):
 
         # 构建首屏。协议文件解析、串口扫描和产品数据延后到事件循环启动后。
         self._build_ui()
-        QTimer.singleShot(0, self._align_title_bar_left)
-        QTimer.singleShot(50, self._align_title_bar_left)
-        QTimer.singleShot(0, self._adapt_navigation_for_width)
-        QTimer.singleShot(0, lambda: self._apply_resolution_adaptive_metrics(force=True))
+        QTimer.singleShot(0, self, self._align_title_bar_left)
+        QTimer.singleShot(50, self, self._align_title_bar_left)
+        QTimer.singleShot(0, self, self._adapt_navigation_for_width)
+        QTimer.singleShot(0, self, lambda: self._apply_resolution_adaptive_metrics(force=True))
         self._schedule_splitter_rebalance()
-        QTimer.singleShot(1, self._deferred_startup_stage_protocols)
+        QTimer.singleShot(1, self, self._deferred_startup_stage_protocols)
         self._set_status("正在初始化…")
 
     # ================================================================
@@ -1266,7 +1266,7 @@ class ProtocolParserApp(FluentWindow):
         try:
             self._load_protocols()
         finally:
-            QTimer.singleShot(1, self._deferred_startup_stage_ports)
+            QTimer.singleShot(1, self, self._deferred_startup_stage_ports)
 
     def _deferred_startup_stage_ports(self) -> None:
         """协议列表就绪后再扫描系统串口。"""
@@ -1275,7 +1275,7 @@ class ProtocolParserApp(FluentWindow):
         finally:
             self._port_watch_timer.start(3000)
             if self._monitor_port:
-                QTimer.singleShot(1, self._apply_monitor_args)
+                QTimer.singleShot(1, self, self._apply_monitor_args)
             self._startup_ready = True
             self._set_status("就绪")
 
@@ -1694,7 +1694,7 @@ class ProtocolParserApp(FluentWindow):
         if page is not None:
             rebalance = getattr(page, "_rebalance_splitter", None)
             if callable(rebalance):
-                QTimer.singleShot(0, rebalance)
+                QTimer.singleShot(0, page, rebalance)
 
         mcu = getattr(self, "mcu_page", None)
         if mcu is not None and mcu.isVisible():
@@ -1722,20 +1722,20 @@ class ProtocolParserApp(FluentWindow):
                     self._smst_screen_change_connected = True
                 except Exception:
                     pass
-        QTimer.singleShot(0, lambda: self._apply_resolution_adaptive_metrics(force=True))
+        QTimer.singleShot(0, self, lambda: self._apply_resolution_adaptive_metrics(force=True))
         # 首次显示保留 0/100ms 双保险；后续置顶切换等 show() 只需一次，
         # 避免同一几何重复进行 4~6 轮全量重排。
-        QTimer.singleShot(0, self._relayout_all_panels)
+        QTimer.singleShot(0, self, self._relayout_all_panels)
         if not self._first_show_relayout_done:
             self._first_show_relayout_done = True
-            QTimer.singleShot(100, self._relayout_all_panels)
+            QTimer.singleShot(100, self, self._relayout_all_panels)
 
     def _on_window_screen_changed(self, screen) -> None:
         del screen
         self._last_ui_scale_key = None
-        QTimer.singleShot(0, lambda: self._apply_resolution_adaptive_metrics(force=True))
-        QTimer.singleShot(0, self._relayout_all_panels)
-        QTimer.singleShot(100, self._relayout_all_panels)
+        QTimer.singleShot(0, self, lambda: self._apply_resolution_adaptive_metrics(force=True))
+        QTimer.singleShot(0, self, self._relayout_all_panels)
+        QTimer.singleShot(100, self, self._relayout_all_panels)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -1863,7 +1863,7 @@ class ProtocolParserApp(FluentWindow):
             )
         except Exception:
             pass
-        QTimer.singleShot(0, self._update_shared_page_scroll_policy)
+        QTimer.singleShot(0, self, self._update_shared_page_scroll_policy)
 
         # 双页签互斥：监控中禁止切换到另一个页签，防止 Word/JSON 协议冲突。
         # 真正的拦截在重写的 switchTo() 中完成（切换发生前拦截，无动画）。
@@ -1874,16 +1874,16 @@ class ProtocolParserApp(FluentWindow):
             self.navigationInterface.setExpandWidth(190)
             self.navigationInterface.expand(useAni=False)
             self._adjust_navigation_menu_position()
-            QTimer.singleShot(0, self._adjust_navigation_menu_position)
-            QTimer.singleShot(80, self._adjust_navigation_menu_position)
-            QTimer.singleShot(0, self._adapt_navigation_for_width)
+            QTimer.singleShot(0, self, self._adjust_navigation_menu_position)
+            QTimer.singleShot(80, self, self._adjust_navigation_menu_position)
+            QTimer.singleShot(0, self, self._adapt_navigation_for_width)
         except Exception:
             pass
         # 展开左侧导航后，某些 qfluentwidgets 版本会自动显示返回箭头。
         # 该按钮在本工具中没有用途，延迟隐藏以覆盖导航内部的异步刷新。
         self._hide_navigation_back_button()
-        QTimer.singleShot(0, self._hide_navigation_back_button)
-        QTimer.singleShot(80, self._hide_navigation_back_button)
+        QTimer.singleShot(0, self, self._hide_navigation_back_button)
+        QTimer.singleShot(80, self, self._hide_navigation_back_button)
 
         # 旧的单页右侧懒加载容器废弃。
         self.main_splitter = None
@@ -1993,7 +1993,7 @@ class ProtocolParserApp(FluentWindow):
             wrapper.layout().invalidate()
             wrapper.layout().activate()
         self.updateGeometry()
-        QTimer.singleShot(0, self._update_shared_page_scroll_policy)
+        QTimer.singleShot(0, self, self._update_shared_page_scroll_policy)
 
     def _update_shared_page_scroll_policy(self, *_args) -> None:
         """接收页使用垂直滚动兜底，模拟 MCU 页保持自身 splitter 自适应。"""
@@ -2093,7 +2093,7 @@ class ProtocolParserApp(FluentWindow):
                 )
                 return
         super().switchTo(interface)
-        QTimer.singleShot(0, self._update_shared_page_scroll_policy)
+        QTimer.singleShot(0, self, self._update_shared_page_scroll_policy)
 
     def get_protocol_dir(self) -> Path:
         return get_protocol_dir()

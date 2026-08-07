@@ -8,8 +8,8 @@ MCU = ROOT / "protocol_parser" / "mcu_page.py"
 def test_main_window_delays_a_complete_first_show_relayout():
     source = GUI.read_text(encoding="utf-8")
     assert "def _relayout_all_panels" in source
-    assert "QTimer.singleShot(0, self._relayout_all_panels)" in source
-    assert "QTimer.singleShot(100, self._relayout_all_panels)" in source
+    assert "QTimer.singleShot(0, self, self._relayout_all_panels)" in source
+    assert "QTimer.singleShot(100, self, self._relayout_all_panels)" in source
     relayout = source.split("def _relayout_all_panels", 1)[1].split("def showEvent", 1)[0]
     for call in (
         "self._update_shared_toolbar_placement()",

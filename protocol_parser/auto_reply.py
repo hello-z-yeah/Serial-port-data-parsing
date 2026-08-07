@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import inspect
 import json
 import logging
 import threading
@@ -15,6 +16,19 @@ _log = logging.getLogger(__name__)
 
 # 协议/产品校验类异常：应归一化为“拒绝本帧”，不应当作引擎崩溃。
 _VALIDATION_ERRORS = (AttributeValidationError, ValidationError, ValueError, TypeError)
+
+
+def _require_u8(value: Any, label: str = "值") -> int:
+    """严格单字节边界：拒绝隐式 & 0xFF 截断导致的指令撞车。"""
+    try:
+        iv = int(value)
+    except (TypeError, ValueError) as exc:
+        raise AttributeValidationError(f"{label} 不是整数：{value!r}") from exc
+    if not 0 <= iv <= 0xFF:
+        raise AttributeValidationError(
+            f"{label} 超出单字节范围 0–255：{iv}"
+        )
+    return iv
 
 
 @dataclass
@@ -47,6 +61,7 @@ class AutoReplyEngine:
         # 保护 enable/rules/role/low_power 等跨线程共享状态；
         # on_frame 在串口线程，enable/set_role 在 GUI 线程。
         self._lock = threading.RLock()
+        self._send_supports_metadata = self._detect_send_metadata(collector)
         self._register_mcu_rules()
 
     def set_collector(self, collector) -> None:
@@ -54,6 +69,28 @@ class AutoReplyEngine:
             if collector is not self._collector:
                 self.reset_state()
             self._collector = collector
+            self._send_supports_metadata = self._detect_send_metadata(collector)
+
+    @staticmethod
+    def _detect_send_metadata(collector) -> bool:
+        """缓存 collector.send 是否接受 metadata 参数，避免运行时 TypeError 文本匹配。"""
+        if collector is None:
+            return False
+        send = getattr(collector, "send", None)
+        if not callable(send):
+            return False
+        try:
+            sig = inspect.signature(send)
+        except (TypeError, ValueError):
+            # 内置/C 扩展等无法取签名时，保守假设不支持 keyword
+            return False
+        params = sig.parameters
+        if "metadata" in params:
+            return True
+        # 存在 **kwargs 时也允许传入 metadata
+        return any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
 
     def set_before_send(self, callback: Callable[[int, str], None] | None) -> None:
         with self._lock:
@@ -171,8 +208,8 @@ class AutoReplyEngine:
             name = str(field_obj.get("name") or "").lower().replace("_", "")
             if name in ("消息id", "消息id", "msgid", "messageid"):
                 try:
-                    return int(field_obj.get("value", 0)) & 0xFF
-                except (TypeError, ValueError):
+                    return _require_u8(field_obj.get("value", 0), "消息ID")
+                except AttributeValidationError:
                     return 0
         return 0
 
@@ -209,6 +246,7 @@ class AutoReplyEngine:
             rule_name = rule.name
             collector = self._collector
             before_send = self._on_before_send
+            supports_metadata = self._send_supports_metadata
             try:
                 payloads = rule.action(result, frame)
             except _VALIDATION_ERRORS as exc:
@@ -229,16 +267,12 @@ class AutoReplyEngine:
                 return 0
 
         for payload in payload_list:
-            try:
+            if supports_metadata:
                 collector.send(
                     payload,
                     metadata={"auto_reply": True, "rule_name": rule_name},
                 )
-            except TypeError as exc:
-                # Backward compatibility for lightweight collectors used by
-                # integrations/tests that implement send(data) only.
-                if "metadata" not in str(exc) and "unexpected keyword" not in str(exc):
-                    raise
+            else:
                 collector.send(payload)
             if before_send is not None:
                 try:
@@ -504,8 +538,8 @@ class AutoReplyEngine:
             name = str(field_obj.get("name") or "").lower().replace("_", "")
             if "action" in name or "行为" in name:
                 try:
-                    return int(field_obj.get("value", 0)) & 0xFF
-                except (TypeError, ValueError):
+                    return _require_u8(field_obj.get("value", 0), "Action ID")
+                except AttributeValidationError:
                     return 0
         return 0
 
@@ -540,7 +574,15 @@ class AutoReplyEngine:
                 resolved = int(str(raw_id), 16) if str(raw_id).lower().startswith("0x") else int(raw_id)
             except (TypeError, ValueError):
                 continue
-            if (resolved & 0xFF) == (action_id & 0xFF):
+            try:
+                resolved_u8 = _require_u8(resolved, "Action serialId")
+            except AttributeValidationError:
+                continue
+            try:
+                action_u8 = _require_u8(action_id, "Action ID")
+            except AttributeValidationError:
+                return []
+            if resolved_u8 == action_u8:
                 target = item
                 break
         if not isinstance(target, dict):
@@ -561,7 +603,8 @@ class AutoReplyEngine:
             raw_id = item.get("serialId", item.get("attrid", item.get("iid", item.get("id"))))
             try:
                 attrid = int(str(raw_id), 16) if str(raw_id).lower().startswith("0x") else int(raw_id)
-            except (TypeError, ValueError):
+                attrid = _require_u8(attrid, "属性ID")
+            except (TypeError, ValueError, AttributeValidationError):
                 continue
             entry = self._ac.get_entry(attrid)
             if entry is not None:
@@ -580,7 +623,11 @@ class AutoReplyEngine:
             except (TypeError, ValueError):
                 typeid = 2
             value = item.get("value", item.get("default", 0))
-            result.append((attrid & 0xFF, value, typeid))
+            try:
+                attrid_u8 = _require_u8(attrid, "属性ID")
+            except AttributeValidationError:
+                continue
+            result.append((attrid_u8, value, typeid))
         return result
 
     def _reply_action(self, result, frame) -> bytes:
