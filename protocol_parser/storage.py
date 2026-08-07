@@ -128,9 +128,6 @@ class RawDataWriter:
             self._dropped_records = 0
             self._drain_queue_without_callbacks()
             self._open_current_file(append=True)
-            # If the last existing part is already full, begin with a fresh,
-            # unused part instead of appending beyond the limit or overwriting
-            # an older _NNN file from a previous session.
             if self._current_size >= self.max_file_bytes:
                 self._close_file(sync=False)
                 self._file_index = self._next_unused_index(self._file_index + 1)
@@ -168,8 +165,6 @@ class RawDataWriter:
             with self._state_lock:
                 self._dropped_records += 1
                 dropped = self._dropped_records
-            # Notify on the first drop and periodically thereafter; do not flood
-            # the GUI while a high-rate source remains above disk throughput.
             if self.on_drop is not None and (dropped == 1 or dropped % 100 == 0):
                 try:
                     self.on_drop(dropped)
@@ -178,6 +173,15 @@ class RawDataWriter:
             return False
 
     def stop(self, *, drain: bool = True, timeout: float = 5.0) -> RawWriterStats:
+        """Stop the background writer.
+
+        drain=True：尽量排空队列后再停止。
+        drain=False：丢弃队列中尚未被 worker 取出的记录；已被取出或正在
+        flush 的记录仍可能落盘（不是“立即取消一切未写数据”）。
+
+        若 join 超时：保留 ``_thread`` 引用，禁止在半停止状态下 start 新线程；
+        调用方可稍后再次调用 stop() 重试，直到成功。
+        """
         self._accepting = False
         self._stop_requested.set()
         if not drain:
@@ -185,13 +189,14 @@ class RawDataWriter:
         try:
             self._queue.put_nowait(_STOP)
         except queue.Full:
-            # The worker will observe stop_requested after draining one item.
             pass
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=max(0.0, float(timeout)))
             if thread.is_alive():
-                raise StorageOperationError("原始数据写入线程未能在限定时间内停止")
+                raise StorageOperationError(
+                    "原始数据写入线程未能在限定时间内停止；请稍后重试 stop()，勿直接 start"
+                )
         with self._state_lock:
             self._thread = None
         try:
@@ -214,7 +219,6 @@ class RawDataWriter:
         return self.directory / f"{self.basename}{suffix}.dat"
 
     def _find_last_existing_index(self) -> int:
-        """Return the highest existing part index without trusting directory order."""
         highest = 0 if self._file_path(0).exists() else -1
         prefix = f"{self.basename}_"
         pattern = f"{glob.escape(self.basename)}_*.dat"
@@ -324,8 +328,6 @@ class RawDataWriter:
             pending = bytearray()
             record_count = 0
             last_flush = time.monotonic()
-            # Rotate only when the next record arrives.  Rotating immediately
-            # after a final oversized batch creates an empty trailing _NNN file.
 
         try:
             while True:
@@ -350,8 +352,6 @@ class RawDataWriter:
                 try:
                     ts, prefix, data = item
                     rendered = self._format_record(ts, prefix, data)
-                    # Rotate before adding an oversized next record so normal
-                    # files do not significantly exceed the configured limit.
                     if pending and self._current_size + len(pending) + len(rendered) > self.max_file_bytes:
                         flush_pending()
                     if self._current_size > 0 and self._current_size + len(rendered) > self.max_file_bytes:
