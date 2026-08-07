@@ -179,17 +179,12 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
         if entry is None:
             continue
 
+        # 展示层只做只读格式化，不调用 validate_attr_value，避免副作用/开销耦合。
         raw_value = candidate.get(
             "value_raw",
             candidate.get("value", field_obj.get("value")),
         )
         value = raw_value
-        validator = getattr(attr_center, "validate_attr_value", None)
-        if callable(validator):
-            try:
-                value = validator(internal_id, raw_value)
-            except Exception:
-                value = raw_value
 
         name = str(
             getattr(entry, "cn_name", "")
