@@ -56,7 +56,7 @@
          """重新分配横向三栏：实时数据 | 实时属性 | 预置命令。
  
          原则：
-@@ -1226,7 +1229,7 @@
+@@ -1229,7 +1232,7 @@
              data_card.isVisibleTo(self)
              and splitter.contentsRect().width() <= 1
          ):
@@ -65,7 +65,7 @@
              return
  
          show_attr = attr_card.isVisibleTo(self)
-@@ -1253,7 +1256,7 @@
+@@ -1256,7 +1259,7 @@
              sizes = self._allocate_panel_sizes(total, data_min, attr_w, preset_w)
              splitter.setSizes(sizes)
              self._rebalancing = True
@@ -74,7 +74,7 @@
              return
  
          attr_w = 0
-@@ -1293,14 +1296,14 @@
+@@ -1296,14 +1299,14 @@
          sizes = self._allocate_panel_sizes(total, data_min, attr_w, preset_w)
          splitter.setSizes(sizes)
          self._rebalancing = True
@@ -99,7 +99,7 @@
  
      def _on_product_combo_changed(self, index: int) -> None:
          del index
-@@ -1323,14 +1326,14 @@
+@@ -1326,14 +1329,14 @@
          self._remeasure_attr_columns()
          self._resize_attr_rows_to_wrapped_content()
          self._schedule_attr_row_resize(0)
@@ -118,14 +118,14 @@
 -            QTimer.singleShot(100, self._relayout_all_mcu)
 +            QTimer.singleShot(100, self, self._relayout_all_mcu)
  
-@@ -1750,7 +1753,7 @@
+@@ -1753,7 +1756,7 @@
          self._remeasure_attr_columns()
          self._resize_attr_rows_to_wrapped_content()
          self._schedule_attr_row_resize(0)
 -        QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
 +        QTimer.singleShot(160, self, self._resize_attr_rows_to_wrapped_content)
  
-@@ -2406,6 +2409,24 @@
+@@ -2409,6 +2412,24 @@
              btn.setText("开启低功耗服务")
          self._send_preset_builder(lambda: frame, "低功耗服务")
  
@@ -148,7 +148,7 @@
 +                pass
 +
      def _on_io_wake(self) -> None:
-@@ -2453,8 +2474,10 @@
+@@ -2456,8 +2477,10 @@
              self.btn_io_wake.setEnabled(True)
              self.btn_io_wake.setText("IO 唤醒")
  
