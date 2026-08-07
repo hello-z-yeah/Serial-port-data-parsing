@@ -288,17 +288,9 @@ class AutoReplyEngine:
                     fallback_result = SimpleNamespace(fields=fallback_fields)
                     records = self._ac.get_frame_attr_records(fallback_result)
 
-                    # 部分历史/自定义产品把 0x01 request 错配成仅解析 msg_id。
-                    # 恢复出的属性字段不仅用于自动回复，也补回原 ParseResult，
-                    # 这样实时数据窗口能显示“命令涉及了哪个 serialId/属性”，
-                    # 不再只有消息 ID 而看不到控制内容。
-                    if fallback_fields:
-                        original_fields = list(getattr(result, "fields", None) or [])
-                        original_fields.extend(fallback_fields)
-                        try:
-                            result.fields = original_fields
-                        except Exception:
-                            pass
+                    # 恢复出的属性仅用于本函数 records；不原地修改 result.fields，
+                    # 避免同一 ParseResult 被展示层/其他逻辑复用时产生串扰。
+                    # 实时日志展示由 ui_helpers._recover_display_attr_fields 独立处理。
                 except Exception as exc:
                     self._warn(f"命令下发属性恢复解析失败：{exc}")
 
@@ -331,7 +323,7 @@ class AutoReplyEngine:
 
             try:
                 normalized = self._ac.validate_attr_value(internal_id, raw_value)
-            except ValueError as exc:
+            except (ValueError, TypeError) as exc:
                 invalid.append(str(exc))
                 continue
 
@@ -359,27 +351,47 @@ class AutoReplyEngine:
                 + "、".join(f"0x{aid:02X}" for aid in read_only)
             )
 
-        # 二次预检：保证 set_attr_value 前全部仍合法，避免中途异常导致半修改
-        for attrid in writable_order:
-            self._ac.validate_attr_value(attrid, validated_values[attrid])
+        # 二次预检：保证 set_attr_value 前全部仍合法
+        try:
+            for attrid in writable_order:
+                self._ac.validate_attr_value(attrid, validated_values[attrid])
+        except (ValueError, TypeError) as exc:
+            self._warn(f"命令下发二次校验失败，整帧未执行且未回复成功消息 ID：{exc}")
+            return []
 
-        # 统一写入（此时全部已二次通过）
+        # 写前快照，写入或组包失败时回滚，保证状态与协议回复一致
+        old_values: dict[int, Any] = {}
         for attrid in writable_order:
-            self._ac.set_attr_value(attrid, validated_values[attrid])
-        self._last_applied_attrids = list(writable_order)
+            entry = self._ac.get_entry(attrid)
+            if entry is not None:
+                old_values[attrid] = entry.current_value
 
-        replies: list[bytes] = [self._cmd.build_cmd_ack_resp(msg_id)]
-        reportable = [
-            attrid
-            for attrid in writable_order
-            if (entry := self._ac.get_entry(attrid)) is not None
-            and entry.access == "读写"
-        ]
-        if reportable:
-            replies.append(
-                self._cmd.build_attr_report(reportable, validated_values)
-            )
-        return replies
+        try:
+            for attrid in writable_order:
+                self._ac.set_attr_value(attrid, validated_values[attrid])
+            self._last_applied_attrids = list(writable_order)
+
+            replies: list[bytes] = [self._cmd.build_cmd_ack_resp(msg_id)]
+            reportable = [
+                attrid
+                for attrid in writable_order
+                if (entry := self._ac.get_entry(attrid)) is not None
+                and entry.access == "读写"
+            ]
+            if reportable:
+                replies.append(
+                    self._cmd.build_attr_report(reportable, validated_values)
+                )
+            return replies
+        except Exception as exc:
+            for attrid, old in old_values.items():
+                try:
+                    self._ac.set_attr_value(attrid, old)
+                except Exception:
+                    pass
+            self._last_applied_attrids = []
+            self._warn(f"命令下发写入/组包失败，已回滚属性状态：{exc}")
+            return []
 
     @staticmethod
     def _extract_action_id(result) -> int:
