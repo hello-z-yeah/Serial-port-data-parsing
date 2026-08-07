@@ -1,7 +1,7 @@
-"""Windows build orchestration for Super Max Serial Tool.
+"""Windows build orchestration for SST_串口工具.
 
 This module intentionally avoids cmd.exe batch parsing.  It can be invoked from
-``SMST_Build_Manager.py`` (console) or ``SMST_Build_Manager.pyw`` (GUI).
+``SST_Build_Manager.py`` (console) or ``SST_Build_Manager.pyw`` (GUI).
 """
 from __future__ import annotations
 
@@ -20,6 +20,13 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+from protocol_parser.app_info import (
+    APP_EXE_BASENAME,
+    APP_EXE_NAME,
+    APP_NAME,
+    APP_VERSION,
+)
 from typing import Callable, Iterable, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -29,9 +36,9 @@ DIST_DIR = PROJECT_ROOT / "dist"
 RELEASE_DIR = PROJECT_ROOT / "release"
 SPEC_FILE = PROJECT_ROOT / "serial_port_parser_fast.spec"
 ISS_FILE = PROJECT_ROOT / "installer" / "serial_port_parser.iss"
-EXPECTED_APP_EXE = DIST_DIR / "SuperMaxSerialTool" / "SuperMaxSerialTool.exe"
-EXPECTED_PORTABLE_EXE = DIST_DIR / "SuperMaxSerialTool_Portable.exe"
-EXPECTED_INSTALLER = RELEASE_DIR / "SuperMaxSerialTool_Setup_3.1.0_x64.exe"
+EXPECTED_APP_EXE = DIST_DIR / APP_EXE_BASENAME / APP_EXE_NAME
+EXPECTED_PORTABLE_EXE = DIST_DIR / f"{APP_EXE_BASENAME}_Portable.exe"
+EXPECTED_INSTALLER = RELEASE_DIR / f"{APP_EXE_BASENAME}_Setup_{APP_VERSION}_x64.exe"
 REQUIREMENTS_FILE = PROJECT_ROOT / "requirements.txt"
 
 SUPPORTED_MIN = (3, 11)
@@ -341,7 +348,7 @@ class BuildRunner:
 
     def diagnose(self) -> EnvironmentReport:
         report = self.environment_report()
-        self.log("Super Max Serial Tool 构建环境检查")
+        self.log(f"{APP_NAME} 构建环境检查")
         self.log(f"项目目录：{report.project_root}")
         self.log(f"Python：{report.python_executable}")
         self.log(f"版本：{report.python_version}")
@@ -410,7 +417,7 @@ class BuildRunner:
 
     def clean_build_output(self) -> None:
         self.log("\n=== 清理旧构建目录 ===")
-        for path in (PROJECT_ROOT / "build", DIST_DIR / "SuperMaxSerialTool"):
+        for path in (PROJECT_ROOT / "build", DIST_DIR / APP_EXE_BASENAME):
             if path.exists():
                 self.log(f"删除：{path}")
                 shutil.rmtree(path)
@@ -433,7 +440,7 @@ class BuildRunner:
             description="校验产品名称和版本",
         )
         self.log(f"构建成功：{EXPECTED_APP_EXE}")
-        self.log("请保留 dist\\SuperMaxSerialTool 整个目录，不要只复制 EXE。")
+        self.log(f"请保留 dist\\{APP_EXE_BASENAME} 整个目录，不要只复制 EXE。")
         return EXPECTED_APP_EXE
 
     def build_portable(self, *, install_if_missing: bool = False) -> Path:
@@ -455,7 +462,7 @@ class BuildRunner:
             "--optimize",
             "1",
             "--name",
-            "SuperMaxSerialTool_Portable",
+            f"{APP_EXE_BASENAME}_Portable",
             "--hidden-import",
             "docx",
             "--hidden-import",
@@ -521,7 +528,7 @@ def run_action(
     logger = TeeLogger(callback)
     runner = BuildRunner(logger, cancel_event)
     try:
-        runner.log(f"Super Max Serial Tool 构建工具 - 操作：{action}")
+        runner.log(f"{APP_NAME} 构建工具 - 操作：{action}")
         runner.log(f"当前 Python：{PYTHON_EXECUTABLE}")
         runner.log(f"项目目录：{PROJECT_ROOT}")
         actions = {
@@ -559,7 +566,7 @@ def run_action(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Super Max Serial Tool Windows build manager")
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} Windows build manager")
     parser.add_argument(
         "action",
         choices=("diagnose", "install-deps", "test", "build-exe", "build-portable", "build-installer", "start"),

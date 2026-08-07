@@ -5,13 +5,13 @@
 双击：
 
 ```text
-SMST_Build_Manager.pyw
+SST_Build_Manager.pyw
 ```
 
 若 `.pyw` 没有正确关联到 Python，双击：
 
 ```text
-SMST_Build_Manager.vbs
+SST_Build_Manager.vbs
 ```
 
 按顺序执行：
@@ -24,7 +24,7 @@ SMST_Build_Manager.vbs
 生成位置：
 
 ```text
-release\SuperMaxSerialTool_Setup_3.1.0_x64.exe
+release\SST_串口工具_Setup_3.1.0_x64.exe
 ```
 
 ## 命令行构建
@@ -32,16 +32,16 @@ release\SuperMaxSerialTool_Setup_3.1.0_x64.exe
 在项目目录打开终端：
 
 ```cmd
-python SMST_Build_Manager.py diagnose
-python SMST_Build_Manager.py install-deps
-python SMST_Build_Manager.py test
-python SMST_Build_Manager.py build-installer
+python SST_Build_Manager.py diagnose
+python SST_Build_Manager.py install-deps
+python SST_Build_Manager.py test
+python SST_Build_Manager.py build-installer
 ```
 
 也可以指定真实解释器：
 
 ```cmd
-"C:\Users\90780\AppData\Local\Programs\Python\Python314\python.exe" SMST_Build_Manager.py build-installer
+"C:\Users\90780\AppData\Local\Programs\Python\Python314\python.exe" SST_Build_Manager.py build-installer
 ```
 
 ## 所需环境

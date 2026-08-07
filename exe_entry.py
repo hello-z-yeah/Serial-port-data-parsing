@@ -122,7 +122,7 @@ def _exe_crash_dir() -> Path:
     except Exception:
         base = os.environ.get("LOCALAPPDATA")
         root = Path(base) if base else Path.home() / "AppData" / "Local"
-        path = root / "SuperMaxSerialTool" / "logs"
+        path = root / "SST_串口工具" / "logs"
         try:
             path.mkdir(parents=True, exist_ok=True)
         except OSError:

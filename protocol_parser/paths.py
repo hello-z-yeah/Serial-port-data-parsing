@@ -1,7 +1,7 @@
 """Resource and writable user-data paths (PyInstaller compatible).
 
 Installed program files are treated as read-only.  All mutable state lives
-under ``%LOCALAPPDATA%\\SuperMaxSerialTool`` on Windows.
+under ``%LOCALAPPDATA%\\SST_串口工具`` on Windows.
 """
 from __future__ import annotations
 

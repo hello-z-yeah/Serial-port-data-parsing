@@ -1,6 +1,6 @@
-# Super Max Serial Tool 3.1.0
+# SST_串口工具 3.1.0
 
-Super Max Serial Tool（SMST）是 Windows 串口协议分析与模拟 MCU 工具，支持 HEX/ASCII 收发、产品 JSON、实时属性、自动回复、原始数据保存和协议日志。
+SST_串口工具（SST）是 Windows 串口协议分析与模拟 MCU 工具，支持 HEX/ASCII 收发、产品 JSON、实时属性、自动回复、原始数据保存和协议日志。
 ## 3.1.0 关键变化
 
 - 两个实时数据窗口隐藏字号控件，保留 Ctrl+鼠标滚轮字号调节逻辑。
@@ -14,13 +14,13 @@ Super Max Serial Tool（SMST）是 Windows 串口协议分析与模拟 MCU 工�
 直接双击项目根目录中的：
 
 ```text
-SMST_Build_Manager.pyw
+SST_Build_Manager.pyw
 ```
 
 若 `.pyw` 没有正确关联到 Python，可双击：
 
 ```text
-SMST_Build_Manager.vbs
+SST_Build_Manager.vbs
 ```
 
 本项目已删除旧 BAT/CMD 构建入口，避免 Windows 文件关联或安全策略导致脚本无法启动。
@@ -33,14 +33,14 @@ SMST_Build_Manager.vbs
 - 每次重新开启全局自动回复时恢复全部规则，避免出现“心跳能回复、命令不回复”。
 - 内置产品采用版本化同步；旧 LocalAppData 产品会先备份，再更新为当前修正版。
 - 串口 TX、数据写盘、停止流程均为后台线程，界面不等待驱动或磁盘操作。
-- 用户数据统一保存在 `%LOCALAPPDATA%\SuperMaxSerialTool`。
+- 用户数据统一保存在 `%LOCALAPPDATA%\SST_串口工具`。
 - 完全移除在线更新和单 EXE 自替换。
 - 全界面字体按 Windows DPI 与逻辑分辨率自适应；模拟 MCU 的实时属性、预置命令、表格和下拉列表保持一致字号。
 
 ## 用户数据位置
 
 ```text
-%LOCALAPPDATA%\SuperMaxSerialTool\
+%LOCALAPPDATA%\SST_串口工具\
 ├─ config\
 ├─ products\
 │  └─ backups\       内置产品升级前的自动备份
@@ -67,24 +67,24 @@ SMST_Build_Manager.vbs
 安装包输出：
 
 ```text
-release\SuperMaxSerialTool_Setup_3.1.0_x64.exe
+release\SST_串口工具_Setup_3.1.0_x64.exe
 ```
 
 文件夹版输出：
 
 ```text
-dist\SuperMaxSerialTool\SuperMaxSerialTool.exe
+dist\SST_串口工具\SST_串口工具.exe
 ```
 
-文件夹版必须保留整个 `dist\SuperMaxSerialTool` 目录，不能只复制 EXE。
+文件夹版必须保留整个 `dist\SST_串口工具` 目录，不能只复制 EXE。
 
 ## 命令行方式
 
 ```cmd
-python SMST_Build_Manager.py diagnose
-python SMST_Build_Manager.py install-deps
-python SMST_Build_Manager.py test
-python SMST_Build_Manager.py build-installer
+python SST_Build_Manager.py diagnose
+python SST_Build_Manager.py install-deps
+python SST_Build_Manager.py test
+python SST_Build_Manager.py build-installer
 ```
 
 ## 主要源码

@@ -11,8 +11,8 @@ def test_python_314_compatible_build_dependency_minimums():
 
 def test_primary_build_entry_does_not_depend_on_batch_or_powershell():
     root = Path(__file__).resolve().parents[1]
-    console = (root / "SMST_Build_Manager.py").read_text(encoding="utf-8")
-    gui = (root / "SMST_Build_Manager.pyw").read_text(encoding="utf-8")
+    console = (root / "SST_Build_Manager.py").read_text(encoding="utf-8")
+    gui = (root / "SST_Build_Manager.pyw").read_text(encoding="utf-8")
     manager = (root / "build_tools" / "build_manager.py").read_text(encoding="utf-8")
 
     assert "cli_main" in console
@@ -30,9 +30,9 @@ def test_obsolete_batch_and_cmd_entrypoints_are_removed():
 
 def test_supported_launch_alternatives_are_present_and_documented():
     root = Path(__file__).resolve().parents[1]
-    assert (root / "SMST_Build_Manager.pyw").is_file()
-    assert (root / "SMST_Build_Manager.py").is_file()
-    assert (root / "SMST_Build_Manager.vbs").is_file()
+    assert (root / "SST_Build_Manager.pyw").is_file()
+    assert (root / "SST_Build_Manager.py").is_file()
+    assert (root / "SST_Build_Manager.vbs").is_file()
     guide = (root / "WINDOWS_BUILD_GUIDE.md").read_text(encoding="utf-8")
-    assert "SMST_Build_Manager.pyw" in guide
-    assert "SMST_Build_Manager.py build-installer" in guide
+    assert "SST_Build_Manager.pyw" in guide
+    assert "SST_Build_Manager.py build-installer" in guide

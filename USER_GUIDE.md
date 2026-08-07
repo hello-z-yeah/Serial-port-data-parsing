@@ -1,14 +1,14 @@
-# Super Max Serial Tool 3.1.0 使用说明
+# SST_串口工具 3.1.0 使用说明
 
 ## 1. 安装与启动
 
-双击 `SuperMaxSerialTool_Setup_3.1.0_x64.exe`，按安装向导完成安装。默认目录为：
+双击 `SST_串口工具_Setup_3.1.0_x64.exe`，按安装向导完成安装。默认目录为：
 
 ```text
-%LOCALAPPDATA%\Programs\Super Max Serial Tool
+%LOCALAPPDATA%\Programs\SST_串口工具
 ```
 
-程序不会联网检查或下载版本。后续升级时退出旧版本，直接运行新版完整安装包覆盖安装即可。用户产品、配置、日志和串口数据保存在 `%LOCALAPPDATA%\SuperMaxSerialTool`，不会因为覆盖安装而被删除。
+程序不会联网检查或下载版本。后续升级时退出旧版本，直接运行新版完整安装包覆盖安装即可。用户产品、配置、日志和串口数据保存在 `%LOCALAPPDATA%\SST_串口工具`，不会因为覆盖安装而被删除。
 
 ## 2. 页面说明
 
@@ -81,13 +81,13 @@ serial_data_20260805_204800_001.dat
 ## 7. 数据与日志位置
 
 ```text
-%LOCALAPPDATA%\SuperMaxSerialTool\config
-%LOCALAPPDATA%\SuperMaxSerialTool\products
-%LOCALAPPDATA%\SuperMaxSerialTool\data
-%LOCALAPPDATA%\SuperMaxSerialTool\logs
+%LOCALAPPDATA%\SST_串口工具\config
+%LOCALAPPDATA%\SST_串口工具\products
+%LOCALAPPDATA%\SST_串口工具\data
+%LOCALAPPDATA%\SST_串口工具\logs
 ```
 
-在资源管理器地址栏输入 `%LOCALAPPDATA%\SuperMaxSerialTool` 可直接打开。
+在资源管理器地址栏输入 `%LOCALAPPDATA%\SST_串口工具` 可直接打开。
 
 `error.log` 只记录真正的程序异常。超出范围、枚举错误、字符串过长、串口未连接、目录无权限等可修正问题使用普通提示，不再显示“程序遇到未知错误”。
 
@@ -100,7 +100,7 @@ serial_data_20260805_204800_001.dat
 ## 9. 手工升级
 
 1. 停止监控并退出程序。
-2. 运行新的 `SuperMaxSerialTool_Setup_<版本>_x64.exe`。
+2. 运行新的 `SST_串口工具_Setup_<版本>_x64.exe`。
 3. 使用相同安装目录完成覆盖安装。
 4. 启动新版并确认产品 JSON 和指令库仍在。
 
@@ -108,21 +108,21 @@ serial_data_20260805_204800_001.dat
 
 ## 10. 开发和测试
 
-推荐双击项目根目录的 `SMST_Build_Manager.pyw`。若 `.pyw` 没有正确关联到 Python，可双击 `SMST_Build_Manager.vbs`。
+推荐双击项目根目录的 `SST_Build_Manager.pyw`。若 `.pyw` 没有正确关联到 Python，可双击 `SST_Build_Manager.vbs`。
 
 构建管理器可以完成环境检查、依赖安装、自动测试、源码运行、文件夹版 EXE、便携版和 Windows 安装包构建。
 
 命令行方式：
 
 ```cmd
-python SMST_Build_Manager.py test
-python SMST_Build_Manager.py build-installer
+python SST_Build_Manager.py test
+python SST_Build_Manager.py build-installer
 ```
 
 最终安装包：
 
 ```text
-release\SuperMaxSerialTool_Setup_3.1.0_x64.exe
+release\SST_串口工具_Setup_3.1.0_x64.exe
 ```
 
 正式发布前应在没有 Python 的纯净 Windows 10/11 x64 虚拟机中验证安装、启动、串口拔插、连续接收、磁盘故障、覆盖升级和卸载。

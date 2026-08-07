@@ -89,7 +89,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="SuperMaxSerialTool",
+    name="SST_串口工具",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -111,5 +111,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="SuperMaxSerialTool",
+    name="SST_串口工具",
 )

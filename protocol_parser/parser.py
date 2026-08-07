@@ -170,7 +170,7 @@ def _log_error_to_disk(exc: Exception) -> Path:
             return logs_dir()
         except Exception:
             import tempfile
-            fallback = Path(tempfile.gettempdir()) / "SuperMaxSerialTool"
+            fallback = Path(tempfile.gettempdir()) / "SST_串口工具"
             fallback.mkdir(parents=True, exist_ok=True)
             return fallback
 

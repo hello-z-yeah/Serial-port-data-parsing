@@ -14,13 +14,13 @@ VSVersionInfo(
       StringTable(
         '040904B0',
         [
-          StringStruct('CompanyName', 'Super Max'),
-          StringStruct('FileDescription', 'Super Max Serial Tool'),
+          StringStruct('CompanyName', 'SST'),
+          StringStruct('FileDescription', 'SST_串口工具'),
           StringStruct('FileVersion', '3.1.0'),
-          StringStruct('InternalName', 'SuperMaxSerialTool'),
-          StringStruct('LegalCopyright', 'Copyright (c) Super Max'),
-          StringStruct('OriginalFilename', 'SuperMaxSerialTool.exe'),
-          StringStruct('ProductName', 'Super Max Serial Tool'),
+          StringStruct('InternalName', 'SST_串口工具'),
+          StringStruct('LegalCopyright', 'Copyright (c) SST'),
+          StringStruct('OriginalFilename', 'SST_串口工具.exe'),
+          StringStruct('ProductName', 'SST_串口工具'),
           StringStruct('ProductVersion', '3.1.0')
         ]
       )
