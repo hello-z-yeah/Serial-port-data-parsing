@@ -1,0 +1,282 @@
+[
+  {
+    "id": "a42fcd9011c342ffb9044a9137756525",
+    "name": "设备信息回复",
+    "payload": "A5 A5 03 21 00 74 06 F7 00 00 95 8B 0B F5 00 12 77 69 73 65 31 2E 61 76 61 6D 70 2E 77 69 73 65 35 31 0E F3 00 54 02 41 01 02 51 01 0B 52 00 02 53 02 02 54 01 02 55 01 02 56 01 0B 58 01 0B 59 01 0B 5A 00 0B 5B 00 0B 5C 00 0B 5D 02 0B 5E 00 0B 5F 00 0B 60 00 02 61 02 02 62 02 02 63 02 02 65 02 02 66 02 02 67 02 02 68 02 02 69 02 02 6A 02 02 64 01 02 6B 01 02 71 00 D4",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "66e16fa5fb0741849230e1c26ed67094",
+    "name": "设备快照回复",
+    "payload": "A5 A5 03 24 00 3C 02 41 00 02 51 00 0B 52 00 00 02 54 00 02 55 00 02 56 00 0B 58 00 00 0B 59 00 00 0B 5A 00 00 0B 5B 00 00 0B 5C 00 00 0B 5E 00 00 0B 5F 00 00 0B 60 00 00 02 64 00 02 6B 00 02 71 00 22",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "ddd52cc5236d4104a49b08d59a9d9625",
+    "name": "状态上报",
+    "payload": "A5 A5 03 10 00 3C 02 41 00 02 51 00 0B 52 00 00 02 54 00 02 55 00 02 56 00 0B 58 00 00 0B 59 00 00 0B 5A 00 00 0B 5B 00 00 0B 5C 00 00 0B 5E 00 00 0B 5F 00 00 0B 60 00 00 02 64 00 02 6B 00 02 71 00 0E",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "9657685f299f4e6ea9503c9bffe060a8",
+    "name": "设置服务2-功能1",
+    "payload": "A5 A5 03 01 00 04 01 02 41 00 96",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "9b7aac3885564345b4c7638e21601a6c",
+    "name": "设置服务3-1",
+    "payload": "A5 A5 03 01 00 04 02 02 51 00 A7",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "fb3f8e1f1734431f8cf9ba693417ad15",
+    "name": "设置服务3-3",
+    "payload": "A5 A5 03 01 00 04 03 02 53 00 AA",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "7a26b341fcae47efa3b7c75b11d67234",
+    "name": "设置服务3-4",
+    "payload": "A5 A5 03 01 00 04 04 02 54 00 AC",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "98bf0681aac04f52ad3129fbc3799376",
+    "name": "设置服务3-5",
+    "payload": "A5 A5 03 01 00 04 05 02 55 00 AE",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "e76471c9f4274725914edef761b2d487",
+    "name": "设置服务3-功能6-模式",
+    "payload": "A5 A5 03 01 00 04 06 02 56 00 B0",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "3ea6308b61f941e58c2f235006f871c5",
+    "name": "设置服务3-8",
+    "payload": "A5 A5 03 01 00 05 07 0B 58 00 00 BD",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "6c72087e691c42d3aadd4ea1fd27a21b",
+    "name": "设置服务3-9",
+    "payload": "A5 A5 03 01 00 05 08 0B 59 00 00 BF",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "9f13ec3005e8488982602c939cdc0390",
+    "name": "设置服务3-13",
+    "payload": "A5 A5 03 01 00 05 09 0B 5D 00 00 C4",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "b9126c107a7f4a699f4b7e1c5b00d4c9",
+    "name": "设置服务3-17",
+    "payload": "A5 A5 03 01 00 04 0A 02 61 00 BF",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "99f7e18b4ccc4023be7e9b01183ac10c",
+    "name": "设置服务3-功能18-功能18",
+    "payload": "A5 A5 03 01 00 04 0B 02 62 00 C1",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "66a68e4d65a34805b0f900939d8ab1bd",
+    "name": "设置服务3-功能19-功能19",
+    "payload": "A5 A5 03 01 00 04 0C 02 63 00 C3",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "d6bb8824242c4852b7c074e676a9b376",
+    "name": "设置服务3-功能21-功能21-功能21",
+    "payload": "A5 A5 03 01 00 04 0D 02 65 00 C6",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "5d8006ceb50c4b27a3b720f410787c1a",
+    "name": "设置服务3-功能22-功能22",
+    "payload": "A5 A5 03 01 00 04 0E 02 66 00 C8",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "50920a1e6eb94b848a34d4ae4f3eec40",
+    "name": "设置服务3-功能23-控制",
+    "payload": "A5 A5 03 01 00 04 0F 02 67 00 CA",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "b7e3674b7da3438ca0692ebb2a3d7a57",
+    "name": "设置服务3-功能24-控制",
+    "payload": "A5 A5 03 01 00 04 10 02 68 00 CC",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "5ee97b8295314383b836e9b40e4e764d",
+    "name": "设置服务3-功能25-功能25",
+    "payload": "A5 A5 03 01 00 04 11 02 69 00 CE",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "b72110abaadf42a5885b21ecac56e393",
+    "name": "设置服务3-26",
+    "payload": "A5 A5 03 01 00 04 12 02 6A 00 D0",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "2f165c81effb481ea772dfb501242ce9",
+    "name": "设置服务4-服务4-1",
+    "payload": "A5 A5 03 01 00 04 13 02 64 00 CB",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "ec1550a524fb429e857043e2a791efeb",
+    "name": "设置服务4-服务4-型号",
+    "payload": "A5 A5 03 01 00 04 14 02 6B 00 D3",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "56487deb87a24c168147bdeb82c6e3ef",
+    "name": "设置属性0x00",
+    "payload": "A5 A5 03 01 00 04 01 02 00 00 55",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "1901f9496dd346138732a79997285fec",
+    "name": "设置属性0x01-控制",
+    "payload": "A5 A5 03 01 00 04 02 02 01 00 57",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "90ef6d335645457bbdf0c7383a1f7e52",
+    "name": "设置开关",
+    "payload": "A5 A5 03 01 00 04 03 02 03 00 5A",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "9a3202154c66463b9c5ac0eb781c3c03",
+    "name": "设置属性0x04-模式",
+    "payload": "A5 A5 03 01 00 04 04 02 04 00 5C",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "7307203faa6a47dd9d7bb5e5a0229289",
+    "name": "设置属性0x05-属性0x05",
+    "payload": "A5 A5 03 01 00 04 05 02 05 00 5E",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "bc21ebc9d41a421c8b16daf0eea4a9ab",
+    "name": "设置属性0x06-模式",
+    "payload": "A5 A5 03 01 00 04 06 02 06 00 60",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "d6a0578261c249b1a85484b06c06c370",
+    "name": "设置属性0x07-属性0x07",
+    "payload": "A5 A5 03 01 00 05 07 0B 07 00 00 6C",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "bcde36d626d8421c95df1fa50305a8c4",
+    "name": "设置属性0x08-属性0x08",
+    "payload": "A5 A5 03 01 00 05 08 0B 08 00 00 6E",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "1ee387d7bf6d45ecb557ddee5e14f15d",
+    "name": "设置属性0x0C-控制",
+    "payload": "A5 A5 03 01 00 05 09 0B 0C 00 00 73",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "1689a7ee113347668f41e3d0961aa61d",
+    "name": "设置属性0x10-开关",
+    "payload": "A5 A5 03 01 00 04 0A 02 10 00 6E",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "bb1d9e6369a04df0948a159e1fb10e15",
+    "name": "设置属性0x11-属性0x11",
+    "payload": "A5 A5 03 01 00 04 0B 02 11 00 70",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "05249dd5688744fb948ac86082b9ef1f",
+    "name": "设置属性0x12-属性0x12",
+    "payload": "A5 A5 03 01 00 04 0C 02 12 00 72",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "9c4277b68acf467a906e7d1142447d1e",
+    "name": "设置属性0x13-属性0x13-属性0x13",
+    "payload": "A5 A5 03 01 00 04 0D 02 13 00 74",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "cdd3a2e878c24b9595a574c64ca5f5ea",
+    "name": "设置属性0x14-属性0x14",
+    "payload": "A5 A5 03 01 00 04 0E 02 14 00 76",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "9aaff125e52b4c1b9487db16dfc2097c",
+    "name": "设置属性0x15-控制",
+    "payload": "A5 A5 03 01 00 04 0F 02 15 00 78",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "fce33097b8d94c98b478c02363526940",
+    "name": "设置属性0x16-控制",
+    "payload": "A5 A5 03 01 00 04 10 02 16 00 7A",
+    "type": "HEX",
+    "generated": true
+  },
+  {
+    "id": "530ac221c6494939a60bdd4ffb941d41",
+    "name": "设置属性0x17-属性0x17",
+    "payload": "A5 A5 03 01 00 04 11 02 17 00 7C",
+    "type": "HEX",
+    "generated": true
+  }
+]
