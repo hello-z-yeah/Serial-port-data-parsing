@@ -430,6 +430,13 @@ def parse_hex_input(text: str) -> bytes:
         raise HexParseError("输入为空")
     raw = str(text)
 
+    # 严格白名单：只允许 hex 字符、0x 前缀、空白、逗号
+    # 含其他字符直接失败，避免 "0xZZ11" 被静默变成 "11"
+    if re.search(r"[^0-9a-fA-FxX\s,\n\r]", raw):
+        raise HexParseError(
+            f"HEX 输入包含非法字符，仅允许 0-9/a-f/A-F、0x 前缀、空格与逗号：{raw!r}"
+        )
+
     # Step 1: 合法 0xHEX （词首，前面不是字母数字）→ 剥 0x 前缀，保留后面 hex
     s1 = _RE_PREFIXED_HEX.sub(lambda m: m.group(1), raw)
     # Step 2: 剔除残留 0x（两种情形都删 0x 两个字符）：

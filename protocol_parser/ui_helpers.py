@@ -220,6 +220,47 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
         unit = str(getattr(entry, "unit", "") or "").strip()
         if unit and not label:
             semantic += f" {unit}"
+
+        # 追加线协议字段（仅用于日志显示，不参与属性更新/自动回复）。
+        # wire_id 由本字段原始 attrid 得出，正是 0x10/0x01 线上携带的 serialId。
+        typeid_val = candidate.get("typeid")
+        if typeid_val is None:
+            typeid_val = getattr(entry, "typeid", None)
+        data_val = candidate.get(
+            "value_wire", candidate.get("value", candidate.get("value_raw", ""))
+        )
+        try:
+            tid = int(typeid_val) if typeid_val is not None else -1
+        except (TypeError, ValueError):
+            tid = -1
+
+        try:
+            # Data 尽量按线协议形式显示：定长整数按其字节宽度补齐 HEX，
+            # STRING/ARRAY 等仍保留短文本，便于直接和原始帧逐字节核对。
+            if isinstance(data_val, (bytes, bytearray)):
+                data_shown = bytes(data_val).hex().upper()
+            elif isinstance(data_val, bool):
+                data_shown = "01" if data_val else "00"
+            elif isinstance(data_val, int) and tid >= 0:
+                byte_widths = {
+                    0: 1, 1: 1, 2: 1,
+                    3: 2, 4: 2, 15: 2, 16: 2, 19: 2, 20: 2,
+                    5: 4, 6: 4, 9: 4, 17: 4, 18: 4, 21: 4, 22: 4,
+                    7: 8, 8: 8, 10: 8,
+                }
+                width = byte_widths.get(tid)
+                if width is not None:
+                    mask = (1 << (width * 8)) - 1
+                    data_shown = f"{data_val & mask:0{width * 2}X}"
+                else:
+                    data_shown = str(data_val)
+            else:
+                data_shown = str(data_val)
+        except Exception:
+            data_shown = str(data_val)
+
+        tid_shown = f"{tid & 0xFF:02X}" if tid >= 0 else "??"
+        semantic += f" Typeid:{tid_shown} Attrid:{wire_id:02X} Data:{data_shown}"
         parts.append(semantic)
 
     return "，".join(parts)

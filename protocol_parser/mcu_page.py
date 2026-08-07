@@ -1646,6 +1646,21 @@ QTableView#AttributeTable::item:selected {{
         old_send = {aid: edit.text() for aid, edit in self._attr_send_edits.items()}
         old_checked = {aid: check.isChecked() for aid, check in self._attr_select_checks.items()}
         entries = center.get_all_attrs()
+
+        # UI 只显示线协议 serialId；属性中心、行索引和发送/自动回复仍使用
+        # entry.attrid（内部 ID）。映射源与 0x21/0x24/0x10 编码保持一致。
+        canonical_map: dict[int, int] = {}
+        wire_mapping_active = False
+        try:
+            from protocol_parser.dev_info_encoder import build_snapshot_attrid_map
+
+            canonical_map, wire_mapping_active = build_snapshot_attrid_map(
+                getattr(center, "cfg", {}) or {}
+            )
+        except Exception:
+            # 显示层兜底：映射不可用时继续显示内部 ID，不影响业务逻辑。
+            canonical_map, wire_mapping_active = {}, False
+
         self.attr_table.setUpdatesEnabled(False)
         try:
             self.attr_table.clearContents()
@@ -1670,7 +1685,11 @@ QTableView#AttributeTable::item:selected {{
                 self.attr_table.setCellWidget(row, 0, check_cell)
                 self._attr_select_checks[entry.attrid] = check
 
-                id_item = self._readonly_item(f"0x{entry.attrid:02X}")
+                # 显示线协议 serialId（0x00 起顺序），内部 ID 仍用于逻辑。
+                wire_id = entry.attrid
+                if wire_mapping_active and canonical_map:
+                    wire_id = int(canonical_map.get(entry.attrid, entry.attrid)) & 0xFF
+                id_item = self._readonly_item(f"0x{wire_id:02X}")
                 id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.attr_table.setItem(row, 1, id_item)
                 attribute_key = str(

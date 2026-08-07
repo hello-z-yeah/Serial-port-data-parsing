@@ -359,8 +359,11 @@ class AutoReplyEngine:
                 + "、".join(f"0x{aid:02X}" for aid in read_only)
             )
 
-        # 先完成全部合法写入，再生成状态同步，避免上报旧值。set_attr_value
-        # 会再次校验，作为属性中心的最终防线。
+        # 二次预检：保证 set_attr_value 前全部仍合法，避免中途异常导致半修改
+        for attrid in writable_order:
+            self._ac.validate_attr_value(attrid, validated_values[attrid])
+
+        # 统一写入（此时全部已二次通过）
         for attrid in writable_order:
             self._ac.set_attr_value(attrid, validated_values[attrid])
         self._last_applied_attrids = list(writable_order)
