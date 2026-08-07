@@ -484,7 +484,7 @@ class McuSimulatePage(QWidget):
             self._remeasure_attr_columns()
             self._resize_attr_rows_to_wrapped_content()
             self._schedule_attr_row_resize(0)
-            QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
+            QTimer.singleShot(160, self, self._resize_attr_rows_to_wrapped_content)
             self._apply_preset_table_widths()
             self.attr_card.setMinimumWidth(min(self._attr_ideal_width(), 320))
             self.preset_card.setMinimumWidth(min(self._preset_ideal_width(), 320))
@@ -503,7 +503,7 @@ class McuSimulatePage(QWidget):
             QEvent.Type.FontChange,
             QEvent.Type.ScreenChangeInternal,
         ):
-            QTimer.singleShot(0, self.apply_dpi_metrics)
+            QTimer.singleShot(0, self, self.apply_dpi_metrics)
 
     def _relayout_operation_bar(self) -> None:
         """Wrap the product/action bar according to available logical width."""
@@ -920,7 +920,7 @@ QTableView#AttributeTable::item:selected {{
 
     def _schedule_lower_panel_rebalance(self) -> None:
         """等待 Qt 完成本轮可见性更新后再重新分配 splitter 空间。"""
-        QTimer.singleShot(0, self._rebalance_lower_panels)
+        QTimer.singleShot(0, self, self._rebalance_lower_panels)
 
     def _on_splitter_moved(self, pos: int, index: int) -> None:
         """记录用户手动拖动调整后的侧栏宽度，供后续重分配时保留。"""
@@ -1072,7 +1072,7 @@ QTableView#AttributeTable::item:selected {{
         """在列宽和 cellWidget 几何稳定后防抖重算全部属性行高。"""
         timer = getattr(self, "_attr_row_resize_timer", None)
         if timer is None:
-            QTimer.singleShot(max(0, int(delay_ms)), self._resize_attr_rows_to_wrapped_content)
+            QTimer.singleShot(max(0, int(delay_ms)), self, self._resize_attr_rows_to_wrapped_content)
             return
         timer.setInterval(max(0, int(delay_ms)))
         timer.start()
@@ -1100,7 +1100,7 @@ QTableView#AttributeTable::item:selected {{
         if any(column in self._attr_wrapped_column_maximums for column in selected):
             self._resize_attr_rows_to_wrapped_content()
             self._schedule_attr_row_resize(0)
-            QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
+            QTimer.singleShot(160, self, self._resize_attr_rows_to_wrapped_content)
             # 产品切换前若曾记住旧的超宽侧栏，按新的内容理想宽度收回；
             # 否则名称列虽然已变窄，splitter 仍可能保留旧宽度造成大片空白。
             ideal_width = self._attr_ideal_width()
@@ -1200,6 +1200,9 @@ QTableView#AttributeTable::item:selected {{
         """预置命令面板的理想宽度，随侧栏字号同步扩展。"""
         return max(400, round(400 * self._side_font_point_size / 10.0))
 
+    def _clear_rebalancing(self) -> None:
+        self._rebalancing = False
+
     def _rebalance_lower_panels(self) -> None:
         """重新分配横向三栏：实时数据 | 实时属性 | 预置命令。
 
@@ -1226,7 +1229,7 @@ QTableView#AttributeTable::item:selected {{
         if splitter.contentsRect().width() <= 1:
             # 页面可见但布局几何尚未完成时，稍后再分配；隐藏页不循环排队。
             if self.isVisible():
-                QTimer.singleShot(50, self._rebalance_lower_panels)
+                QTimer.singleShot(50, self, self._rebalance_lower_panels)
             return
 
         # isHidden() 只反映控件自身是否被显式隐藏，不受父容器可见性影响。
@@ -1253,7 +1256,7 @@ QTableView#AttributeTable::item:selected {{
             try:
                 splitter.setSizes([data_height, attr_height, preset_height])
             finally:
-                QTimer.singleShot(0, lambda: setattr(self, "_rebalancing", False))
+                QTimer.singleShot(0, self, self._clear_rebalancing)
             splitter.updateGeometry()
             self.layout().activate()
             self._relayout_data_bar()
@@ -1293,13 +1296,13 @@ QTableView#AttributeTable::item:selected {{
         try:
             splitter.setSizes([data_width, attr_width, preset_width])
         finally:
-            QTimer.singleShot(0, lambda: setattr(self, "_rebalancing", False))
+            QTimer.singleShot(0, self, self._clear_rebalancing)
         splitter.updateGeometry()
         self.layout().activate()
-        QTimer.singleShot(0, self._relayout_data_bar)
-        QTimer.singleShot(0, self._relayout_attr_header)
-        QTimer.singleShot(0, self._relayout_autoreply_header)
-        QTimer.singleShot(0, self._layout_common_commands)
+        QTimer.singleShot(0, self, self._relayout_data_bar)
+        QTimer.singleShot(0, self, self._relayout_attr_header)
+        QTimer.singleShot(0, self, self._relayout_autoreply_header)
+        QTimer.singleShot(0, self, self._layout_common_commands)
 
     def _relayout_all_mcu(self) -> None:
         """页面几何稳定后统一执行 MCU 页的全部响应式重排。"""
@@ -1308,7 +1311,7 @@ QTableView#AttributeTable::item:selected {{
         self._relayout_attr_header()
         self._relayout_autoreply_header()
         self._layout_common_commands()
-        QTimer.singleShot(0, self._rebalance_lower_panels)
+        QTimer.singleShot(0, self, self._rebalance_lower_panels)
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
@@ -1323,17 +1326,17 @@ QTableView#AttributeTable::item:selected {{
         # 表格侧栏宽度改变后同步重算受控换行列与行高。
         self._remeasure_attr_columns((2, 3))
         self._schedule_attr_row_resize(0)
-        QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
-        QTimer.singleShot(0, self._rebalance_lower_panels)
+        QTimer.singleShot(160, self, self._resize_attr_rows_to_wrapped_content)
+        QTimer.singleShot(0, self, self._rebalance_lower_panels)
 
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         # 子卡片的 contentsRect 在同步 showEvent 阶段仍可能为 0，延迟两次重排。
-        QTimer.singleShot(0, self._relayout_all_mcu)
+        QTimer.singleShot(0, self, self._relayout_all_mcu)
         if not self._first_show_relayout_done:
             self._first_show_relayout_done = True
-            QTimer.singleShot(100, self._relayout_all_mcu)
+            QTimer.singleShot(100, self, self._relayout_all_mcu)
         # 本页拥有独立的固定 HEX 协议解析通道；不读取、不修改页面1的
         # HEX/ASCII 与原始/协议解析按钮状态。
 
@@ -1750,7 +1753,7 @@ QTableView#AttributeTable::item:selected {{
         self._remeasure_attr_columns()
         self._resize_attr_rows_to_wrapped_content()
         self._schedule_attr_row_resize(0)
-        QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
+        QTimer.singleShot(160, self, self._resize_attr_rows_to_wrapped_content)
         # cellWidget 的最终 sizeHint 可能要到本轮布局结束后才稳定，再补一次
         # 防抖测量，保证枚举按钮组和“输入框+上报”完整显示。
         self._schedule_attr_column_remeasure()
@@ -2406,6 +2409,24 @@ QTableView#AttributeTable::item:selected {{
             btn.setText("开启低功耗服务")
         self._send_preset_builder(lambda: frame, "低功耗服务")
 
+    def _run_pending_io_wake_send(self) -> None:
+        cb = getattr(self, "_pending_io_wake_send", None)
+        self._pending_io_wake_send = None
+        if callable(cb):
+            try:
+                cb()
+            except RuntimeError:
+                pass
+
+    def _run_pending_io_wake_restore(self) -> None:
+        cb = getattr(self, "_pending_io_wake_restore", None)
+        self._pending_io_wake_restore = None
+        if callable(cb):
+            try:
+                cb()
+            except RuntimeError:
+                pass
+
     def _on_io_wake(self) -> None:
         """IO 唤醒模拟：50ms 拉高 + 50ms 预留 → 首次心跳返回 0x00
 
@@ -2453,8 +2474,10 @@ QTableView#AttributeTable::item:selected {{
             self.btn_io_wake.setEnabled(True)
             self.btn_io_wake.setText("IO 唤醒")
 
-        QTimer.singleShot(50, _send_reset_heartbeat)
-        QTimer.singleShot(100, _restore_button)
+        self._pending_io_wake_send = _send_reset_heartbeat
+        self._pending_io_wake_restore = _restore_button
+        QTimer.singleShot(50, self, self._run_pending_io_wake_send)
+        QTimer.singleShot(100, self, self._run_pending_io_wake_restore)
 
     def _update_lp_status(self, in_low_power: bool) -> None:
         if in_low_power:
