@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply BuildFix33 remaining source patches (parser + mcu_page).
+"""Apply BuildFix33 remaining fixes (parser + mcu_page).
 
 Windows / macOS / Linux 通用，不依赖系统 patch 命令。
 
@@ -22,8 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _parse_hunk_header(line: str) -> tuple[int, int, int, int] | None:
-    # @@ -old_start,old_count +new_start,new_count @@
+def _parse_hunk_header(line: str):
     m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
     if not m:
         return None
@@ -36,7 +35,6 @@ def _parse_hunk_header(line: str) -> tuple[int, int, int, int] | None:
 
 
 def apply_unified_patch(target: Path, patch_text: str) -> None:
-    """Apply a single-file unified diff to target. Raises on failure."""
     lines = patch_text.splitlines()
     i = 0
     while i < len(lines) and not lines[i].startswith("@@"):
@@ -56,7 +54,7 @@ def apply_unified_patch(target: Path, patch_text: str) -> None:
                 i += 1
                 continue
             raise RuntimeError(f"unexpected patch line: {header!r}")
-        old_start, old_count, new_start, new_count = parsed
+        old_start, _old_count, _new_start, _new_count = parsed
         i += 1
 
         while orig_idx < old_start - 1:
@@ -106,37 +104,131 @@ def apply_unified_patch(target: Path, patch_text: str) -> None:
     target.write_text(text, encoding="utf-8")
 
 
-def main() -> int:
-    jobs = [
-        (
-            ROOT / "patches" / "parser_strict_hex_and_cache.patch",
-            ROOT / "protocol_parser" / "parser.py",
-        ),
-        (
-            ROOT / "patches" / "mcu_page_qtimer_context.patch",
-            ROOT / "protocol_parser" / "mcu_page.py",
-        ),
+def fix_mcu_page(path: Path) -> None:
+    """Surgical transforms that tolerate surrounding code drift."""
+    text = path.read_text(encoding="utf-8")
+
+    def _fix_method_timers(s: str) -> tuple[str, int]:
+        pattern = re.compile(
+            r"QTimer\.singleShot\((.*?),\s*self\.([A-Za-z_][A-Za-z0-9_]*)\s*\)",
+            re.S,
+        )
+        count = 0
+        pieces: list[str] = []
+        pos = 0
+        for m in pattern.finditer(s):
+            if ", self, self." in m.group(0):
+                continue
+            pieces.append(s[pos:m.start()])
+            pieces.append(f"QTimer.singleShot({m.group(1)}, self, self.{m.group(2)})")
+            pos = m.end()
+            count += 1
+        pieces.append(s[pos:])
+        return "".join(pieces), count
+
+    text, n1 = _fix_method_timers(text)
+
+    text, n2 = re.subn(
+        r'QTimer\.singleShot\(\s*0\s*,\s*lambda:\s*setattr\(self,\s*["\']_rebalancing["\']\s*,\s*False\)\s*\)',
+        "QTimer.singleShot(0, self, self._clear_rebalancing)",
+        text,
+    )
+    text, n2b = re.subn(
+        r'QTimer\.singleShot\(0, lambda: setattr\(self, "_rebalancing", False\)\)',
+        "QTimer.singleShot(0, self, self._clear_rebalancing)",
+        text,
+    )
+    n2 += n2b
+
+    if "def _clear_rebalancing" not in text:
+        anchor = "    def _rebalance_lower_panels(self) -> None:"
+        helper = (
+            "    def _clear_rebalancing(self) -> None:\n"
+            "        self._rebalancing = False\n"
+            "\n"
+        )
+        if anchor not in text:
+            raise RuntimeError("cannot find _rebalance_lower_panels to insert helper")
+        text = text.replace(anchor, helper + anchor, 1)
+
+    if "def _run_pending_io_wake_send" not in text:
+        anchor = "    def _on_io_wake(self) -> None:"
+        helpers = '''    def _run_pending_io_wake_send(self) -> None:
+        cb = getattr(self, "_pending_io_wake_send", None)
+        self._pending_io_wake_send = None
+        if callable(cb):
+            try:
+                cb()
+            except RuntimeError:
+                pass
+
+    def _run_pending_io_wake_restore(self) -> None:
+        cb = getattr(self, "_pending_io_wake_restore", None)
+        self._pending_io_wake_restore = None
+        if callable(cb):
+            try:
+                cb()
+            except RuntimeError:
+                pass
+
+'''
+        if anchor not in text:
+            raise RuntimeError("cannot find _on_io_wake to insert helpers")
+        text = text.replace(anchor, helpers + anchor, 1)
+
+    text, n3 = re.subn(
+        r"QTimer\.singleShot\(\s*50\s*,\s*_send_reset_heartbeat\s*\)\s*\n\s*"
+        r"QTimer\.singleShot\(\s*100\s*,\s*_restore_button\s*\)",
+        "self._pending_io_wake_send = _send_reset_heartbeat\n"
+        "        self._pending_io_wake_restore = _restore_button\n"
+        "        QTimer.singleShot(50, self, self._run_pending_io_wake_send)\n"
+        "        QTimer.singleShot(100, self, self._run_pending_io_wake_restore)",
+        text,
+    )
+
+    unsafe = [
+        ln
+        for ln in text.splitlines()
+        if "QTimer.singleShot" in ln and ", self," not in ln and "lambda" not in ln
     ]
+    if unsafe:
+        raise RuntimeError("still have unsafe QTimer.singleShot lines:\n" + "\n".join(unsafe))
 
-    for patch_path, target in jobs:
-        if not patch_path.exists():
-            print(f"缺少 patch: {patch_path}", file=sys.stderr)
+    path.write_text(text, encoding="utf-8")
+    print(f"  mcu_page transforms: method-timers={n1}, rebalance-lambda={n2}, wake={n3}")
+
+
+def main() -> int:
+    parser = ROOT / "protocol_parser" / "parser.py"
+    mcu = ROOT / "protocol_parser" / "mcu_page.py"
+    parser_patch = ROOT / "patches" / "parser_strict_hex_and_cache.patch"
+
+    if not parser.exists() or not mcu.exists():
+        print("请在仓库根目录运行本脚本", file=sys.stderr)
+        return 1
+
+    ptxt = parser.read_text(encoding="utf-8")
+    if "_builtin_v3_lock" in ptxt and "fullmatch" in ptxt:
+        print(f"跳过（已应用）: {parser.relative_to(ROOT)}")
+    else:
+        if not parser_patch.exists():
+            print(f"缺少 patch: {parser_patch}", file=sys.stderr)
             return 1
-        if not target.exists():
-            print(f"缺少目标文件: {target}", file=sys.stderr)
-            return 1
-
-        content = target.read_text(encoding="utf-8")
-        if target.name == "parser.py" and "_builtin_v3_lock" in content and "fullmatch" in content:
-            print(f"跳过（已应用）: {target.relative_to(ROOT)}")
-            continue
-        if target.name == "mcu_page.py" and "def _run_pending_io_wake_send" in content:
-            print(f"跳过（已应用）: {target.relative_to(ROOT)}")
-            continue
-
-        print(f"应用 {patch_path.relative_to(ROOT)} -> {target.relative_to(ROOT)}")
+        print(f"应用 {parser_patch.relative_to(ROOT)} -> {parser.relative_to(ROOT)}")
         try:
-            apply_unified_patch(target, patch_path.read_text(encoding="utf-8"))
+            apply_unified_patch(parser, parser_patch.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"失败: {exc}", file=sys.stderr)
+            return 1
+        print("  OK")
+
+    mtxt = mcu.read_text(encoding="utf-8")
+    if "def _run_pending_io_wake_send" in mtxt and "QTimer.singleShot(0, self, self.apply_dpi_metrics)" in mtxt:
+        print(f"跳过（已应用）: {mcu.relative_to(ROOT)}")
+    else:
+        print(f"应用 surgical fix -> {mcu.relative_to(ROOT)}")
+        try:
+            fix_mcu_page(mcu)
         except Exception as exc:
             print(f"失败: {exc}", file=sys.stderr)
             return 1
