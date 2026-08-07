@@ -1,0 +1,84 @@
+--- a/protocol_parser/parser.py
++++ b/protocol_parser/parser.py
+@@ -9,6 +9,9 @@
+ """
+ from __future__ import annotations
+ 
++import copy
++import threading
++
+ import json
+ import math
+ import re
+@@ -271,6 +274,7 @@
+ 
+ # ---------- 内置 V3.0 协议（CLI/GUI 共用，避免 CLI 依赖 gui.py） ----------
+ _builtin_v3: dict | None = None
++_builtin_v3_lock = threading.Lock()
+ 
+ 
+ def _default_protocol_dir() -> Path:
+@@ -309,11 +313,13 @@
+     """获取内置串口 3.0 基础协议（模块级缓存）。
+ 
+     CLI / GUI 共用，这样 CLI 不用依赖 gui.py（避免在没装 tkinter 的环境运行失败）。
++    返回 deepcopy 快照，避免调用方修改嵌套结构污染全局缓存。
+     """
+     global _builtin_v3
+-    if refresh or _builtin_v3 is None:
+-        _builtin_v3 = _load_builtin_v3_fallback()
+-    return _builtin_v3
++    with _builtin_v3_lock:
++        if refresh or _builtin_v3 is None:
++            _builtin_v3 = _load_builtin_v3_fallback()
++        return copy.deepcopy(_builtin_v3)
+ 
+ 
+ def merge_protocol(base: dict, override: dict) -> dict:
+@@ -419,33 +425,26 @@
+ def parse_hex_input(text: str) -> bytes:
+     """把用户输入的 hex 字符串解析为 bytes。
+ 
+-    严格版本（修复了旧实现的全局 replace('0x','') 静默错删）：
+-      1) 仅“词首合法”的 0xHEX（0x 前不是字母数字，0x 后紧跟 hex）才剥掉前缀；
+-         - 合法： 0xAA,0xBB ; (0xAA 0xBB) ; 0x01 0x02
+-         - 不合法（夹在字符串中间）： AA0x11（A 是字母数字，所以整体视作文本，0x 不应剥）
+-      2) 对“残留脏 0x”（后跟非 hex，或夹在字母数字里）直接删掉 0x 两个字符，
+-         再对剩下文本 findall 纯 hex 段合并，严格判断奇偶。
++    严格 token 语法（拒绝孤立 x/X 及任意夹心畸形输入）：
++      - 仅允许一个或多个 token，token 为可选 0x/0X 前缀 + 十六进制字符
++      - token 之间只能用空白或逗号分隔
++      - 合法：A5 5A、0xA5,0x5A、A55A
++      - 非法：A5x5A、0xZZ11、A5G5、xA5
+     """
+     if text is None:
+         raise HexParseError("输入为空")
+-    raw = str(text)
++    raw = str(text).strip()
++    if not raw:
++        raise HexParseError("输入为空")
+ 
+-    # 严格白名单：只允许 hex 字符、0x 前缀、空白、逗号
+-    # 含其他字符直接失败，避免 "0xZZ11" 被静默变成 "11"
+-    if re.search(r"[^0-9a-fA-FxX\s,\n\r]", raw):
++    # 整串必须匹配 token 语法；任意孤立 x/X 或其它字符直接失败
++    if not re.fullmatch(r"(?i)(?:0x)?[0-9a-f]+(?:[\s,]+(?:0x)?[0-9a-f]+)*", raw):
+         raise HexParseError(
+-            f"HEX 输入包含非法字符，仅允许 0-9/a-f/A-F、0x 前缀、空格与逗号：{raw!r}"
++            f"HEX 输入格式非法，仅允许 0x 前缀或纯十六进制，用空格/逗号分隔：{raw!r}"
+         )
+ 
+-    # Step 1: 合法 0xHEX （词首，前面不是字母数字）→ 剥 0x 前缀，保留后面 hex
+-    s1 = _RE_PREFIXED_HEX.sub(lambda m: m.group(1), raw)
+-    # Step 2: 剔除残留 0x（两种情形都删 0x 两个字符）：
+-    #   a) 前面是字母数字（如 AA0x11 里的 0x，整体不合法，不要拼成 AA11 假通过）
+-    #   b) 后跟非 hex（如 0xZZ11 里的 0x，后跟 Z 不合法，避免残留 0 造成假偶数）
+-    s2 = re.sub(r"(?i)(?<=[0-9a-zA-Z])0x|0x(?![0-9a-f])", "", s1)
+-
+-    # Step 3: 纯 hex 段合并
+-    joined = "".join(_RE_PURE_HEX.findall(s2))
++    tokens = re.findall(r"(?i)(?:0x)?[0-9a-f]+", raw)
++    joined = "".join(t[2:] if t.lower().startswith("0x") else t for t in tokens)
+     if not joined:
+         raise HexParseError("输入中没有任何可解析的 hex 字符")
+     if len(joined) % 2 != 0:
