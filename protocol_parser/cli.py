@@ -6,7 +6,13 @@ import json
 import sys
 from pathlib import Path
 
-from .exceptions import UserCorrectableError
+from .exceptions import (
+    ProtocolParserError,
+    log_protocol_error,
+    classify_protocol_error,
+    handle_protocol_error,
+    UserCorrectableError
+)
 
 from .parser import (
     ParseResult,
@@ -128,19 +134,13 @@ def cmd_parse(args: argparse.Namespace) -> int:
         # 与V3.0基础协议合并
         base_cfg = get_builtin_v3()
         cfg = merge_protocol(base_cfg, cfg)
-    except ProtocolError as e:
-        friendly, _ = classify_protocol_error(e)
-        _log_error_to_disk(e)
-        print(f"[错误] {friendly}", file=sys.stderr)
-        return 2
+    except ProtocolParserError as e:
+        return handle_protocol_error(e, f"加载协议文件失败: {args.product}")
 
     try:
         data = parse_hex_input(args.hex)
-    except ProtocolError as e:
-        friendly, _ = classify_protocol_error(e)
-        _log_error_to_disk(e)
-        print(f"[错误] {friendly}", file=sys.stderr)
-        return 2
+    except ProtocolParserError as e:
+        return handle_protocol_error(e, "解析十六进制输入失败")
 
     result = parse_frame(data, cfg, direction=args.direction)
     if args.json:
@@ -157,16 +157,13 @@ def cmd_batch(args: argparse.Namespace) -> int:
         # 与V3.0基础协议合并
         base_cfg = get_builtin_v3()
         cfg = merge_protocol(base_cfg, cfg)
-    except ProtocolError as e:
-        friendly, _ = classify_protocol_error(e)
-        _log_error_to_disk(e)
-        print(f"[错误] {friendly}", file=sys.stderr)
-        return 2
+    except ProtocolParserError as e:
+        return handle_protocol_error(e, f"加载协议文件失败: {args.product}")
 
     in_path = Path(args.file)
     if not in_path.exists():
-        print(f"错误: 输入文件不存在: {in_path}", file=sys.stderr)
-        return 2
+        error = FileNotFoundError(f"输入文件不存在: {in_path}")
+        return handle_protocol_error(error, "批量解析文件不存在")
 
     results: list[ParseResult] = []
     with in_path.open("r", encoding="utf-8") as f:
@@ -177,7 +174,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
             try:
                 data = parse_hex_input(line)
                 results.append(parse_frame(data, cfg))
-            except ProtocolError as e:
+            except ProtocolParserError as e:
                 # 占位结果，记录原始行号
                 results.append(ParseResult(
                     product=cfg.get("product", ""),
@@ -225,11 +222,8 @@ def cmd_show(args: argparse.Namespace) -> int:
         # 与V3.0基础协议合并
         base_cfg = get_builtin_v3()
         cfg = merge_protocol(base_cfg, cfg)
-    except ProtocolError as e:
-        friendly, _ = classify_protocol_error(e)
-        _log_error_to_disk(e)
-        print(f"[错误] {friendly}", file=sys.stderr)
-        return 2
+    except ProtocolParserError as e:
+        return handle_protocol_error(e, f"加载协议文件失败: {args.product}")
 
     print(f"产品: {cfg.get('product')}")
     print(f"说明: {cfg.get('description', '')}")
@@ -451,7 +445,7 @@ def cmd_paste(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI 总入口：最外层统一兜底，不允许把堆栈直接抛给用户。
-
+    
     退出码：
       0 → 成功
       2 → 已知协议/配置错误（ProtocolError 子类），已打印 friendly 提示
@@ -464,18 +458,11 @@ def main(argv: list[str] | None = None) -> int:
     except UserCorrectableError as e:
         print(f"[提示] {e}", file=sys.stderr)
         return 2
-    except ProtocolError as e:
-        friendly, _ = classify_protocol_error(e)
-        print(f"[错误] {friendly}", file=sys.stderr)
-        try:
-            log_path = _log_error_to_disk(e)
-            print(f"       详情已写入: {log_path}", file=sys.stderr)
-        except Exception:
-            pass
-        return 2
+    except ProtocolParserError as e:
+        return handle_protocol_error(e, f"CLI 命令执行错误: {args.command}")
     except Exception as e:  # noqa: BLE001  顶层兜底必须要广
         friendly, _ = classify_protocol_error(e)
-        log_path = _log_error_to_disk(e)
+        log_path = log_protocol_error(e, "CLI 顶层错误")
         print(f"[错误] {friendly}", file=sys.stderr)
         print(f"       堆栈已写入: {log_path}", file=sys.stderr)
         return 1

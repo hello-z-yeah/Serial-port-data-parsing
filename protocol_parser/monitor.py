@@ -24,7 +24,14 @@ from .parser import (
     to_hex,
 )
 from .serial_collector import FrameSynchronizer, SerialCollector
-from .exceptions import EnvironmentStateError, ValidationError
+from .exceptions import (
+    ProtocolParserError,
+    log_protocol_error,
+    classify_protocol_error,
+    handle_protocol_error,
+    EnvironmentStateError,
+    ValidationError
+)
 
 
 # ---------- 渲染 ----------
@@ -377,7 +384,7 @@ def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
             print()
             if logger:
                 logger.log(result)
-        except ProtocolError as e:
+        except ProtocolParserError as e:
             friendly, debug = classify_protocol_error(e)
             # 整行解析失败，可能是帧流数据 — 用同步器试试
             print(f"\n[!] {friendly}")
@@ -396,26 +403,26 @@ def run_paste_mode(cfg: dict, logger: ResultLogger | None = None) -> int:
                             print()
                             if logger:
                                 logger.log(result)
-                        except ProtocolError as e2:
+                        except ProtocolParserError as e2:
                             f2, d2 = classify_protocol_error(e2)
                             print(f"    子帧错误: {f2}")
                             if d2:
                                 print(f"        详细: {d2}")
-                            _log_error_to_disk(e2)
+                            log_protocol_error(e2, "粘贴模式子帧解析错误")
                     print(f"    共提取 {len(frames)} 帧。")
                 else:
                     print("    未提取到完整帧（可能数据不足）。")
                     print(f"    缓冲区剩余 {sync.partial_bytes} 字节。")
-            except ProtocolError as e3:
+            except ProtocolParserError as e3:
                 f3, d3 = classify_protocol_error(e3)
                 print(f"    也失败: {f3}")
                 if d3:
                     print(f"        详细: {d3}")
-                _log_error_to_disk(e3)
+                log_protocol_error(e3, "粘贴模式帧同步错误")
             print()
         except Exception as e:  # noqa: BLE001  顶层兜底
             friendly, _ = classify_protocol_error(e)
-            log_path = _log_error_to_disk(e)
+            log_path = log_protocol_error(e, "粘贴模式未知错误")
             print(f"\n[错误] {friendly}")
             print(f"         堆栈已写入: {log_path}\n")
     return 0
@@ -450,7 +457,7 @@ def run_serial_mode(
         except Exception as e:  # noqa: BLE001  工作线程不能裸抛堆栈
             friendly, _ = classify_protocol_error(e)
             print(f"[错误] on_frame: {friendly}")
-            _log_error_to_disk(e)
+            log_protocol_error(e, "串口帧回调错误")
 
     def on_error(msg: str) -> None:
         print(f"[错误] {msg}")
@@ -465,13 +472,14 @@ def run_serial_mode(
 
     try:
         collector.start()
+    except ProtocolParserError as e:
+        return handle_protocol_error(e, f"启动串口失败: {port}")
     except Exception as e:  # noqa: BLE001
-        friendly, debug = classify_protocol_error(e)
-        print(f"打开串口失败: {friendly}", file=sys.stderr)
-        if debug:
-            print(f"  详细: {debug}", file=sys.stderr)
-        _log_error_to_disk(e)
-        return 2
+        friendly, _ = classify_protocol_error(e)
+        log_path = log_protocol_error(e, f"启动串口失败: {port}")
+        print(f"[错误] {friendly}", file=sys.stderr)
+        print(f"       堆栈已写入: {log_path}", file=sys.stderr)
+        return 1
 
     print(f"[已连接] 等待数据...\n")
 
@@ -480,15 +488,27 @@ def run_serial_mode(
             time.sleep(0.1)
     except KeyboardInterrupt:
         print("\n\n正在停止...")
-    except Exception as e:  # noqa: BLE001  监控线程兜底
+    except ProtocolParserError as e:
         friendly, _ = classify_protocol_error(e)
         print(f"\n[错误] 监控循环异常: {friendly}", file=sys.stderr)
-        _log_error_to_disk(e)
+        log_protocol_error(e, "串口监控循环异常")
+    except Exception as e:  # noqa: BLE001  监控线程兜底
+        friendly, _ = classify_protocol_error(e)
+        log_path = log_protocol_error(e, "串口监控循环异常")
+        print(f"\n[错误] 监控循环异常: {friendly}", file=sys.stderr)
+        print(f"       堆栈已写入: {log_path}", file=sys.stderr)
     finally:
         try:
             collector.stop()
-        except Exception as e2:  # noqa: BLE001
-            _log_error_to_disk(e2)
+        except ProtocolParserError as e:
+            friendly, _ = classify_protocol_error(e)
+            print(f"[错误] 停止串口时发生错误: {friendly}", file=sys.stderr)
+            log_protocol_error(e, "串口停止错误")
+        except Exception as e:
+            friendly, _ = classify_protocol_error(e)
+            log_path = log_protocol_error(e, "串口停止错误")
+            print(f"[错误] 停止串口时发生错误: {friendly}", file=sys.stderr)
+            print(f"       堆栈已写入: {log_path}", file=sys.stderr)
 
     if collector.sync:
         print(f"共接收 {collector.sync.frame_count} 帧，错误 {collector.sync.error_count} 次。")

@@ -12,7 +12,14 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .exceptions import SerialOperationError, SerialStateError, TxQueueFullError
+from .exceptions import (
+    ProtocolParserError,
+    SerialOperationError,
+    SerialStateError,
+    TxQueueFullError,
+    log_protocol_error,
+    classify_protocol_error
+)
 from .parser import (
     Frame,
     ParseResult,
@@ -90,9 +97,16 @@ class FrameSynchronizer:
     partial_bytes: int = 0
     last_discarded: int = 0  # 最近一次 feed 丢弃的噪声字节数
     last_noise: bytes = b""  # 最近一次 feed 可确定为非协议数据的字节
+    max_buffer_size: int = 1024 * 1024  # 最大缓冲区大小限制（默认1MB）
+    buffer_cleanup_threshold: float = 0.8  # 清理阈值（超过80%时触发清理）
+    on_buffer_overflow: Callable | None = None  # 缓冲区溢出告警回调
 
     def feed(self, data: bytes) -> list[Frame]:
         """输入一段字节，返回解析出的所有完整帧。"""
+        # 检查缓冲区是否即将溢出
+        if len(self.buffer) + len(data) > self.max_buffer_size * self.buffer_cleanup_threshold:
+            self._handle_buffer_overflow(len(data))
+        
         self.buffer.extend(data)
         self.last_discarded = 0
         self.last_noise = b""
@@ -107,7 +121,80 @@ class FrameSynchronizer:
             self.frame_count += 1
 
         self.partial_bytes = len(self.buffer)
+        
+        # 缓冲区过大时主动清理
+        if len(self.buffer) > self.max_buffer_size * 0.5:
+            self._aggressive_cleanup()
+            
         return frames
+
+    def _handle_buffer_overflow(self, incoming_size: int) -> None:
+        """处理缓冲区溢出情况"""
+        # 计算需要清理的大小
+        target_size = int(self.max_buffer_size * 0.3)  # 保留30%空间
+        cleanup_size = len(self.buffer) - target_size
+        
+        if cleanup_size > 0:
+            # 清理最旧的数据（但保留可能的帧头）
+            frames_found = self._partial_cleanup(cleanup_size)
+            
+            # 触发溢出告警
+            if self.on_buffer_overflow:
+                try:
+                    self.on_buffer_overflow({
+                        'current_size': len(self.buffer),
+                        'max_size': self.max_buffer_size,
+                        'incoming_size': incoming_size,
+                        'cleanup_size': cleanup_size,
+                        'frames_found_during_cleanup': frames_found
+                    })
+                except Exception:
+                    pass
+
+    def _partial_cleanup(self, cleanup_size: int) -> int:
+        """部分清理缓冲区，尽量保留完整帧"""
+        frames_found = 0
+        
+        # 先尝试从缓冲区中提取所有完整帧
+        temp_buffer = bytearray(self.buffer)
+        self.buffer.clear()
+        
+        # 从临时缓冲区中逐字节处理
+        for byte in temp_buffer:
+            self.buffer.append(byte)
+        
+        # 重新同步并提取帧
+        while len(self.buffer) > cleanup_size:
+            frame = self._try_extract_one()
+            if frame:
+                frames_found += 1
+            else:
+                # 如果无法提取帧，直接清理最旧的数据
+                if len(self.buffer) > cleanup_size:
+                    del self.buffer[:cleanup_size]
+                break
+        
+        return frames_found
+
+    def _aggressive_cleanup(self) -> None:
+        """主动清理过大的缓冲区"""
+        # 保留最新的数据，丢弃最旧的数据
+        target_size = int(self.max_buffer_size * 0.3)
+        
+        # 尝试先提取所有完整帧
+        while True:
+            frame = self._try_extract_one()
+            if frame:
+                self.frame_count += 1
+            else:
+                break
+        
+        # 如果仍然过大，强制清理
+        if len(self.buffer) > target_size:
+            # 保留最后一部分数据（可能包含正在接收的帧）
+            excess = len(self.buffer) - target_size
+            del self.buffer[:excess]
+            self.error_count += excess
 
     def _try_extract_one(self) -> Frame | None:
         """尝试提取一帧。
@@ -707,6 +794,7 @@ class SerialCollector:
                 except Exception as exc:
                     if self.on_error:
                         self.on_error(f"原始数据回调异常（已跳过）: {exc}")
+                    log_protocol_error(exc, "串口原始数据回调异常")
 
         try:
             while self.running and not self._stop_event.is_set():
@@ -746,7 +834,8 @@ class SerialCollector:
                 flush_raw(True)
                 try:
                     frames = sync.feed(raw)
-                except Exception as exc:
+                except ProtocolParserError as exc:
+                    log_protocol_error(exc, "主协议组帧异常")
                     self._notify_error(f"主协议组帧异常（已跳过本批数据）: {exc}")
                     continue
                 # 帧模式下只上抛同步器已经确认的噪声。跨读取块的半帧仍留在
@@ -761,22 +850,31 @@ class SerialCollector:
                 for frame in frames:
                     try:
                         result = parse_frame(frame.raw, self.cfg, direction=self.direction)
-                    except Exception as exc:
+                    except ProtocolParserError as exc:
+                        log_protocol_error(exc, "帧解析异常")
                         self._notify_error(f"帧解析异常（已跳过）: {exc}")
                         continue
                     ok_count += 1
                     if self.on_frame:
                         try:
                             self.on_frame(result, frame, now)
-                        except Exception as exc:
+                        except ProtocolParserError as exc:
+                            log_protocol_error(exc, "帧回调异常")
                             self._notify_error(f"回调异常（已跳过）: {exc}")
             flush_raw(True)
+        except ProtocolParserError as exc:
+            if not self._stop_event.is_set():
+                self.running = False
+                self._stop_event.set()
+                log_protocol_error(exc, "串口采集异常")
+                self._notify_connection_error(f"采集异常: {exc}", getattr(exc, 'kind', 'unknown'))
         except Exception as exc:
             if not self._stop_event.is_set():
                 self.running = False
                 self._stop_event.set()
-                kind = _classify_serial_error(exc)
-                self._notify_connection_error(f"采集异常: {exc}", kind)
+                friendly, _ = classify_protocol_error(exc)
+                log_path = log_protocol_error(exc, "串口采集未知错误")
+                self._notify_connection_error(f"采集异常: {friendly}", 'unknown')
         finally:
             self.running = False
 

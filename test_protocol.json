@@ -1,0 +1,16 @@
+{
+  "product": "test_product",
+  "description": "测试产品协议",
+  "commands": [
+    {
+      "cmd_code": "0x21",
+      "name": "设备信息回复",
+      "description": "设备信息回复指令",
+      "fields": [
+        {"name": "设备ID", "type": "hex", "offset": 0, "length": 2},
+        {"name": "版本号", "type": "string", "offset": 2, "length": 16},
+        {"name": "设备类型", "type": "hex", "offset": 18, "length": 1}
+      ]
+    }
+  ]
+}

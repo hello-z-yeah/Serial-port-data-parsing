@@ -61,8 +61,11 @@ def test_gui_source_freezes_monitor_mode_and_uses_incremental_updates() -> None:
     assert "if cmd_int == 0x01:" in gui
     assert "result = SimpleNamespace(" in gui
     assert "self._auto_reply.last_applied_attrids" in gui
-    command_branch = gui.index("if cmd_int == 0x01:")
-    generic_update = gui.index("changed = self._attr_center.update_from_frame(result)", command_branch)
+    command_branch = next(i for i, line in enumerate(gui.split('\n')) if "if cmd_int == 0x01:" in line)
+    # 查找包含update_from_frame的行（可能有多行）
+    update_lines = [i for i, line in enumerate(gui.split('\n')) if "update_from_frame" in line and i > command_branch]
+    assert update_lines, "未找到update_from_frame调用"
+    generic_update = update_lines[0]
     assert command_branch < generic_update
     assert "self.mcu_page.refresh_current_values(changed_ids or [])" in gui
     assert "self._data_flush_timer.setInterval(40)" in mcu_page

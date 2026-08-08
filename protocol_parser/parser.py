@@ -21,6 +21,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .exceptions import (
+    ProtocolParserError,
+    FrameParsingError,
+    ConfigurationError,
+    InputValidationError,
+    log_protocol_error,
+    classify_protocol_error
+)
+
 
 class ProtocolError(Exception):
     """协议解析相关错误基类。
@@ -458,35 +467,35 @@ def parse_hex_input(text: str) -> bytes:
       - 非法：A5x5A、0xZZ11、A5G5、xA5
     """
     if text is None:
-        raise HexParseError("输入为空")
+        raise InputValidationError("输入为空", text)
     raw = str(text).strip()
     if not raw:
-        raise HexParseError("输入为空")
+        raise InputValidationError("输入为空", text)
 
     # 拒绝空 token：A5,,5A / A5, ,5A 等连续逗号（允许首尾空白）
     if re.search(r",\s*,", raw):
         raise HexParseError(
-            f"HEX 输入含空 token（连续逗号），不允许：{raw!r}"
+            f"HEX 输入含空 token（连续逗号），不允许：{raw!r}", text
         )
 
     # 整串必须匹配 token 语法；任意孤立 x/X 或其它字符直接失败
     if not re.fullmatch(r"(?i)(?:0x)?[0-9a-f]+(?:[\s,]+(?:0x)?[0-9a-f]+)*", raw):
         raise HexParseError(
-            f"HEX 输入格式非法，仅允许 0x 前缀或纯十六进制，用空格/逗号分隔：{raw!r}"
+            f"HEX 输入格式非法，仅允许 0x 前缀或纯十六进制，用空格/逗号分隔：{raw!r}", text
         )
 
     tokens = re.findall(r"(?i)(?:0x)?[0-9a-f]+", raw)
     joined = "".join(t[2:] if t.lower().startswith("0x") else t for t in tokens)
     if not joined:
-        raise HexParseError("输入中没有任何可解析的 hex 字符")
+        raise InputValidationError("输入中没有任何可解析的 hex 字符", text)
     if len(joined) % 2 != 0:
-        raise HexParseError(
-            f"hex 字符总数为奇数({len(joined)})，无法配对: {joined}"
+        raise InputValidationError(
+            f"hex 字符总数为奇数({len(joined)})，无法配对: {joined}", text
         )
     try:
         return bytes.fromhex(joined)
     except ValueError as e:
-        raise HexParseError(f"hex 解析失败: {e}") from e
+        raise InputValidationError(f"hex 解析失败: {e}", text) from e
 
 
 def _read_length_field(buf: bytes, offset: int, width: int = 1, byte_order: str = "big") -> int:
@@ -1799,7 +1808,7 @@ def parse_frame(data: bytes, cfg: dict, direction: str | None = None) -> ParseRe
 
     try:
         frame = split_frame(data, cfg)
-    except ProtocolError as e:
+    except ProtocolParserError as e:
         return ParseResult(
             product=product,
             raw_hex=raw_hex,
@@ -2567,7 +2576,7 @@ def encode_frame(
                   → msg_id_then_attr：msg_id=7，attrid=0x12 type=bool value=True
     """
     if not isinstance(cfg, dict):
-        raise ProtocolConfigError("encode_frame 需要 dict 类型的协议 cfg")
+        raise ConfigurationError("encode_frame 需要 dict 类型的协议 cfg")
     frame_cfg = cfg.get("frame", {}) or {}
     header_size = int(frame_cfg.get("header_size", 2))
     header_raw = frame_cfg.get("header", "0xA5A5")

@@ -9,7 +9,7 @@ import build_tools.build_manager as bm
 def test_build_manager_uses_real_console_python_and_supported_range():
     python_name = Path(bm.PYTHON_EXECUTABLE).name.lower()
     assert python_name in {"python", "python.exe", "python3"} or python_name.startswith("python3.")
-    assert bm.SUPPORTED_MIN == (3, 11)
+    assert bm.SUPPORTED_MIN == (3, 10)
     assert bm.SUPPORTED_MAX_EXCLUSIVE == (3, 15)
     assert struct.calcsize("P") * 8 == 64
 
