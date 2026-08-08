@@ -187,85 +187,6 @@ class DemoPlugin(ProtocolPlugin):
     except Exception as e:
         logger.error(f"插件系统演示失败: {e}")
 
-def demo_web_monitor_basic():
-    """演示基础Web监控功能"""
-    logger.info("[+] 演示基础Web监控功能")
-    logger.info("=" * 50)
-    
-    try:
-        from protocol_parser.web_monitor import WebMonitor, WebMonitorConfig
-        
-        # 创建模拟的管理器
-        class MockSerialManager:
-            def get_all_ports_status(self):
-                return {
-                    'COM1': {'is_connected': True, 'is_running': True, 'data_received': 1024},
-                    'COM2': {'is_connected': False, 'is_running': False, 'data_received': 0}
-                }
-            
-            def get_performance_metrics(self):
-                return {
-                    'total_data_received': 2048,
-                    'total_connections': 10,
-                    'total_errors': 2
-                }
-            
-            def get_system_info(self):
-                return {
-                    'start_time': time.time(),
-                    'total_ports': 2,
-                    'active_ports': 1
-                }
-        
-        class MockPluginManager:
-            def get_plugin_stats(self):
-                return {
-                    'total_plugins': 3,
-                    'enabled_plugins': 2,
-                    'disabled_plugins': 1
-                }
-        
-        # 创建Web监控配置
-        config = WebMonitorConfig(
-            host='127.0.0.1',
-            port=8080,
-            debug=False,
-            update_interval=1.0
-        )
-        
-        # 创建Web监控
-        web_monitor = WebMonitor(MockSerialManager(), MockPluginManager(), config)
-        
-        logger.info("🌐 Web监控已创建")
-        logger.info("📍 访问地址: http://127.0.0.1:8080")
-        logger.info("📊 可用页面:")
-        logger.info("   - 主页: /")
-        logger.info("   - 仪表板: /dashboard")
-        logger.info("   - 串口管理: /serial-ports")
-        logger.info("   - 插件管理: /plugins")
-        logger.info("   - 系统监控: /system")
-        
-        # 启动Web监控
-        web_thread = threading.Thread(target=web_monitor.run, args=('127.0.0.1', 8080))
-        web_thread.daemon = True
-        web_thread.start()
-        
-        logger.info("🚀 Web服务已启动")
-        logger.info("⏳ 运行30秒供您访问...")
-        
-        # 模拟数据更新
-        for i in range(30):
-            web_monitor._collect_system_metrics()
-            time.sleep(1)
-        
-        logger.info("🛑 停止Web监控")
-        web_monitor.stop_monitoring()
-        
-        logger.info("🎉 Web监控演示完成")
-        
-    except Exception as e:
-        logger.error(f"Web监控演示失败: {e}")
-
 def demo_usage_examples():
     """演示使用示例"""
     logger.info("[+] 使用示例")
@@ -291,21 +212,7 @@ def demo_usage_examples():
     plugin_manager.disable_plugin('my_plugin')
     """)
     
-    logger.info("2. Web监控使用示例:")
-    logger.info("""
-    # 创建Web监控
-    from protocol_parser.web_monitor import WebMonitor, WebMonitorConfig
-    
-    config = WebMonitorConfig(host='0.0.0.0', port=8080)
-    web_monitor = WebMonitor(serial_manager, plugin_manager, config)
-    
-    # 启动Web服务
-    web_monitor.run(host='0.0.0.0', port=8080)
-    
-    # 访问 http://localhost:8080 查看监控界面
-    """)
-    
-    logger.info("3. 完整集成示例:")
+    logger.info("2. 完整集成示例:")
     logger.info("""
     # 创建分布式管理器
     from protocol_parser.serial_manager import DistributedSerialManager
@@ -315,25 +222,15 @@ def demo_usage_examples():
     from protocol_parser.serial_manager import SerialPortConfig
     config = SerialPortConfig(port='COM1', baudrate=115200)
     manager.register_port('port1', config)
-    
-    # 创建Web监控
-    web_monitor = WebMonitor(manager, plugin_manager, config)
-    
-    # 启动服务
-    web_monitor.run(host='0.0.0.0', port=8080)
     """)
 
 def main():
     """主函数"""
-    logger.info("[*] Web监控和插件系统演示")
+    logger.info("[*] 插件系统演示")
     logger.info("=" * 60)
     
     # 演示插件系统
     demo_plugin_system_only()
-    print()
-    
-    # 演示Web监控
-    demo_web_monitor_basic()
     print()
     
     # 使用示例
@@ -343,14 +240,7 @@ def main():
     logger.info("=" * 60)
     logger.info("[+] 功能说明:")
     logger.info("[+] 插件系统: 支持动态加载、配置管理、热插拔")
-    logger.info("[+] Web监控: 提供实时数据监控、可视化界面")
     logger.info("[+] 完整集成: 支持分布式架构和插件扩展")
-    logger.info("")
-    logger.info("[+] 访问地址:")
-    logger.info("   - Web监控: http://127.0.0.1:8080")
-    logger.info("   - 串口管理: http://127.0.0.1:8080/serial-ports")
-    logger.info("   - 插件管理: http://127.0.0.1:8080/plugins")
-    logger.info("   - 系统监控: http://127.0.0.1:8080/system")
 
 if __name__ == "__main__":
     main()

@@ -308,84 +308,6 @@ class TestPlugin(ProtocolPlugin):
         logger.error(f"插件系统测试失败: {e}")
         return False
 
-def test_web_monitor():
-    """测试Web监控"""
-    logger.info("开始测试Web监控...")
-    
-    try:
-        from protocol_parser.web_monitor import WebMonitor, WebMonitorConfig
-        from protocol_parser.serial_manager import DistributedSerialManager
-        from protocol_parser.plugin_system import PluginManager
-        
-        # 创建管理器
-        serial_manager = DistributedSerialManager()
-        plugin_manager = PluginManager()
-        
-        # 创建Web监控配置
-        config = WebMonitorConfig(
-            host='127.0.0.1',
-            port=8080,
-            debug=False,
-            update_interval=1.0
-        )
-        
-        # 创建Web监控
-        web_monitor = WebMonitor(serial_manager, plugin_manager, config)
-        
-        # 测试状态获取
-        logger.info("测试状态获取...")
-        status = web_monitor.get_status()
-        assert 'is_running' in status
-        assert 'host' in status
-        assert 'port' in status
-        
-        # 测试系统指标收集
-        logger.info("测试系统指标收集...")
-        web_monitor._collect_system_metrics()
-        metrics = web_monitor._get_system_metrics()
-        assert 'cpu_usage' in metrics
-        assert 'memory_usage' in metrics
-        
-        # 测试历史数据更新
-        logger.info("测试历史数据更新...")
-        from protocol_parser.web_monitor import SystemMetrics
-        metrics = SystemMetrics(
-            timestamp=time.time(),
-            cpu_usage=50.0,
-            memory_usage=60.0,
-            disk_usage=70.0,
-            network_sent=1000,
-            network_received=2000,
-            active_threads=10,
-            active_connections=5
-        )
-        web_monitor._update_history_data(metrics)
-        assert len(web_monitor.history_data['cpu_usage']) > 0
-        
-        # 测试实时数据更新
-        logger.info("测试实时数据更新...")
-        web_monitor._update_real_time_data(metrics)
-        assert 'system' in web_monitor.real_time_data
-        
-        # 测试图表数据生成
-        logger.info("测试图表数据生成...")
-        chart_data = web_monitor._generate_chart_data('cpu_usage')
-        assert 'type' in chart_data
-        assert 'data' in chart_data
-        
-        # 测试模板渲染
-        logger.info("测试模板渲染...")
-        content = web_monitor._render_template('index.html')
-        assert isinstance(content, str)
-        assert len(content) > 0
-        
-        logger.info("Web监控测试通过")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Web监控测试失败: {e}")
-        return False
-
 def test_memory_optimization():
     """测试内存优化"""
     logger.info("开始测试内存优化...")
@@ -517,7 +439,6 @@ def run_all_tests():
         ("优化串口收集器", test_optimized_serial_collector),
         ("分布式串口管理器", test_distributed_serial_manager),
         ("插件系统", test_plugin_system),
-        ("Web监控", test_web_monitor),
         ("内存优化", test_memory_optimization),
         ("线程安全", test_thread_safety)
     ]

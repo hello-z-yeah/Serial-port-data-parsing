@@ -232,6 +232,14 @@ class ProtocolPlugin(ABC):
             bool: 配置是否有效
         """
         return True
+    
+    def shutdown(self) -> None:
+        """
+        关闭插件（释放后台连接、资源或定时器）
+        
+        子类应重写此方法以释放持有的资源。
+        """
+        pass
 
 
 class PluginManager:
@@ -394,7 +402,7 @@ class PluginManager:
     
     def unload_plugin(self, plugin_name: str) -> bool:
         """
-        卸载插件
+        卸载插件（安全调用 shutdown 释放资源，清理模块缓存）
         
         Args:
             plugin_name: 插件名称
@@ -408,14 +416,30 @@ class PluginManager:
                 return False
             
             try:
-                # 停止插件
+                # 先获取插件实例
+                plugin_instance = None
                 if plugin_name in self.enabled_plugins:
                     plugin_instance = self.enabled_plugins[plugin_name]
-                    plugin_instance.clear_cache()
+                elif plugin_name in self.plugin_configs:
+                    pass  # 插件可能已禁用
+                
+                # 调用 shutdown 释放资源
+                if plugin_instance is not None:
+                    try:
+                        plugin_instance.shutdown()
+                    except Exception as e:
+                        self.logger.warning(f"插件 {plugin_name} shutdown() 异常: {e}")
+                
+                # 清理缓存
+                if plugin_name in self.enabled_plugins:
+                    self.enabled_plugins[plugin_name].clear_cache()
                     del self.enabled_plugins[plugin_name]
                 
                 # 从插件字典中移除
                 del self.plugins[plugin_name]
+                
+                # 彻底斩断 dynamic module 的缓存
+                sys.modules.pop(plugin_name, None)
                 
                 self.logger.info(f"插件 {plugin_name} 卸载成功")
                 return True
@@ -470,7 +494,7 @@ class PluginManager:
     
     def disable_plugin(self, plugin_name: str) -> bool:
         """
-        禁用插件
+        禁用插件（调用 shutdown 释放资源）
         
         Args:
             plugin_name: 插件名称
@@ -484,8 +508,16 @@ class PluginManager:
                 return True
             
             try:
-                # 停止插件
+                # 获取插件实例
                 plugin_instance = self.enabled_plugins[plugin_name]
+                
+                # 调用 shutdown 释放资源
+                try:
+                    plugin_instance.shutdown()
+                except Exception as e:
+                    self.logger.warning(f"插件 {plugin_name} shutdown() 异常: {e}")
+                
+                # 清理缓存
                 plugin_instance.clear_cache()
                 del self.enabled_plugins[plugin_name]
                 

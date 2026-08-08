@@ -98,6 +98,7 @@ class DistributedSerialManager:
         self._state_lock = threading.RLock()
         self.is_running = False
         self.health_check_thread = None
+        self._health_check_stop_event = threading.Event()
         self._monitor_thread = None
         
         # 性能监控
@@ -186,10 +187,19 @@ class DistributedSerialManager:
                     reconnect_delay=config.reconnect_delay
                 )
                 
-                # 设置事件回调
-                collector.set_event_callback('data_received', self._on_data_received)
-                collector.set_event_callback('error_occurred', self._on_error_occurred)
-                collector.set_event_callback('connection_changed', self._on_connection_changed)
+                # 设置事件回调（使用单层闭包，确保正确传递 port_id）
+                collector.set_event_callback(
+                    'data_received',
+                    lambda data, pid=port_id: self._on_data_received(pid, data)
+                )
+                collector.set_event_callback(
+                    'error_occurred',
+                    lambda error, pid=port_id: self._on_error_occurred(pid, error)
+                )
+                collector.set_event_callback(
+                    'connection_changed',
+                    lambda connected, pid=port_id: self._on_connection_changed(pid, connected)
+                )
                 
                 # 存储配置和状态
                 self.serial_ports[port_id] = collector
@@ -219,7 +229,7 @@ class DistributedSerialManager:
     
     def unregister_port(self, port_id: str) -> bool:
         """
-        注销串口
+        注销串口（先安全停止收集器，再清理状态）
         
         Args:
             port_id: 串口标识符
@@ -231,22 +241,27 @@ class DistributedSerialManager:
             if port_id not in self.serial_ports:
                 self.logger.warning(f"串口 {port_id} 不存在")
                 return False
-                
+            
             try:
-                # 停止串口
+                # 1. 先获取收集器引用
                 collector = self.serial_ports[port_id]
-                future = self.executor.submit(collector.stop)
                 
-                # 清理资源
+                # 2. 直接停止收集器（同步等待完成）
+                collector.stop(timeout=2.0)
+                
+                # 3. 确认工作线程已退出
+                if hasattr(collector, '_thread') and collector._thread is not None:
+                    if collector._thread.is_alive():
+                        self.logger.warning(f"串口 {port_id} 工作线程未能及时退出")
+                
+                # 4. 安全地从管理器状态中清除
                 del self.serial_ports[port_id]
-                del self.port_configs[port_id]
-                del self.port_status[port_id]
-                
+                if port_id in self.port_configs:
+                    del self.port_configs[port_id]
+                if port_id in self.port_status:
+                    del self.port_status[port_id]
                 if port_id in self._port_cache:
                     del self._port_cache[port_id]
-                
-                # 等待停止完成
-                future.result(timeout=10.0)
                 
                 # 触发事件
                 self._trigger_event('port_disconnected', {'port_id': port_id})
@@ -479,6 +494,7 @@ class DistributedSerialManager:
         if self.health_check_thread and self.health_check_thread.is_alive():
             return
             
+        self._health_check_stop_event.clear()
         self.is_running = True
         self.health_check_thread = threading.Thread(target=self._health_check_loop)
         self.health_check_thread.daemon = True
@@ -491,6 +507,7 @@ class DistributedSerialManager:
         停止健康检查
         """
         self.is_running = False
+        self._health_check_stop_event.set()
         if self.health_check_thread:
             self.health_check_thread.join(timeout=5.0)
         self.logger.info("健康检查已停止")
@@ -516,11 +533,12 @@ class DistributedSerialManager:
                     'total_data': self.performance_metrics['total_data_received']
                 })
                 
-                time.sleep(self.health_check_interval)
+                # 使用可中断的等待机制
+                self._health_check_stop_event.wait(self.health_check_interval)
                 
             except Exception as e:
                 self.logger.error(f"健康检查循环错误: {e}")
-                time.sleep(5.0)
+                self._health_check_stop_event.wait(5.0)
     
     def _check_port_health(self, port_id: str) -> None:
         """
@@ -734,7 +752,7 @@ class DistributedSerialManager:
     
     def _resource_monitor_loop(self) -> None:
         """资源监控循环"""
-        while self.is_running or True:  # 持续监控
+        while self.is_running:  # 严格跟随运行状态，防止后台线程永久死循环
             try:
                 self._check_resources()
                 self._adjust_thread_pool_based_on_load()
@@ -964,23 +982,42 @@ class DistributedSerialManager:
     
     def shutdown(self) -> None:
         """
-        关闭分布式管理器
+        关闭分布式管理器（优雅清理所有资源）
         """
         self.logger.info("开始关闭分布式串口管理器...")
         
-        # 停止健康检查
+        # 1. 停止健康检查
         self.stop_health_check()
         
-        # 停止所有串口
-        for port_id in list(self.serial_ports.keys()):
-            self.unregister_port(port_id)
+        # 2. 在持有锁的情况下，停止所有收集器并清理状态
+        with self._state_lock:
+            # 先停止所有收集器
+            for port_id in list(self.serial_ports.keys()):
+                try:
+                    collector = self.serial_ports[port_id]
+                    collector.stop(timeout=2.0)
+                except Exception as e:
+                    self.logger.warning(f"停止串口 {port_id} 时出错: {e}")
+            
+            # 清空所有状态字典
+            self.serial_ports.clear()
+            self.port_configs.clear()
+            self.port_status.clear()
+            self._port_cache.clear()
         
-        # 关闭线程池
+        # 3. 等待资源监控线程退出
+        if self._monitor_thread and self._monitor_thread.is_alive():
+            self._monitor_thread.join(timeout=1.0)
+        
+        # 4. 彻底关闭线程池
         self.executor.shutdown(wait=True)
         
-        # 清理缓存
-        self._port_cache.clear()
+        # 5. 清理缓存
         self._metrics_cache.clear()
+        self._resource_alerts.clear()
+        
+        # 6. 标记已停止
+        self.is_running = False
         
         self.logger.info("分布式串口管理器已关闭")
     

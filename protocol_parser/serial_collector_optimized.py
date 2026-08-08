@@ -31,8 +31,8 @@ class OptimizedSerialCollector:
     
     def __init__(
         self,
-        cfg: dict,
-        port: str,
+        cfg: dict | None = None,
+        port: str = "",
         baudrate: int = 9600,
         timeout: float = 1.0,
         parity: str = 'N',
@@ -49,9 +49,10 @@ class OptimizedSerialCollector:
         raw_batch_bytes: int = 4096,
         raw_batch_ms: int = 100,
         tx_queue_size: int = 100,
-        max_buffer_size: int = 1024 * 1024,  # 新增：最大缓冲区大小限制
-        max_reconnect_attempts: int = 5,      # 新增：最大重连次数
-        reconnect_delay: float = 2.0,        # 新增：重连延迟
+        max_buffer_size: int = 1024 * 1024,
+        max_reconnect_attempts: int = 5,
+        reconnect_delay: float = 2.0,
+        **kwargs,
     ):
         """初始化优化版本的串口收集器
         
@@ -120,6 +121,14 @@ class OptimizedSerialCollector:
         self._tx_queue: queue.Queue | None = None
         self._mcu_sync_lock = threading.Lock()
         self.tx_dropped_on_stop = 0
+        
+        # 事件回调字典（线程安全）
+        self._event_callbacks: dict = {
+            'data_received': None,
+            'error_occurred': None,
+            'connection_changed': None
+        }
+        self._event_lock = threading.Lock()
 
     def _register_resource(self, resource) -> None:
         """注册需要管理的资源"""
@@ -266,6 +275,8 @@ class OptimizedSerialCollector:
                 )
                 self._tx_thread.start()
                 self._thread.start()
+                # 触发连接状态变化事件
+                self._emit_event("connection_changed", self.is_connected())
             except (RuntimeError, TypeError, ValueError, OverflowError) as exc:
                 self._running = False
                 self._stop_event.set()
@@ -354,6 +365,9 @@ class OptimizedSerialCollector:
                 
                 now = time.time()
                 
+                # 触发数据接收事件
+                self._emit_event("data_received", raw)
+                
                 # 处理MCU帧
                 if self.on_mcu_frame is not None:
                     self._dispatch_mcu_frames(raw, now)
@@ -435,6 +449,8 @@ class OptimizedSerialCollector:
                 self.on_error(msg)
             except Exception as exc:
                 log_protocol_error(exc, "错误回调异常")
+        # 触发错误事件
+        self._emit_event("error_occurred", msg)
 
     def _notify_connection_error(self, msg: str, kind: str) -> None:
         """通知连接错误"""
@@ -527,6 +543,8 @@ class OptimizedSerialCollector:
                     self._mcu_sync.reset()
             self._stopping = False
             self._running = False
+            # 触发连接状态变化事件
+            self._emit_event("connection_changed", self.is_connected())
         if dropped:
             self._notify_error(f"串口停止时丢弃了 {dropped} 条尚未发送的 TX 请求")
 
@@ -636,6 +654,80 @@ class OptimizedSerialCollector:
             "cpu_usage": metrics.cpu_usage,
             "connection_failures": self._connection_failures,
             "buffer_size": len(self._sync.buffer) if self._sync else 0,
+        }
+    
+    # ========== 事件回调方法 ==========
+    
+    def set_event_callback(self, event_name: str, callback: callable) -> None:
+        """
+        注册事件回调
+        
+        Args:
+            event_name: 事件名称 ('data_received', 'error_occurred', 'connection_changed')
+            callback: 回调函数
+        """
+        with self._event_lock:
+            if event_name in self._event_callbacks:
+                self._event_callbacks[event_name] = callback
+    
+    def _emit_event(self, name: str, *args) -> None:
+        """
+        触发事件（线程安全，隔离外部回调异常）
+        
+        Args:
+            name: 事件名称
+            *args: 事件参数
+        """
+        with self._event_lock:
+            callback = self._event_callbacks.get(name)
+        
+        if callback:
+            try:
+                callback(*args)
+            except Exception as exc:
+                log_protocol_error(exc, f"External event callback exception in '{name}'")
+    
+    # ========== 兼容性 API ==========
+    
+    def is_connected(self) -> bool:
+        """返回串口是否已连接"""
+        return bool(self._serial is not None and self._serial.is_open)
+    
+    def is_running(self) -> bool:
+        """返回收集器是否正在运行"""
+        return self.running
+    
+    def get_error_count(self) -> int:
+        """返回当前错误计数"""
+        if self._sync is not None:
+            return self._sync.error_count
+        return 0
+    
+    def send_data(self, data: bytes) -> bool:
+        """
+        向串口发送数据（非阻塞）
+        
+        Args:
+            data: 要发送的数据
+            
+        Returns:
+            bool: 发送是否成功
+        """
+        if self._tx_queue is None:
+            return False
+        try:
+            self._tx_queue.put_nowait(TxRequest(data))
+            return True
+        except queue.Full:
+            return False
+    
+    def get_resource_info(self) -> dict:
+        """获取资源信息（兼容旧接口）"""
+        return {
+            'buffer_size': len(self._sync.buffer) if self._sync else 0,
+            'thread_count': len([t for t in [self._thread, self._tx_thread] if t is not None and t.is_alive()]),
+            'is_connected': self.is_connected(),
+            'is_running': self.is_running(),
         }
 
     @staticmethod

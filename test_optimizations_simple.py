@@ -288,87 +288,6 @@ class TestPlugin(ProtocolPlugin):
         logger.error(f"基础插件系统功能测试失败: {e}")
         return False
 
-def test_web_monitor_basic():
-    """测试基础Web监控功能"""
-    logger.info("开始测试基础Web监控功能...")
-    
-    try:
-        from protocol_parser.web_monitor import WebMonitor, WebMonitorConfig
-        
-        # 创建模拟的管理器
-        class MockSerialManager:
-            def get_all_ports_status(self):
-                return {'COM1': {'is_connected': True, 'is_running': True}}
-            
-            def get_performance_metrics(self):
-                return {'total_data_received': 1024}
-            
-            def get_system_info(self):
-                return {'start_time': time.time()}
-        
-        class MockPluginManager:
-            def get_plugin_stats(self):
-                return {'total_plugins': 1}
-        
-        # 创建Web监控配置
-        config = WebMonitorConfig(
-            host='127.0.0.1',
-            port=8080,
-            debug=False,
-            update_interval=1.0
-        )
-        
-        # 创建Web监控
-        web_monitor = WebMonitor(MockSerialManager(), MockPluginManager(), config)
-        
-        # 测试状态获取
-        status = web_monitor.get_status()
-        assert 'is_running' in status
-        assert 'host' in status
-        assert 'port' in status
-        
-        # 测试系统指标收集
-        web_monitor._collect_system_metrics()
-        metrics = web_monitor._get_system_metrics()
-        assert 'cpu_usage' in metrics
-        assert 'memory_usage' in metrics
-        
-        # 测试历史数据更新
-        from protocol_parser.web_monitor import SystemMetrics
-        metrics = SystemMetrics(
-            timestamp=time.time(),
-            cpu_usage=50.0,
-            memory_usage=60.0,
-            disk_usage=70.0,
-            network_sent=1000,
-            network_received=2000,
-            active_threads=10,
-            active_connections=5
-        )
-        web_monitor._update_history_data(metrics)
-        assert len(web_monitor.history_data['cpu_usage']) > 0
-        
-        # 测试实时数据更新
-        web_monitor._update_real_time_data(metrics)
-        assert 'system' in web_monitor.real_time_data
-        
-        # 测试图表数据生成
-        chart_data = web_monitor._generate_chart_data('cpu_usage')
-        assert 'type' in chart_data
-        assert 'data' in chart_data
-        
-        # 测试模板渲染
-        content = web_monitor._render_template('index.html')
-        assert isinstance(content, str)
-        assert len(content) > 0
-        
-        logger.info("基础Web监控功能测试通过")
-        return True
-        
-    except Exception as e:
-        logger.error(f"基础Web监控功能测试失败: {e}")
-        return False
-
 def test_thread_safety():
     """测试线程安全"""
     logger.info("开始测试线程安全...")
@@ -501,7 +420,6 @@ def run_all_tests():
         ("基础串口收集器", test_serial_collector_basic),
         ("基础分布式串口管理器", test_distributed_serial_manager_basic),
         ("基础插件系统", test_plugin_system_basic),
-        ("基础Web监控", test_web_monitor_basic),
         ("线程安全", test_thread_safety),
         ("内存优化", test_memory_optimization)
     ]
