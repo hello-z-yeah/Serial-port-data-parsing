@@ -986,6 +986,9 @@ class DistributedSerialManager:
         """
         self.logger.info("开始关闭分布式串口管理器...")
         
+        # 0. 立即标记停止信号，让所有后台线程（健康检查、资源监控）立即感知
+        self.is_running = False
+        
         # 1. 停止健康检查
         self.stop_health_check()
         
@@ -1015,9 +1018,6 @@ class DistributedSerialManager:
         # 5. 清理缓存
         self._metrics_cache.clear()
         self._resource_alerts.clear()
-        
-        # 6. 标记已停止
-        self.is_running = False
         
         self.logger.info("分布式串口管理器已关闭")
     

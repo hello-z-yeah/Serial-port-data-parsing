@@ -80,6 +80,8 @@ class OptimizedSerialCollector:
         self.cfg = cfg
         self.port = port
         self.baudrate = baudrate
+        self.timeout = timeout
+        self.parity = parity
         self.on_frame = on_frame
         self.on_raw = on_raw
         self.on_error = on_error
@@ -238,13 +240,21 @@ class OptimizedSerialCollector:
             except (TypeError, ValueError):
                 sb_val = serial.STOPBITS_ONE
             try:
+                parity_map = {
+                    'N': serial.PARITY_NONE,
+                    'E': serial.PARITY_EVEN,
+                    'O': serial.PARITY_ODD,
+                    'M': serial.PARITY_MARK,
+                    'S': serial.PARITY_SPACE,
+                }
+                parity_val = parity_map.get(self.parity.upper(), serial.PARITY_NONE)
                 self._serial = serial.Serial(
                     port=self.port,
                     baudrate=self.baudrate,
                     bytesize=bytesize_map.get(self.bytesize, serial.EIGHTBITS),
-                    parity=serial.PARITY_NONE,
+                    parity=parity_val,
                     stopbits=sb_val,
-                    timeout=0.1,
+                    timeout=self.timeout,
                     write_timeout=1.0,
                 )
                 self._register_resource(self._serial)
@@ -256,7 +266,7 @@ class OptimizedSerialCollector:
                 raise error from exc
 
             try:
-                self._write_lock = self._write_lock or threading.Lock()
+                self._write_lock = threading.Lock()
                 self._tx_queue = queue.Queue(maxsize=max(1, int(self.tx_queue_size)))
                 self._register_resource(self._tx_queue)
                 self._stop_event.clear()
