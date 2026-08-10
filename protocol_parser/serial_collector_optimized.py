@@ -1,10 +1,10 @@
 """Optimized serial collector with robust lifecycle management.
 
 Features:
-- Short read timeout (0.1s) for responsive stop
-- Non-blocking read loop via direct serial.read()
-- Guaranteed serial port close on stop
-- Background-thread reconnect to avoid self-join deadlock
+- Short read timeout (0.1s) for responsive stop — no select.select
+- Non-blocking read loop via direct serial.read(4096)
+- Guaranteed serial port close on stop (ownership-clear)
+- Background-thread reconnect — never called from RX thread's own stack
 - Public API: is_running(), is_connected(), get_error_count(), send_data()
 """
 from __future__ import annotations
@@ -22,11 +22,7 @@ from .serial_collector import (
     _classify_serial_error,
     _friendly_serial_error,
 )
-from .parser import (
-    Frame,
-    ParseResult,
-    parse_frame,
-)
+from .parser import Frame, ParseResult, parse_frame
 
 try:
     import serial
@@ -81,6 +77,7 @@ class OptimizedSerialCollector:
     last_connection_error: str = ""
     _error_count: int = 0
     _connected: bool = False
+    _generation: int = 0  # bumped on each start/reconnect to detect stale workers
 
     def is_running(self) -> bool:
         return self.running
@@ -107,78 +104,79 @@ class OptimizedSerialCollector:
 
             self.sync = FrameSynchronizer(self.cfg or {})
             self.set_mcu_cfg(self.mcu_cfg if self.on_mcu_frame is not None else {})
-            bytesize_map = {
-                5: serial.FIVEBITS,
-                6: serial.SIXBITS,
-                7: serial.SEVENBITS,
-                8: serial.EIGHTBITS,
-            }
-            stopbits_map = {
-                1.0: serial.STOPBITS_ONE,
-                1.5: serial.STOPBITS_ONE_POINT_FIVE,
-                2.0: serial.STOPBITS_TWO,
-            }
-            try:
-                sb_val = stopbits_map.get(float(self.stopbits), serial.STOPBITS_ONE)
-            except (TypeError, ValueError):
-                sb_val = serial.STOPBITS_ONE
-            try:
-                self._serial = serial.Serial(
-                    port=self.port,
-                    baudrate=self.baudrate,
-                    bytesize=bytesize_map.get(self.bytesize, serial.EIGHTBITS),
-                    parity=serial.PARITY_NONE,
-                    stopbits=sb_val,
-                    timeout=0.1,
-                    write_timeout=1.0,
-                )
-            except (serial.SerialException, OSError) as exc:
-                self._serial = None
-                kind = _classify_serial_error(exc)
-                error = SerialOperationError(_friendly_serial_error(self.port, exc, kind))
-                setattr(error, "kind", kind)
-                raise error from exc
+            self._serial = self._open_serial()
+            self._write_lock = self._write_lock or threading.Lock()
+            self._tx_queue = queue.Queue(maxsize=max(1, int(self.tx_queue_size)))
+            self._stop_event.clear()
+            self.tx_dropped_on_stop = 0
+            self.last_connection_error_kind = ""
+            self.last_connection_error = ""
+            self._error_count = 0
+            self._connected = True
+            self.running = True
+            self._generation += 1
+            gen = self._generation
+            self._tx_thread = threading.Thread(
+                target=self._tx_loop,
+                args=(gen,),
+                daemon=True,
+                name=f"smst-tx-{self.port}",
+            )
+            self._thread = threading.Thread(
+                target=self._read_loop_optimized,
+                args=(gen,),
+                daemon=True,
+                name=f"smst-rx-{self.port}",
+            )
+            self._tx_thread.start()
+            self._thread.start()
 
-            try:
-                self._write_lock = self._write_lock or threading.Lock()
-                self._tx_queue = queue.Queue(maxsize=max(1, int(self.tx_queue_size)))
-                self._stop_event.clear()
-                self.tx_dropped_on_stop = 0
-                self.last_connection_error_kind = ""
-                self.last_connection_error = ""
-                self._error_count = 0
-                self._connected = True
-                self.running = True
-                self._tx_thread = threading.Thread(
-                    target=self._tx_loop,
-                    daemon=True,
-                    name=f"smst-tx-{self.port}",
-                )
-                self._thread = threading.Thread(
-                    target=self._read_loop_optimized,
-                    daemon=True,
-                    name=f"smst-rx-{self.port}",
-                )
-                self._tx_thread.start()
-                self._thread.start()
-            except (RuntimeError, TypeError, ValueError, OverflowError) as exc:
-                self.running = False
-                self._connected = False
-                self._stop_event.set()
-                try:
-                    if self._serial is not None and getattr(self._serial, "is_open", False):
-                        self._serial.close()
-                except (OSError, AttributeError):
-                    pass
-                if self._tx_thread is not None and self._tx_thread.is_alive():
-                    self._tx_thread.join(timeout=0.5)
-                self._thread = None
-                self._tx_thread = None
-                self._serial = None
-                self._tx_queue = None
-                raise SerialOperationError(f"无法启动串口工作线程：{exc}") from exc
+    def _open_serial(self) -> "serial.Serial":
+        """Open serial port with configured parameters. Returns the serial object."""
+        bytesize_map = {
+            5: serial.FIVEBITS,
+            6: serial.SIXBITS,
+            7: serial.SEVENBITS,
+            8: serial.EIGHTBITS,
+        }
+        stopbits_map = {
+            1.0: serial.STOPBITS_ONE,
+            1.5: serial.STOPBITS_ONE_POINT_FIVE,
+            2.0: serial.STOPBITS_TWO,
+        }
+        try:
+            sb_val = stopbits_map.get(float(self.stopbits), serial.STOPBITS_ONE)
+        except (TypeError, ValueError):
+            sb_val = serial.STOPBITS_ONE
+        try:
+            ser = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                bytesize=bytesize_map.get(self.bytesize, serial.EIGHTBITS),
+                parity=serial.PARITY_NONE,
+                stopbits=sb_val,
+                timeout=0.1,
+                write_timeout=1.0,
+            )
+        except (serial.SerialException, OSError) as exc:
+            kind = _classify_serial_error(exc)
+            error = SerialOperationError(_friendly_serial_error(self.port, exc, kind))
+            setattr(error, "kind", kind)
+            raise error from exc
+        return ser
+
+    def _close_serial_safe(self, ser: "serial.Serial | None") -> None:
+        """Idempotent, safe close of a serial port handle."""
+        if ser is None:
+            return
+        try:
+            if getattr(ser, "is_open", False):
+                ser.close()
+        except (OSError, AttributeError):
+            pass
 
     def request_stop(self) -> None:
+        """Signal both workers and cancel any pending OS-level read/write."""
         with self._state_lock:
             self._stopping = True
             self.running = False
@@ -201,6 +199,7 @@ class OptimizedSerialCollector:
                 pass
 
     def stop(self, *, timeout: float = 2.5) -> None:
+        """Stop workers. Must not be called from within a worker thread."""
         self.request_stop()
         with self._state_lock:
             serial_obj = self._serial
@@ -209,18 +208,18 @@ class OptimizedSerialCollector:
             tx_queue = self._tx_queue
             reconnect_thread = self._reconnect_thread
 
-        if serial_obj is not None:
-            try:
-                if getattr(serial_obj, "is_open", False):
-                    serial_obj.close()
-            except (OSError, AttributeError):
-                pass
+        # Close after cancellation — some Windows USB drivers unblock only on close.
+        self._close_serial_safe(serial_obj)
 
         current = threading.current_thread()
+        deadline = time.monotonic() + max(0.0, float(timeout))
+
         for worker in (rx_thread, tx_thread, reconnect_thread):
             if worker is None or worker is current:
                 continue
-            remaining = max(0.0, timeout)
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                break
             worker.join(timeout=remaining)
 
         alive = [
@@ -231,8 +230,11 @@ class OptimizedSerialCollector:
         if alive:
             with self._state_lock:
                 self._stopping = False
-            raise SerialOperationError(f"串口线程未能及时停止：{', '.join(alive)}")
+            raise SerialOperationError(
+                f"串口线程未能及时停止：{', '.join(alive)}"
+            )
 
+        # Drain remaining TX queue items (balanced task_done).
         with self._state_lock:
             dropped = 0
             if tx_queue is not None:
@@ -276,12 +278,17 @@ class OptimizedSerialCollector:
         except Exception as exc:
             try:
                 from .paths import write_crash_log
+
                 write_crash_log(exc)
             except Exception:
                 pass
 
-    def _notify_connection_error(self, message: str, kind: str | None = None) -> None:
-        resolved_kind = kind or _classify_serial_error(SerialOperationError(message))
+    def _notify_connection_error(
+        self, message: str, kind: str | None = None
+    ) -> None:
+        resolved_kind = kind or _classify_serial_error(
+            SerialOperationError(message)
+        )
         self.last_connection_error_kind = resolved_kind
         self.last_connection_error = message
         callback = self.on_connection_error or self.on_error
@@ -299,6 +306,7 @@ class OptimizedSerialCollector:
         except Exception as exc:
             try:
                 from .paths import write_crash_log
+
                 write_crash_log(exc)
             except Exception:
                 pass
@@ -308,7 +316,9 @@ class OptimizedSerialCollector:
         frame_cfg = resolved.get("frame", {}) if isinstance(resolved, dict) else {}
         with self._mcu_sync_lock:
             self.mcu_cfg = resolved
-            self.mcu_sync = FrameSynchronizer(resolved) if frame_cfg else None
+            self.mcu_sync = (
+                FrameSynchronizer(resolved) if frame_cfg else None
+            )
 
     def _dispatch_mcu_frames(self, raw: bytes, ts: float) -> None:
         callback = self.on_mcu_frame
@@ -320,18 +330,24 @@ class OptimizedSerialCollector:
             try:
                 frames = sync.feed(raw) if sync is not None else []
             except Exception as exc:
-                self._notify_error(f"模拟MCU辅助通道组帧异常（主串口继续运行）: {exc}")
+                self._notify_error(
+                    f"模拟MCU辅助通道组帧异常（主串口继续运行）: {exc}"
+                )
                 return
         if frames:
             for frame in frames:
                 try:
-                    result = parse_frame(frame.raw, cfg, direction=self.mcu_direction)
+                    result = parse_frame(
+                        frame.raw, cfg, direction=self.mcu_direction
+                    )
                 except Exception:
                     result = None
                 try:
                     callback(result, frame, ts)
                 except Exception as exc:
-                    self._notify_error(f"模拟MCU协议回调异常（已跳过）: {exc}")
+                    self._notify_error(
+                        f"模拟MCU协议回调异常（已跳过）: {exc}"
+                    )
             return
 
         dummy = Frame(
@@ -348,29 +364,52 @@ class OptimizedSerialCollector:
         try:
             callback(None, dummy, ts)
         except Exception as exc:
-            self._notify_error(f"模拟MCU原始数据回调异常（已跳过）: {exc}")
+            self._notify_error(
+                f"模拟MCU原始数据回调异常（已跳过）: {exc}"
+            )
 
     @staticmethod
-    def _normalize_hex_payload(frame_bytes: bytes | bytearray | str) -> bytes:
+    def _normalize_hex_payload(
+        frame_bytes: bytes | bytearray | str,
+    ) -> bytes:
         from .parser import EncodeFrameError
+
         if isinstance(frame_bytes, (bytes, bytearray)):
             return bytes(frame_bytes)
         if not isinstance(frame_bytes, str):
             raise TypeError("send_data() 需要 bytes 或 HEX 字符串")
         text = frame_bytes.strip()
-        clean = text.replace(" ", "").replace("\n", "").replace("\r", "").replace("\t", "")
+        clean = (
+            text.replace(" ", "")
+            .replace("\n", "")
+            .replace("\r", "")
+            .replace("\t", "")
+        )
         if clean.lower().startswith("0x"):
             clean = clean[2:]
         if len(clean) % 2:
-            raise EncodeFrameError(f"TX HEX 字符数必须为偶数：{frame_bytes!r}")
+            raise EncodeFrameError(
+                f"TX HEX 字符数必须为偶数：{frame_bytes!r}"
+            )
         try:
             return bytes.fromhex(clean)
         except ValueError as exc:
-            raise EncodeFrameError(f"TX HEX 字符串非法：{frame_bytes!r}，原因：{exc}") from exc
+            raise EncodeFrameError(
+                f"TX HEX 字符串非法：{frame_bytes!r}，原因：{exc}"
+            ) from exc
 
-    def _enqueue_tx(self, payload: bytes, label: str, metadata: dict[str, Any] | None) -> int:
+    def _enqueue_tx(
+        self,
+        payload: bytes,
+        label: str,
+        metadata: dict[str, Any] | None,
+    ) -> int:
         serial_obj = self._serial
-        if not self.running or serial_obj is None or not getattr(serial_obj, "is_open", False):
+        if (
+            not self.running
+            or serial_obj is None
+            or not getattr(serial_obj, "is_open", False)
+        ):
             raise SerialStateError("串口未打开，请先开始监控再发送")
         if not payload:
             return 0
@@ -381,17 +420,30 @@ class OptimizedSerialCollector:
         try:
             tx_queue.put_nowait(request)
         except queue.Full as exc:
-            raise TxQueueFullError("发送队列已满，请降低发送频率或等待队列处理完成") from exc
+            raise TxQueueFullError(
+                "发送队列已满，请降低发送频率或等待队列处理完成"
+            ) from exc
         return len(payload)
 
-    def send_data(self, data: bytes | bytearray | str, *, metadata: dict[str, Any] | None = None) -> int:
+    def send_data(
+        self,
+        data: bytes | bytearray | str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
         if isinstance(data, (bytes, bytearray)):
             payload = bytes(data)
         elif isinstance(data, str):
             stripped = data.strip()
             hex_chars = set("0123456789abcdefABCDEF \t\n\r")
-            looks_like_hex = bool(stripped) and all(c in hex_chars for c in stripped)
-            payload = self._normalize_hex_payload(data) if looks_like_hex else data.encode("utf-8")
+            looks_like_hex = bool(stripped) and all(
+                c in hex_chars for c in stripped
+            )
+            payload = (
+                self._normalize_hex_payload(data)
+                if looks_like_hex
+                else data.encode("utf-8")
+            )
         else:
             raise TypeError("send_data() 需要 bytes 或 str")
         return self._enqueue_tx(payload, "TX", metadata)
@@ -402,17 +454,24 @@ class OptimizedSerialCollector:
             return
         try:
             try:
-                parameter_count = len(inspect.signature(callback).parameters)
+                parameter_count = len(
+                    inspect.signature(callback).parameters
+                )
             except (TypeError, ValueError):
                 parameter_count = 4
             if parameter_count >= 4:
-                callback(request.payload, request.direction_label, ts, dict(request.metadata))
+                callback(
+                    request.payload,
+                    request.direction_label,
+                    ts,
+                    dict(request.metadata),
+                )
             else:
                 callback(request.payload, request.direction_label, ts)
         except Exception as exc:
             self._notify_error(f"TX 回调异常: {exc}")
 
-    def _tx_loop(self) -> None:
+    def _tx_loop(self, gen: int) -> None:
         tx_queue = self._tx_queue
         serial_obj = self._serial
         if tx_queue is None or serial_obj is None:
@@ -426,30 +485,47 @@ class OptimizedSerialCollector:
                 continue
             try:
                 if item is _TX_STOP:
+                    # Sentinel: do NOT call task_done() — it will be drained
+                    # by stop() with task_done(). Skipping here avoids
+                    # double-task_done() that corrupts the queue counter.
                     if tx_queue.empty():
                         break
                     continue
                 request = item
                 if not isinstance(request, TxRequest):
                     continue
-                if self._stop_event.is_set() and not getattr(serial_obj, "is_open", False):
+                if self._stop_event.is_set() and not getattr(
+                    serial_obj, "is_open", False
+                ):
                     break
                 try:
                     write_lock = self._write_lock
                     if write_lock is None:
                         raise SerialStateError("串口发送锁未初始化")
                     with write_lock:
-                        if serial_obj is not self._serial or not getattr(serial_obj, "is_open", False):
-                            raise SerialStateError("串口连接已失效，请重新开始监控")
+                        cur_serial = self._serial
+                        if (
+                            cur_serial is not serial_obj
+                            or not getattr(serial_obj, "is_open", False)
+                        ):
+                            raise SerialStateError(
+                                "串口连接已失效，请重新开始监控"
+                            )
                         written = serial_obj.write(request.payload)
                         if written != len(request.payload):
                             raise SerialOperationError(
                                 f"串口只写入 {written}/{len(request.payload)} 字节"
                             )
                 except SerialTimeoutException as exc:
-                    self._notify_error(f"串口写超时，本次发送已丢弃: {exc}")
+                    self._notify_error(
+                        f"串口写超时，本次发送已丢弃: {exc}"
+                    )
                     continue
-                except (serial.SerialException, OSError, SerialOperationError) as exc:
+                except (
+                    serial.SerialException,
+                    OSError,
+                    SerialOperationError,
+                ) as exc:
                     intentional_stop = self._stop_event.is_set()
                     self.running = False
                     self._connected = False
@@ -457,15 +533,24 @@ class OptimizedSerialCollector:
                     if not intentional_stop:
                         kind = _classify_serial_error(exc)
                         self._notify_connection_error(
-                            f"串口写入错误: {_friendly_serial_error(self.port, exc, kind)}",
+                            f"串口写入错误: "
+                            f"{_friendly_serial_error(self.port, exc, kind)}",
                             kind,
                         )
                     break
                 self._invoke_tx_callback(request, time.time())
             finally:
-                tx_queue.task_done()
+                if item is not _TX_STOP:
+                    try:
+                        tx_queue.task_done()
+                    except ValueError:
+                        pass
 
-    def _read_loop_optimized(self) -> None:
+    def _read_loop_optimized(self, gen: int) -> None:
+        # Capture the serial object THIS thread is working with.
+        # The finally block will close ONLY this specific handle,
+        # preventing accidental closing of a replacement serial
+        # object created by _reconnect().
         serial_obj = self._serial
         sync = self.sync
         if serial_obj is None or sync is None:
@@ -479,7 +564,11 @@ class OptimizedSerialCollector:
                 return
             now = time.time()
             age_ms = (now - last_flush) * 1000.0
-            if not force and len(raw_buf) < self.raw_batch_bytes and age_ms < self.raw_batch_ms:
+            if (
+                not force
+                and len(raw_buf) < self.raw_batch_bytes
+                and age_ms < self.raw_batch_ms
+            ):
                 return
             data = bytes(raw_buf)
             raw_buf.clear()
@@ -489,14 +578,20 @@ class OptimizedSerialCollector:
                     self.on_raw(data, now)
                 except Exception as exc:
                     if self.on_error:
-                        self.on_error(f"原始数据回调异常（已跳过）: {exc}")
+                        self.on_error(
+                            f"原始数据回调异常（已跳过）: {exc}"
+                        )
 
         try:
             while not self._stop_event.is_set():
+                # Check generation — if a newer reconnect happened,
+                # this loop is stale and should exit.
+                if gen != self._generation:
+                    break
                 try:
                     raw = serial_obj.read(4096)
                 except (serial.SerialException, OSError) as exc:
-                    if self._stop_event.is_set():
+                    if self._stop_event.is_set() or gen != self._generation:
                         break
                     self.running = False
                     self._connected = False
@@ -504,10 +599,11 @@ class OptimizedSerialCollector:
                     kind = _classify_serial_error(exc)
                     self._error_count += 1
                     self._notify_connection_error(
-                        f"串口读取错误: {_friendly_serial_error(self.port, exc, kind)}",
+                        f"串口读取错误: "
+                        f"{_friendly_serial_error(self.port, exc, kind)}",
                         kind,
                     )
-                    self._schedule_reconnect()
+                    self._schedule_reconnect(gen)
                     break
                 if not raw:
                     flush_raw(False)
@@ -523,7 +619,9 @@ class OptimizedSerialCollector:
                     raw_buf.extend(raw)
                     flush_raw(False)
                     continue
-                frame_cfg = self.cfg.get("frame", {}) if self.cfg else {}
+                frame_cfg = (
+                    self.cfg.get("frame", {}) if self.cfg else {}
+                )
                 if not frame_cfg:
                     raw_buf.extend(raw)
                     flush_raw(False)
@@ -534,26 +632,36 @@ class OptimizedSerialCollector:
                     frames = sync.feed(raw)
                 except Exception as exc:
                     self._error_count += 1
-                    self._notify_error(f"主协议组帧异常（已跳过本批数据）: {exc}")
+                    self._notify_error(
+                        f"主协议组帧异常（已跳过本批数据）: {exc}"
+                    )
                     continue
                 noise = bytes(sync.last_noise or b"")
                 if noise and self.on_raw:
                     try:
                         self.on_raw(noise, now)
                     except Exception as exc:
-                        self._notify_error(f"非协议数据回调异常（已跳过）: {exc}")
+                        self._notify_error(
+                            f"非协议数据回调异常（已跳过）: {exc}"
+                        )
                 for frame in frames:
                     try:
-                        result = parse_frame(frame.raw, self.cfg, direction=self.direction)
+                        result = parse_frame(
+                            frame.raw, self.cfg, direction=self.direction
+                        )
                     except Exception as exc:
                         self._error_count += 1
-                        self._notify_error(f"帧解析异常（已跳过）: {exc}")
+                        self._notify_error(
+                            f"帧解析异常（已跳过）: {exc}"
+                        )
                         continue
                     if self.on_frame:
                         try:
                             self.on_frame(result, frame, now)
                         except Exception as exc:
-                            self._notify_error(f"回调异常（已跳过）: {exc}")
+                            self._notify_error(
+                                f"回调异常（已跳过）: {exc}"
+                            )
             flush_raw(True)
         except Exception as exc:
             if not self._stop_event.is_set():
@@ -564,102 +672,108 @@ class OptimizedSerialCollector:
                 self._error_count += 1
                 self._notify_connection_error(f"采集异常: {exc}", kind)
         finally:
-            self.running = False
-            self._connected = False
-            with self._state_lock:
-                try:
-                    if self._serial is not None and getattr(self._serial, "is_open", False):
-                        self._serial.close()
-                except (OSError, AttributeError):
-                    pass
+            # Only close the specific serial handle this thread used.
+            # Do NOT touch self._serial — it may have been replaced
+            # by a reconnect thread.
+            self._close_serial_safe(serial_obj)
 
-    def _schedule_reconnect(self) -> None:
+    def _schedule_reconnect(self, old_gen: int) -> None:
+        """Launch a background reconnect supervisor thread.
+
+        The RX thread must NEVER run reconnect directly — that would
+        cause self-join deadlock and resource leaks.
+        """
         with self._state_lock:
             if self._stopping:
                 return
             if self._reconnect_thread is not None and self._reconnect_thread.is_alive():
                 return
             self._reconnect_thread = threading.Thread(
-                target=self._reconnect,
+                target=self._reconnect_supervisor,
+                args=(old_gen,),
                 daemon=True,
                 name=f"smst-reconnect-{self.port}",
             )
             self._reconnect_thread.start()
 
-    def _reconnect(self) -> None:
+    def _reconnect_supervisor(self, failed_gen: int) -> None:
+        """Background reconnect loop — runs in its own daemon thread.
+
+        Acquires serial under lock, releases, closes outside lock,
+        then opens a new serial under lock. Never runs inside the
+        RX thread's stack.
+        """
         attempt = 0
         while not self._stop_event.is_set() and attempt < self.max_reconnect_attempts:
             attempt += 1
-            self._notify_error(f"尝试重连 {attempt}/{self.max_reconnect_attempts}...")
+            self._notify_error(
+                f"尝试重连 {attempt}/{self.max_reconnect_attempts}..."
+            )
             if self._stop_event.is_set():
                 break
             time.sleep(self.reconnect_delay)
             if self._stop_event.is_set():
                 break
             try:
+                # --- Phase 1: close old serial under lock ---
                 with self._state_lock:
+                    if self._stopping:
+                        return
+                    cur_gen = self._generation
+                    if cur_gen != failed_gen:
+                        # Another reconnect already succeeded
+                        return
                     old_serial = self._serial
-                if old_serial is not None:
-                    try:
-                        if getattr(old_serial, "is_open", False):
-                            old_serial.close()
-                    except (OSError, AttributeError):
-                        pass
-                self._serial = None
-                self._connected = False
+                    self._serial = None
+                    self._connected = False
 
-                bytesize_map = {
-                    5: serial.FIVEBITS,
-                    6: serial.SIXBITS,
-                    7: serial.SEVENBITS,
-                    8: serial.EIGHTBITS,
-                }
-                stopbits_map = {
-                    1.0: serial.STOPBITS_ONE,
-                    1.5: serial.STOPBITS_ONE_POINT_FIVE,
-                    2.0: serial.STOPBITS_TWO,
-                }
-                try:
-                    sb_val = stopbits_map.get(float(self.stopbits), serial.STOPBITS_ONE)
-                except (TypeError, ValueError):
-                    sb_val = serial.STOPBITS_ONE
+                # --- Phase 2: close outside lock ---
+                self._close_serial_safe(old_serial)
 
-                new_serial = serial.Serial(
-                    port=self.port,
-                    baudrate=self.baudrate,
-                    bytesize=bytesize_map.get(self.bytesize, serial.EIGHTBITS),
-                    parity=serial.PARITY_NONE,
-                    stopbits=sb_val,
-                    timeout=0.1,
-                    write_timeout=1.0,
-                )
+                # --- Phase 3: open new serial ---
+                new_serial = self._open_serial()
+
+                # --- Phase 4: install under lock ---
                 with self._state_lock:
+                    if self._stopping:
+                        self._close_serial_safe(new_serial)
+                        return
                     self._serial = new_serial
                     self._connected = True
+                    self._generation += 1
+                    new_gen = self._generation
 
                 self._notify_error("串口重连成功")
 
-                self._stop_event.clear()
-                self.running = True
-                self._thread = threading.Thread(
-                    target=self._read_loop_optimized,
-                    daemon=True,
-                    name=f"smst-rx-{self.port}",
-                )
-                self._thread.start()
-                if self._tx_thread is None or not self._tx_thread.is_alive():
-                    self._tx_thread = threading.Thread(
-                        target=self._tx_loop,
+                # --- Phase 5: spawn new worker threads (under lock) ---
+                with self._state_lock:
+                    if self._stopping:
+                        self._close_serial_safe(new_serial)
+                        return
+                    self._stop_event.clear()
+                    self.running = True
+                    self._thread = threading.Thread(
+                        target=self._read_loop_optimized,
+                        args=(new_gen,),
                         daemon=True,
-                        name=f"smst-tx-{self.port}",
+                        name=f"smst-rx-{self.port}",
                     )
-                    self._tx_thread.start()
+                    self._thread.start()
+                    if self._tx_thread is None or not self._tx_thread.is_alive():
+                        self._tx_thread = threading.Thread(
+                            target=self._tx_loop,
+                            args=(new_gen,),
+                            daemon=True,
+                            name=f"smst-tx-{self.port}",
+                        )
+                        self._tx_thread.start()
                 return
             except (serial.SerialException, OSError) as exc:
                 kind = _classify_serial_error(exc)
                 self._error_count += 1
                 self._notify_connection_error(
-                    f"重连失败: {_friendly_serial_error(self.port, exc, kind)}",
+                    f"重连失败: "
+                    f"{_friendly_serial_error(self.port, exc, kind)}",
                     kind,
                 )
         with self._state_lock:
@@ -670,7 +784,11 @@ class OptimizedSerialCollector:
         if not HAS_SERIAL:
             return []
         return [
-            {"device": p.device, "description": p.description, "hwid": p.hwid}
+            {
+                "device": p.device,
+                "description": p.description,
+                "hwid": p.hwid,
+            }
             for p in serial.tools.list_ports.comports()
         ]
 
