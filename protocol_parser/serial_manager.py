@@ -188,7 +188,10 @@ class SerialManager:
 
         Robust against collectors that are not yet running when the loop
         starts — treats them as 'starting' rather than exiting.
+        Only fires 'disconnected' when BOTH running and connected are
+        False (genuine disconnect, not transient startup window).
         """
+        last_notified: dict[str, str] = {}
         while not self._monitor_stop.is_set():
             with self._state_lock:
                 items = list(self._collectors.items())
@@ -196,12 +199,23 @@ class SerialManager:
             for port_id, collector in items:
                 if self._monitor_stop.is_set():
                     break
-                if not collector.is_running():
-                    if collector.is_connected():
-                        self._notify_connection_changed(port_id, "disconnected")
-                    continue
-                if not collector.is_connected():
-                    self._notify_connection_changed(port_id, "disconnected")
+                is_run = collector.is_running()
+                is_conn = collector.is_connected()
+                if not is_run and not is_conn:
+                    state = "disconnected"
+                elif is_run and not is_conn:
+                    state = "disconnected"
+                elif is_run and is_conn:
+                    state = "connected"
+                else:
+                    state = "starting"
+
+                prev = last_notified.get(port_id, "")
+                if state != prev and state not in ("starting",):
+                    self._notify_connection_changed(port_id, state)
+                    last_notified[port_id] = state
+                elif state == "starting":
+                    pass
 
             self._monitor_stop.wait(timeout=interval)
 
