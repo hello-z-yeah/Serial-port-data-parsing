@@ -643,9 +643,7 @@ class SerialCollector:
                 continue
             try:
                 if item is _TX_STOP:
-                    if tx_queue.empty():
-                        break
-                    continue
+                    break
                 request = item
                 if not isinstance(request, TxRequest):
                     continue
@@ -669,8 +667,9 @@ class SerialCollector:
                     continue
                 except (serial.SerialException, OSError, SerialOperationError) as exc:
                     intentional_stop = self._stop_event.is_set()
-                    self.running = False
-                    self._stop_event.set()
+                    with self._state_lock:
+                        self.running = False
+                        self._stop_event.set()
                     if not intentional_stop:
                         kind = _classify_serial_error(exc)
                         self._notify_connection_error(
@@ -715,8 +714,9 @@ class SerialCollector:
                 except (serial.SerialException, OSError) as exc:
                     if self._stop_event.is_set() or not self.running:
                         break
-                    self.running = False
-                    self._stop_event.set()
+                    with self._state_lock:
+                        self.running = False
+                        self._stop_event.set()
                     kind = _classify_serial_error(exc)
                     self._notify_connection_error(
                         f"串口读取错误: {_friendly_serial_error(self.port, exc, kind)}",
@@ -773,12 +773,14 @@ class SerialCollector:
             flush_raw(True)
         except Exception as exc:
             if not self._stop_event.is_set():
-                self.running = False
-                self._stop_event.set()
+                with self._state_lock:
+                    self.running = False
+                    self._stop_event.set()
                 kind = _classify_serial_error(exc)
                 self._notify_connection_error(f"采集异常: {exc}", kind)
         finally:
-            self.running = False
+            with self._state_lock:
+                self.running = False
 
     @staticmethod
     def list_ports() -> list[dict]:

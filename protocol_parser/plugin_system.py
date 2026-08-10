@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import threading
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 
@@ -132,3 +133,142 @@ class PluginSystem:
     def list_enabled_plugins(self) -> dict[str, Any]:
         """Return only enabled plugins."""
         return dict(self._enabled_plugins)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility layer for legacy plugin API
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PluginConfig:
+    """Serializable configuration for a plugin."""
+
+    module_path: str = ""
+    plugin_class_name: str = "Plugin"
+    enabled: bool = True
+    config: dict = field(default_factory=dict)
+
+
+class ProtocolPlugin:
+    """Base class for protocol-aware plugins.
+
+    Subclasses override ``process`` and/or ``encode`` to intercept
+    raw data flowing through the serial pipeline.
+    """
+
+    plugin_id: str = ""
+    enabled: bool = True
+
+    def initialize(self) -> None:
+        """Called once after loading. Override to set up resources."""
+
+    def shutdown(self) -> None:
+        """Called before unloading. Override to release resources."""
+
+    def process(self, data: bytes, direction: str = "rx") -> bytes | None:
+        """Process raw data. Return modified bytes or None to pass through."""
+        return None
+
+    def encode(self, data: bytes, direction: str = "tx") -> bytes | None:
+        """Encode raw data. Return modified bytes or None to pass through."""
+        return None
+
+
+class PluginManager(PluginSystem):
+    """Extended plugin manager with protocol-aware processing.
+
+    Provides ``parse_data_with_plugins`` and ``encode_data_with_plugins``
+    as top-level entry points that iterate over enabled plugins.
+    """
+
+    def parse_data_with_plugins(
+        self, data: bytes, *, direction: str = "rx"
+    ) -> bytes:
+        """Run all enabled plugins' ``process`` on *data* in sequence.
+
+        Each plugin receives the output of the previous one. If a plugin
+        returns ``None`` the input is passed through unchanged.
+        """
+        result = data
+        for plugin_id, plugin in self._enabled_plugins.items():
+            if not hasattr(plugin, "process"):
+                continue
+            try:
+                transformed = plugin.process(result, direction=direction)
+                if transformed is not None:
+                    result = transformed
+            except Exception:
+                pass
+        return result
+
+    def encode_data_with_plugins(
+        self, data: bytes, *, direction: str = "tx"
+    ) -> bytes:
+        """Run all enabled plugins' ``encode`` on *data* in sequence."""
+        result = data
+        for plugin_id, plugin in self._enabled_plugins.items():
+            if not hasattr(plugin, "encode"):
+                continue
+            try:
+                transformed = plugin.encode(result, direction=direction)
+                if transformed is not None:
+                    result = transformed
+            except Exception:
+                pass
+        return result
+
+    def load_plugin_from_config(self, config: PluginConfig) -> Any:
+        """Load a plugin using a PluginConfig dataclass."""
+        return self.load_plugin(
+            config.module_path,
+            plugin_class_name=config.plugin_class_name,
+            enabled=config.enabled,
+            config=config.config or None,
+        )
+
+    def scan_directory(self, directory: str) -> list[str]:
+        """Scan a directory for Python modules and attempt to load them.
+
+        Returns the list of successfully loaded plugin IDs.
+        """
+        import os
+
+        loaded: list[str] = []
+        if not os.path.isdir(directory):
+            return loaded
+        for entry in sorted(os.listdir(directory)):
+            if entry.startswith("_") or not entry.endswith(".py"):
+                continue
+            module_name = entry[:-3]
+            try:
+                plugin_id = f"{directory}.{module_name}"
+                self.load_plugin(plugin_id)
+                loaded.append(plugin_id)
+            except Exception:
+                pass
+        return loaded
+
+
+def parse_data_with_plugins(
+    data: bytes,
+    *,
+    plugins: PluginManager | None = None,
+    direction: str = "rx",
+) -> bytes:
+    """Module-level convenience wrapper for PluginManager.parse_data_with_plugins."""
+    manager = plugins or _default_plugin_manager
+    return manager.parse_data_with_plugins(data, direction=direction)
+
+
+def encode_data_with_plugins(
+    data: bytes,
+    *,
+    plugins: PluginManager | None = None,
+    direction: str = "tx",
+) -> bytes:
+    """Module-level convenience wrapper for PluginManager.encode_data_with_plugins."""
+    manager = plugins or _default_plugin_manager
+    return manager.encode_data_with_plugins(data, direction=direction)
+
+
+_default_plugin_manager = PluginManager()
