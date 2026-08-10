@@ -47,12 +47,21 @@ class SerialManager:
         on_mcu_frame: Callable | None = None,
         on_connection_error: Callable | None = None,
         mcu_cfg: dict | None = None,
+        tx_queue_size: int | None = None,
+        max_reconnect_attempts: int | None = None,
+        reconnect_delay: float | None = None,
     ) -> OptimizedSerialCollector:
         """Register and start a serial port collector.
 
         Uses OptimizedSerialCollector with full callback arguments.
         Maps the logical ``port_id`` to the physical port via
         ``cfg["port"]`` when available, falling back to ``port_id``.
+
+        ``tx_queue_size``, ``max_reconnect_attempts``, and
+        ``reconnect_delay`` are applied to the collector *before*
+        ``start()`` so that the TX queue is created with the correct
+        capacity and reconnection parameters take effect on the first
+        connection.
         """
         physical_port = (
             cfg.get("port", port_id) if isinstance(cfg, dict) else port_id
@@ -76,6 +85,12 @@ class SerialManager:
                 on_mcu_frame=on_mcu_frame,
                 mcu_cfg=mcu_cfg,
             )
+            if tx_queue_size is not None:
+                collector.tx_queue_size = tx_queue_size
+            if max_reconnect_attempts is not None:
+                collector.max_reconnect_attempts = max_reconnect_attempts
+            if reconnect_delay is not None:
+                collector.reconnect_delay = reconnect_delay
             self._collectors[port_id] = collector
 
         try:
@@ -195,8 +210,9 @@ class SerialManager:
         """Stop the resource monitor and wait for it to exit.
 
         Uses a shared timeout deadline to avoid permanent blocking.
-        Guarantees the thread exits before clearing references, preventing
-        leaks when start_resource_monitor is called immediately after.
+        If the monitor thread fails to exit within the timeout, raises
+        ``SerialOperationError`` and does NOT clear the internal
+        reference so that duplicate monitor threads cannot be spawned.
         """
         with self._state_lock:
             monitor_thread = self._monitor_thread
@@ -209,6 +225,10 @@ class SerialManager:
                 monitor_thread.join(timeout=max(0.0, deadline - time.monotonic()))
                 if monitor_thread.is_alive():
                     monitor_thread.join(timeout=max(0.0, deadline - time.monotonic()))
+                if monitor_thread.is_alive():
+                    raise SerialOperationError(
+                        f"资源监控线程未能在 {timeout}s 内退出"
+                    )
 
         with self._state_lock:
             self._monitor_thread = None
@@ -327,7 +347,12 @@ class DistributedSerialManager(SerialManager):
         on_mcu_frame: Callable | None = None,
         on_connection_error: Callable | None = None,
     ) -> OptimizedSerialCollector:
-        """Register a port using a SerialPortConfig dataclass."""
+        """Register a port using a SerialPortConfig dataclass.
+
+        ``tx_queue_size``, ``max_reconnect_attempts``, and
+        ``reconnect_delay`` are passed through to ``register_port``
+        so they take effect *before* ``start()`` creates the TX queue.
+        """
         merged_cfg = dict(config.cfg)
         if config.port:
             merged_cfg["port"] = config.port
@@ -344,10 +369,10 @@ class DistributedSerialManager(SerialManager):
             on_mcu_frame=on_mcu_frame,
             on_connection_error=on_connection_error,
             mcu_cfg=config.mcu_cfg,
+            tx_queue_size=config.tx_queue_size,
+            max_reconnect_attempts=config.max_reconnect_attempts,
+            reconnect_delay=config.reconnect_delay,
         )
-        collector.tx_queue_size = config.tx_queue_size
-        collector.max_reconnect_attempts = config.max_reconnect_attempts
-        collector.reconnect_delay = config.reconnect_delay
         return collector
 
     def get_port_status(self, port_id: str) -> SerialPortStatus | None:

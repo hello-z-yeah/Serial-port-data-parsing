@@ -485,3 +485,343 @@ class TestErrorPropagation:
 
         with pytest.raises(SerialOperationError):
             mgr.stop_all()
+
+
+# ---------------------------------------------------------------------------
+# 7. Configuration timing — tx_queue_size applied before start()
+# ---------------------------------------------------------------------------
+
+class TestConfigTiming:
+    """register_port_from_config must apply config BEFORE start()."""
+
+    def test_tx_queue_size_applied_before_start(self, monkeypatch):
+        """tx_queue_size from config is used for the actual queue."""
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        mgr = DistributedSerialManager()
+        cfg = SerialPortConfig(
+            port="COM_CFG",
+            tx_queue_size=50,
+            max_reconnect_attempts=3,
+            reconnect_delay=0.5,
+        )
+        collector = mgr.register_port_from_config("logical", cfg)
+        assert collector.tx_queue_size == 50
+        assert collector.max_reconnect_attempts == 3
+        assert collector.reconnect_delay == 0.5
+        assert collector._tx_queue is not None
+        assert collector._tx_queue.maxsize == 50
+        mgr.unregister_port("logical")
+
+    def test_register_port_accepts_config_params(self, monkeypatch):
+        """register_port() accepts tx_queue_size etc. as keyword args."""
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        mgr = SerialManager()
+        collector = mgr.register_port(
+            "port1",
+            {"port": "COM1"},
+            tx_queue_size=25,
+            max_reconnect_attempts=2,
+            reconnect_delay=0.3,
+        )
+        assert collector.tx_queue_size == 25
+        assert collector._tx_queue.maxsize == 25
+        mgr.unregister_port("port1")
+
+
+# ---------------------------------------------------------------------------
+# 8. Monitor timeout — error propagation on hang
+# ---------------------------------------------------------------------------
+
+class TestMonitorTimeout:
+    """stop_resource_monitor raises SerialOperationError on timeout."""
+
+    def test_stop_monitor_raises_on_timeout(self, monkeypatch):
+        """When monitor thread is alive after timeout, error is raised."""
+        mgr = SerialManager()
+        mgr._monitor_thread = threading.Thread(target=lambda: time.sleep(30))
+        mgr._monitor_thread.daemon = True
+        mgr._monitor_thread.start()
+
+        with pytest.raises(SerialOperationError, match="资源监控线程"):
+            mgr.stop_resource_monitor(timeout=0.05)
+
+        # Thread still alive, reference NOT cleared
+        assert mgr._monitor_thread is not None
+        assert mgr._monitor_thread.is_alive()
+
+        # Cleanup
+        mgr._monitor_stop.set()
+        mgr._monitor_thread.join(timeout=5.0)
+        mgr._monitor_thread = None
+
+    def test_stop_monitor_no_thread_is_noop(self):
+        """stop_resource_monitor when no thread is running is safe."""
+        mgr = SerialManager()
+        mgr.stop_resource_monitor(timeout=1.0)  # Should not raise
+        assert mgr._monitor_thread is None
+
+    def test_stop_monitor_self_call_is_safe(self):
+        """Calling stop_resource_monitor from the monitor thread itself."""
+        mgr = SerialManager()
+        done = threading.Event()
+
+        def monitor_target():
+            mgr.stop_resource_monitor(timeout=2.0)
+            done.set()
+
+        mgr._monitor_thread = threading.Thread(target=monitor_target)
+        mgr._monitor_thread.daemon = True
+        mgr._monitor_thread.start()
+        done.wait(timeout=3.0)
+        assert mgr._monitor_thread is None
+
+
+# ---------------------------------------------------------------------------
+# 9. Concurrency stress — rapid stop/start cycles
+# ---------------------------------------------------------------------------
+
+class TestConcurrencyStress:
+    """Multiple rapid stop/reconnect calls do not deadlock or leak."""
+
+    def test_rapid_start_stop_no_leak(self, monkeypatch):
+        """10 rapid start→stop cycles on a collector."""
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        collector = OptimizedSerialCollector(
+            cfg={}, port="COM_STRESS", primary_enabled=False
+        )
+        for i in range(10):
+            collector.start()
+            assert collector.is_running()
+            collector.stop(timeout=2.0)
+            assert not collector.is_running()
+            assert collector._serial is None
+            assert collector._thread is None
+            assert collector._tx_thread is None
+
+    def test_concurrent_stop_start_threads(self, monkeypatch):
+        """Multiple threads racing to stop/start a collector.
+
+        This test verifies that concurrent stop/start does NOT deadlock
+        or crash with unexpected exceptions. Individual operations may
+        legitimately fail with SerialStateError (e.g. "正在停止中")
+        or SerialOperationError (e.g. timeout) — those are expected
+        outcomes in a race, not bugs.
+        """
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        collector = OptimizedSerialCollector(
+            cfg={}, port="COM_CONC", primary_enabled=False
+        )
+        collector.start()
+        assert collector.is_running()
+
+        errors: list[Exception] = []
+        deadlock_detected = False
+
+        def stop_start_worker():
+            try:
+                for _ in range(3):
+                    try:
+                        collector.stop(timeout=2.0)
+                    except (SerialOperationError, SerialStateError):
+                        pass
+                    try:
+                        collector.start()
+                    except (SerialOperationError, SerialStateError):
+                        pass
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=stop_start_worker) for _ in range(3)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15.0)
+            if t.is_alive():
+                deadlock_detected = True
+
+        assert not deadlock_detected, "Concurrent stop/start caused a deadlock"
+        # Only unexpected exceptions (not SerialStateError/SerialOperationError)
+        # should be reported
+        unexpected = [
+            e for e in errors
+            if not isinstance(e, (SerialOperationError, SerialStateError))
+        ]
+        assert not unexpected, f"Unexpected errors: {unexpected}"
+
+        try:
+            collector.stop(timeout=2.0)
+        except (SerialOperationError, SerialStateError):
+            pass
+
+    def test_rapid_monitor_restart_no_leak(self):
+        """Rapid monitor stop→start→stop does not duplicate threads."""
+        mgr = SerialManager()
+        for _ in range(5):
+            mgr.start_resource_monitor(interval=0.05)
+            assert mgr._monitor_thread is not None
+            assert mgr._monitor_thread.is_alive()
+            mgr.stop_resource_monitor(timeout=3.0)
+            time.sleep(0.05)
+
+        assert mgr._monitor_thread is None or not mgr._monitor_thread.is_alive()
+
+
+# ---------------------------------------------------------------------------
+# 10. Plugin thread safety
+# ---------------------------------------------------------------------------
+
+class TestPluginThreadSafety:
+    """PluginManager protects dict operations with locks."""
+
+    def test_concurrent_enable_disable_no_crash(self):
+        """Concurrent enable/disable from multiple threads does not crash."""
+        mgr = PluginManager()
+        mgr._plugins["p1"] = ProtocolPlugin()
+        mgr._enabled_plugins["p1"] = ProtocolPlugin()
+
+        errors: list[Exception] = []
+
+        def worker():
+            try:
+                for _ in range(20):
+                    mgr.enable_plugin("p1")
+                    mgr.disable_plugin("p1")
+                    _ = mgr.enabled_plugins
+                    _ = mgr.list_all_plugins()
+                    _ = mgr.list_enabled_plugins()
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10.0)
+
+        assert not errors, f"Unexpected errors: {errors}"
+
+    def test_parse_while_mutating_no_crash(self):
+        """parse_data_with_plugins while plugins are mutated."""
+        mgr = PluginManager()
+        mgr._plugins["p1"] = ProtocolPlugin()
+        mgr._enabled_plugins["p1"] = ProtocolPlugin()
+
+        stop = threading.Event()
+
+        def mutator():
+            while not stop.is_set():
+                mgr.enable_plugin("p1")
+                mgr.disable_plugin("p1")
+
+        def parser():
+            for _ in range(30):
+                mgr.parse_data_with_plugins(b"hello")
+                mgr.encode_data_with_plugins(b"hello")
+
+        t1 = threading.Thread(target=mutator, daemon=True)
+        t2 = threading.Thread(target=parser, daemon=True)
+        t3 = threading.Thread(target=parser, daemon=True)
+        t1.start()
+        t2.start()
+        t3.start()
+        t2.join(timeout=10.0)
+        t3.join(timeout=10.0)
+        stop.set()
+        t1.join(timeout=3.0)
+
+
+# ---------------------------------------------------------------------------
+# 11. Plugin error logging — no silent swallowing
+# ---------------------------------------------------------------------------
+
+class _FailingPlugin(ProtocolPlugin):
+    def process(self, data, direction="rx"):
+        raise RuntimeError("intentional failure")
+
+    def encode(self, data, direction="tx"):
+        raise RuntimeError("intentional encode failure")
+
+    def shutdown(self):
+        raise RuntimeError("intentional shutdown failure")
+
+
+class TestPluginErrorLogging:
+    """Plugin errors are logged, not silently swallowed."""
+
+    def test_parse_logs_error(self, caplog):
+        mgr = PluginManager()
+        mgr._plugins["fail"] = _FailingPlugin()
+        mgr._enabled_plugins["fail"] = _FailingPlugin()
+
+        result = mgr.parse_data_with_plugins(b"data")
+        assert result == b"data"
+        assert any("intentional failure" in r.message for r in caplog.records)
+        assert any("parse phase failed" in r.message for r in caplog.records)
+
+    def test_encode_logs_error(self, caplog):
+        mgr = PluginManager()
+        mgr._plugins["fail"] = _FailingPlugin()
+        mgr._enabled_plugins["fail"] = _FailingPlugin()
+
+        result = mgr.encode_data_with_plugins(b"data")
+        assert result == b"data"
+        assert any("encode phase failed" in r.message for r in caplog.records)
+
+    def test_unload_logs_shutdown_error(self, caplog):
+        mgr = PluginManager()
+        mgr._plugins["fail"] = _FailingPlugin()
+        mgr._enabled_plugins["fail"] = _FailingPlugin()
+
+        mgr.unload_plugin("fail")
+        assert any("shutdown failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# 12. scan_directory with arbitrary paths
+# ---------------------------------------------------------------------------
+
+class TestScanDirectory:
+    """scan_directory works with arbitrary filesystem paths."""
+
+    def test_scan_directory_loads_plugin(self, tmp_path):
+        """scan_directory loads plugins from a temp directory."""
+        plugin_file = tmp_path / "test_plugin.py"
+        plugin_file.write_text(
+            "class Plugin:\n"
+            "    plugin_id = 'test'\n"
+            "    def process(self, data, direction='rx'):\n"
+            "        return data.upper()\n"
+        )
+        mgr = PluginManager()
+        loaded = mgr.scan_directory(str(tmp_path))
+        assert len(loaded) == 1
+        assert "test_plugin.py" in loaded[0]
+
+        plugin = mgr.get_plugin(loaded[0])
+        assert plugin is not None
+        assert plugin.process(b"hello") == b"HELLO"
+
+    def test_scan_directory_empty_dir(self, tmp_path):
+        """scan_directory on empty dir returns []."""
+        mgr = PluginManager()
+        loaded = mgr.scan_directory(str(tmp_path))
+        assert loaded == []
+
+    def test_scan_directory_skips_non_plugin_files(self, tmp_path):
+        """scan_directory skips files without Plugin class."""
+        (tmp_path / "helper.py").write_text("x = 1\n")
+        (tmp_path / "_private.py").write_text("class Plugin: pass\n")
+
+        mgr = PluginManager()
+        loaded = mgr.scan_directory(str(tmp_path))
+        assert loaded == []  # helper has no Plugin class, _private is skipped
