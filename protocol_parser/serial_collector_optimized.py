@@ -525,9 +525,10 @@ class OptimizedSerialCollector:
                 ) as exc:
                     intentional_stop = self._stop_event.is_set()
                     with self._state_lock:
-                        self.running = False
-                        self._connected = False
-                        self._stop_event.set()
+                        if gen == self._generation:
+                            self.running = False
+                            self._connected = False
+                            self._stop_event.set()
                     if not intentional_stop:
                         kind = _classify_serial_error(exc)
                         self._notify_connection_error(
@@ -591,6 +592,8 @@ class OptimizedSerialCollector:
                     if self._stop_event.is_set() or gen != self._generation:
                         break
                     with self._state_lock:
+                        if gen != self._generation:
+                            break
                         self.running = False
                         self._connected = False
                         self._stop_event.set()
@@ -664,9 +667,10 @@ class OptimizedSerialCollector:
         except Exception as exc:
             if not self._stop_event.is_set():
                 with self._state_lock:
-                    self.running = False
-                    self._connected = False
-                    self._stop_event.set()
+                    if gen == self._generation:
+                        self.running = False
+                        self._connected = False
+                        self._stop_event.set()
                 kind = _classify_serial_error(exc)
                 self._error_count += 1
                 self._notify_connection_error(f"采集异常: {exc}", kind)

@@ -8,9 +8,13 @@ Features:
 from __future__ import annotations
 
 import importlib
+import importlib.util
+import logging
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
+
+_logger = logging.getLogger(__name__)
 
 
 class PluginSystem:
@@ -21,10 +25,18 @@ class PluginSystem:
         self._enabled_plugins: dict[str, Any] = {}
         self._cache: dict[str, Any] = {}
         self._cache_lock = threading.RLock()
+        self._plugins_lock = threading.RLock()
 
     @property
     def enabled_plugins(self) -> dict[str, Any]:
-        return self._enabled_plugins
+        """Return a shallow-copy snapshot of enabled plugins.
+
+        Returns a copy so that concurrent iteration (e.g. during
+        parse/encode) does not raise ``RuntimeError: dictionary
+        changed size during iteration``.
+        """
+        with self._plugins_lock:
+            return dict(self._enabled_plugins)
 
     def load_plugin(
         self,
@@ -40,6 +52,9 @@ class PluginSystem:
           self.enabled_plugins (prevents disabled plugins from appearing
           in the enabled collection).
         - Configuration is applied to the instance BEFORE initialization.
+        - ``_plugins_lock`` protects the registration dicts; actual
+          import/instantiation happens *outside* the lock to avoid
+          holding it during potentially slow I/O.
         """
         module = importlib.import_module(module_path)
         plugin_class = getattr(module, plugin_class_name)
@@ -52,10 +67,10 @@ class PluginSystem:
             instance.initialize()
 
         plugin_id = module_path
-        self._plugins[plugin_id] = instance
-
-        if enabled:
-            self._enabled_plugins[plugin_id] = instance
+        with self._plugins_lock:
+            self._plugins[plugin_id] = instance
+            if enabled:
+                self._enabled_plugins[plugin_id] = instance
 
         return instance
 
@@ -69,28 +84,34 @@ class PluginSystem:
                     pass
 
     def get_plugin(self, plugin_id: str) -> Any | None:
-        """Get a plugin by ID (module path)."""
-        return self._plugins.get(plugin_id)
+        """Get a plugin by ID (module path). Thread-safe."""
+        with self._plugins_lock:
+            return self._plugins.get(plugin_id)
 
     def enable_plugin(self, plugin_id: str) -> None:
-        """Move a plugin from disabled to enabled collection."""
-        plugin = self._plugins.get(plugin_id)
-        if plugin is not None:
-            self._enabled_plugins[plugin_id] = plugin
+        """Move a plugin from disabled to enabled collection. Thread-safe."""
+        with self._plugins_lock:
+            plugin = self._plugins.get(plugin_id)
+            if plugin is not None:
+                self._enabled_plugins[plugin_id] = plugin
 
     def disable_plugin(self, plugin_id: str) -> None:
-        """Move a plugin from enabled to disabled collection."""
-        self._enabled_plugins.pop(plugin_id, None)
+        """Move a plugin from enabled to disabled collection. Thread-safe."""
+        with self._plugins_lock:
+            self._enabled_plugins.pop(plugin_id, None)
 
     def unload_plugin(self, plugin_id: str) -> None:
-        """Unload and remove a plugin."""
-        self._enabled_plugins.pop(plugin_id, None)
-        plugin = self._plugins.pop(plugin_id, None)
+        """Unload and remove a plugin. Thread-safe."""
+        with self._plugins_lock:
+            self._enabled_plugins.pop(plugin_id, None)
+            plugin = self._plugins.pop(plugin_id, None)
         if plugin is not None and hasattr(plugin, "shutdown"):
             try:
                 plugin.shutdown()
-            except Exception:
-                pass
+            except Exception as exc:
+                _logger.exception(
+                    "Plugin %s shutdown failed: %s", plugin_id, exc
+                )
 
     def get_cached(self, key: str) -> Any:
         """Retrieve a cached value (thread-safe)."""
@@ -127,12 +148,14 @@ class PluginSystem:
         return value
 
     def list_all_plugins(self) -> dict[str, Any]:
-        """Return all registered plugins (both enabled and disabled)."""
-        return dict(self._plugins)
+        """Return all registered plugins (both enabled and disabled). Thread-safe."""
+        with self._plugins_lock:
+            return dict(self._plugins)
 
     def list_enabled_plugins(self) -> dict[str, Any]:
-        """Return only enabled plugins."""
-        return dict(self._enabled_plugins)
+        """Return only enabled plugins. Thread-safe."""
+        with self._plugins_lock:
+            return dict(self._enabled_plugins)
 
 
 # ---------------------------------------------------------------------------
@@ -188,33 +211,46 @@ class PluginManager(PluginSystem):
 
         Each plugin receives the output of the previous one. If a plugin
         returns ``None`` the input is passed through unchanged.
+        Exceptions from individual plugins are logged with full
+        tracebacks so that faulty plugins can be diagnosed.
         """
         result = data
-        for plugin_id, plugin in self._enabled_plugins.items():
+        with self._plugins_lock:
+            snapshot = list(self._enabled_plugins.items())
+        for plugin_id, plugin in snapshot:
             if not hasattr(plugin, "process"):
                 continue
             try:
                 transformed = plugin.process(result, direction=direction)
                 if transformed is not None:
                     result = transformed
-            except Exception:
-                pass
+            except Exception as exc:
+                _logger.exception(
+                    "Plugin %s parse phase failed: %s", plugin_id, exc
+                )
         return result
 
     def encode_data_with_plugins(
         self, data: bytes, *, direction: str = "tx"
     ) -> bytes:
-        """Run all enabled plugins' ``encode`` on *data* in sequence."""
+        """Run all enabled plugins' ``encode`` on *data* in sequence.
+
+        Exceptions from individual plugins are logged with full tracebacks.
+        """
         result = data
-        for plugin_id, plugin in self._enabled_plugins.items():
+        with self._plugins_lock:
+            snapshot = list(self._enabled_plugins.items())
+        for plugin_id, plugin in snapshot:
             if not hasattr(plugin, "encode"):
                 continue
             try:
                 transformed = plugin.encode(result, direction=direction)
                 if transformed is not None:
                     result = transformed
-            except Exception:
-                pass
+            except Exception as exc:
+                _logger.exception(
+                    "Plugin %s encode phase failed: %s", plugin_id, exc
+                )
         return result
 
     def load_plugin_from_config(self, config: PluginConfig) -> Any:
@@ -229,23 +265,56 @@ class PluginManager(PluginSystem):
     def scan_directory(self, directory: str) -> list[str]:
         """Scan a directory for Python modules and attempt to load them.
 
-        Returns the list of successfully loaded plugin IDs.
+        Uses ``importlib.util.spec_from_file_location`` to load plugins
+        directly from arbitrary filesystem paths (e.g. ``/tmp/plugins``)
+        without requiring the directory to be a package on ``sys.path``.
+
+        Returns the list of successfully loaded plugin IDs (absolute
+        file paths).
         """
         import os
 
         loaded: list[str] = []
         if not os.path.isdir(directory):
             return loaded
+        directory = os.path.abspath(directory)
         for entry in sorted(os.listdir(directory)):
             if entry.startswith("_") or not entry.endswith(".py"):
                 continue
-            module_name = entry[:-3]
+            file_path = os.path.join(directory, entry)
+            module_name = f"_scanned_plugin_{os.path.splitext(entry)[0]}"
             try:
-                plugin_id = f"{directory}.{module_name}"
-                self.load_plugin(plugin_id)
-                loaded.append(plugin_id)
-            except Exception:
-                pass
+                spec = importlib.util.spec_from_file_location(
+                    module_name, file_path
+                )
+                if spec is None or spec.loader is None:
+                    _logger.warning(
+                        "Cannot create module spec for %s", file_path
+                    )
+                    continue
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                plugin_class = getattr(module, "Plugin", None)
+                if plugin_class is None:
+                    _logger.debug(
+                        "No Plugin class found in %s, skipping", file_path
+                    )
+                    continue
+
+                instance = plugin_class()
+                if hasattr(instance, "initialize"):
+                    instance.initialize()
+
+                with self._plugins_lock:
+                    self._plugins[file_path] = instance
+                    self._enabled_plugins[file_path] = instance
+
+                loaded.append(file_path)
+            except Exception as exc:
+                _logger.exception(
+                    "Failed to load plugin from %s: %s", file_path, exc
+                )
         return loaded
 
 
