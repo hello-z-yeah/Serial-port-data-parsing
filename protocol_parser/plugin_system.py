@@ -101,11 +101,28 @@ class PluginSystem:
             self._enabled_plugins.pop(plugin_id, None)
 
     def unload_plugin(self, plugin_id: str) -> None:
-        """Unload and remove a plugin. Thread-safe."""
+        """Unload and remove a plugin. Thread-safe with active-call drain.
+
+        Removes the plugin from the enabled/registered collections
+        first so new pipeline iterations can no longer observe it,
+        then waits for any in-flight ``process`` / ``encode`` calls
+        to finish before invoking ``shutdown()``.
+        """
         with self._plugins_lock:
             self._enabled_plugins.pop(plugin_id, None)
             plugin = self._plugins.pop(plugin_id, None)
-        if plugin is not None and hasattr(plugin, "shutdown"):
+
+        if plugin is None:
+            return
+
+        # Wait for active calls to drain before shutting the plugin down.
+        cond = getattr(plugin, "_active_calls_cond", None)
+        if cond is not None:
+            with cond:
+                while getattr(plugin, "_active_calls", 0) > 0:
+                    cond.wait(timeout=0.2)
+
+        if hasattr(plugin, "shutdown"):
             try:
                 plugin.shutdown()
             except Exception as exc:
@@ -177,16 +194,36 @@ class ProtocolPlugin:
 
     Subclasses override ``process`` and/or ``encode`` to intercept
     raw data flowing through the serial pipeline.
+
+    Active call tracking: each call to ``process`` / ``encode`` bumps
+    ``_active_calls``; ``unload_plugin`` waits for the counter to
+    reach zero before invoking ``shutdown`` so that a plugin is never
+    shut down while a pipeline thread is still executing its hook.
     """
 
     plugin_id: str = ""
     enabled: bool = True
+
+    def __init__(self) -> None:
+        self._active_calls: int = 0
+        self._active_calls_lock = threading.Lock()
+        self._active_calls_cond = threading.Condition(self._active_calls_lock)
 
     def initialize(self) -> None:
         """Called once after loading. Override to set up resources."""
 
     def shutdown(self) -> None:
         """Called before unloading. Override to release resources."""
+
+    def _enter_active(self) -> None:
+        with self._active_calls_cond:
+            self._active_calls += 1
+
+    def _leave_active(self) -> None:
+        with self._active_calls_cond:
+            self._active_calls -= 1
+            if self._active_calls <= 0:
+                self._active_calls_cond.notify_all()
 
     def process(self, data: bytes, direction: str = "rx") -> bytes | None:
         """Process raw data. Return modified bytes or None to pass through."""
@@ -213,6 +250,9 @@ class PluginManager(PluginSystem):
         returns ``None`` the input is passed through unchanged.
         Exceptions from individual plugins are logged with full
         tracebacks so that faulty plugins can be diagnosed.
+
+        Active-call tracking prevents ``shutdown()`` from running
+        while a pipeline thread is mid-execution.
         """
         result = data
         with self._plugins_lock:
@@ -220,6 +260,8 @@ class PluginManager(PluginSystem):
         for plugin_id, plugin in snapshot:
             if not hasattr(plugin, "process"):
                 continue
+            if hasattr(plugin, "_enter_active"):
+                plugin._enter_active()
             try:
                 transformed = plugin.process(result, direction=direction)
                 if transformed is not None:
@@ -228,6 +270,9 @@ class PluginManager(PluginSystem):
                 _logger.exception(
                     "Plugin %s parse phase failed: %s", plugin_id, exc
                 )
+            finally:
+                if hasattr(plugin, "_leave_active"):
+                    plugin._leave_active()
         return result
 
     def encode_data_with_plugins(
@@ -236,6 +281,8 @@ class PluginManager(PluginSystem):
         """Run all enabled plugins' ``encode`` on *data* in sequence.
 
         Exceptions from individual plugins are logged with full tracebacks.
+        Active-call tracking prevents ``shutdown()`` from running while a
+        pipeline thread is mid-execution.
         """
         result = data
         with self._plugins_lock:
@@ -243,6 +290,8 @@ class PluginManager(PluginSystem):
         for plugin_id, plugin in snapshot:
             if not hasattr(plugin, "encode"):
                 continue
+            if hasattr(plugin, "_enter_active"):
+                plugin._enter_active()
             try:
                 transformed = plugin.encode(result, direction=direction)
                 if transformed is not None:
@@ -251,6 +300,9 @@ class PluginManager(PluginSystem):
                 _logger.exception(
                     "Plugin %s encode phase failed: %s", plugin_id, exc
                 )
+            finally:
+                if hasattr(plugin, "_leave_active"):
+                    plugin._leave_active()
         return result
 
     def load_plugin_from_config(self, config: PluginConfig) -> Any:

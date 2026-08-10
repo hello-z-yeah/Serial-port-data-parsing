@@ -474,16 +474,29 @@ class TestErrorPropagation:
         with pytest.raises(SerialOperationError, match="模拟停止失败"):
             mgr.stop_port("port1")
 
-    def test_stop_all_raises_first_error(self, monkeypatch):
-        """stop_all raises the first SerialOperationError after processing all ports."""
+    def test_stop_all_aggregates_errors(self, monkeypatch):
+        """stop_all raises an aggregated RuntimeError containing every failure."""
         mgr = SerialManager()
         failing = _FailingCollector()
-        ok = _FailingCollector()  # Also fails, but first is captured
+        ok = _FailingCollector()  # Also fails — two failures expected
         with mgr._state_lock:
             mgr._collectors["port1"] = failing
             mgr._collectors["port2"] = ok
 
-        with pytest.raises(SerialOperationError):
+        with pytest.raises(RuntimeError) as excinfo:
+            mgr.stop_all()
+        # Aggregated message references the number of failures.
+        assert "2 error(s)" in str(excinfo.value)
+        # The original SerialOperationError is chained as __cause__.
+        assert isinstance(excinfo.value.__cause__, SerialOperationError)
+
+    def test_stop_all_reraises_single_error_directly(self, monkeypatch):
+        """stop_all re-raises a single failure as the original exception."""
+        mgr = SerialManager()
+        with mgr._state_lock:
+            mgr._collectors["port1"] = _FailingCollector()
+
+        with pytest.raises(SerialOperationError, match="模拟停止失败"):
             mgr.stop_all()
 
 
@@ -825,3 +838,120 @@ class TestScanDirectory:
         mgr = PluginManager()
         loaded = mgr.scan_directory(str(tmp_path))
         assert loaded == []  # helper has no Plugin class, _private is skipped
+
+
+# ---------------------------------------------------------------------------
+# 13. Plugin active-call drain — shutdown() must not run mid-process
+# ---------------------------------------------------------------------------
+
+class TestPluginActiveCallDrain:
+    """unload_plugin waits for active process/encode calls to finish."""
+
+    def test_unload_drains_active_calls_before_shutdown(self):
+        """unload_plugin blocks until in-flight process() returns."""
+        import time as _time
+
+        mgr = PluginManager()
+        entered = threading.Event()
+        release = threading.Event()
+        done = threading.Event()
+        shutdown_started = threading.Event()
+        shutdown_finished = threading.Event()
+        call_count_during_shutdown: list[int] = []
+
+        class SlowPlugin(ProtocolPlugin):
+            def process(self, data, direction="rx"):
+                entered.set()
+                release.wait(timeout=3.0)
+                return data
+
+            def shutdown(self):
+                shutdown_started.set()
+                # Capture the number of active calls at the moment
+                # shutdown() runs. It MUST be 0 or the drain has
+                # not actually occurred.
+                call_count_during_shutdown.append(
+                    getattr(self, "_active_calls", -1)
+                )
+                _time.sleep(0.01)
+                shutdown_finished.set()
+
+        plugin = SlowPlugin()
+        mgr._plugins["slow"] = plugin
+        mgr._enabled_plugins["slow"] = plugin
+
+        def parser_thread():
+            mgr.parse_data_with_plugins(b"hello")
+            done.set()
+
+        t = threading.Thread(target=parser_thread, daemon=True)
+        t.start()
+        entered.wait(timeout=3.0)
+
+        # Now unload while process() is still blocked on 'release'.
+        mgr.unload_plugin("slow")
+
+        # shutdown() should have been delayed until the parser
+        # released; verify that at the moment shutdown() ran the
+        # active call count was zero.
+        assert shutdown_started.is_set(), "shutdown was never invoked"
+        assert shutdown_finished.is_set(), "shutdown did not finish"
+        assert call_count_during_shutdown and call_count_during_shutdown[0] == 0, (
+            f"shutdown() observed active_calls={call_count_during_shutdown!r}, "
+            "expected 0 — drain did not occur before shutdown()"
+        )
+
+        # Now release the parser and wait for it to finish.
+        release.set()
+        t.join(timeout=5.0)
+        assert done.is_set(), "parser thread did not finish"
+
+    def test_active_calls_counter_balanced(self):
+        """Active call counter returns to zero after process() completes."""
+        mgr = PluginManager()
+
+        class TrackerPlugin(ProtocolPlugin):
+            def process(self, data, direction="rx"):
+                return data
+
+            def encode(self, data, direction="tx"):
+                return data
+
+        plugin = TrackerPlugin()
+        mgr._plugins["track"] = plugin
+        mgr._enabled_plugins["track"] = plugin
+
+        for _ in range(5):
+            mgr.parse_data_with_plugins(b"a")
+            mgr.encode_data_with_plugins(b"b")
+
+        # Counter must be back to zero.
+        assert plugin._active_calls == 0
+
+    def test_serial_collector_tx_queue_drain_on_stale_gen(self):
+        """When gen != self._generation, leftover TX items are drained."""
+        import queue as _queue
+
+        from protocol_parser.serial_collector_optimized import (
+            OptimizedSerialCollector,
+            _TX_STOP,
+        )
+
+        q: _queue.Queue = _queue.Queue()
+        # Put a real item and the stop sentinel.
+        q.put(object())
+        q.put(_TX_STOP)
+        # Mark the first item as "done" (simulating inner finally).
+        try:
+            q.task_done()
+        except ValueError:
+            pass
+
+        # Drain remaining items via the static helper.
+        OptimizedSerialCollector._drain_tx_queue(q)
+
+        # Queue must be empty and join() must not block — in Python 3.10
+        # Queue.join() has no timeout, so we rely on the fact that
+        # unfinished_tasks == 0 means join() returns immediately.
+        assert q.empty(), "queue should be empty after drain"
+        q.join()  # Must return immediately without hanging

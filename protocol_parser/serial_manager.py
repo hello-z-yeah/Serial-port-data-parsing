@@ -158,25 +158,35 @@ class SerialManager:
     def stop_all(self) -> None:
         """Stop all registered ports.
 
-        Attempts to stop every port even if some fail, then raises the
-        first SerialOperationError encountered (if any) after all ports
-        have been processed.
+        Attempts to stop every port even if some fail. Collects every
+        exception raised during the stop process and raises an
+        aggregated ``RuntimeError`` (or the single original exception
+        when only one port failed) so that no error is silently lost.
+
+        Disconnection notifications are only emitted for ports that
+        were successfully stopped.
         """
         with self._state_lock:
             port_ids = list(self._collectors.keys())
 
-        first_error: SerialOperationError | None = None
+        errors: list[Exception] = []
         for port_id in port_ids:
             try:
                 self.unregister_port(port_id)
-            except SerialOperationError as exc:
-                if first_error is None:
-                    first_error = exc
-            except Exception:
-                pass
+            except Exception as exc:
+                errors.append(exc)
 
-        if first_error is not None:
-            raise first_error
+        if not errors:
+            return
+
+        if len(errors) == 1:
+            raise errors[0]
+
+        summary_lines = [f"[{type(exc).__name__}] {exc}" for exc in errors]
+        raise RuntimeError(
+            f"stop_all failed with {len(errors)} error(s): "
+            + "; ".join(summary_lines)
+        ) from errors[0]
 
     def _notify_connection_changed(self, port_id: str, state: str) -> None:
         callback = self._on_connection_changed

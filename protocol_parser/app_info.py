@@ -1,14 +1,14 @@
 """Single source of truth for application identity and version."""
 from __future__ import annotations
 
-APP_NAME = "Super Max Serial Tool"
-APP_SHORT_NAME = "SMST"
+APP_NAME = "SST_串口工具"
+APP_SHORT_NAME = "SST"
 APP_VERSION = "3.1.0"
-APP_ID = "SuperMaxSerialTool.App.3"
-APP_DATA_DIR_NAME = "SuperMaxSerialTool"
-APP_EXE_BASENAME = "SuperMaxSerialTool"
+APP_ID = "SST.SerialTool.App.3"
+APP_DATA_DIR_NAME = "SST_串口工具"
+APP_EXE_BASENAME = "SST_SerialTool"
 APP_EXE_NAME = f"{APP_EXE_BASENAME}.exe"
-APP_PUBLISHER = "Super Max"
+APP_PUBLISHER = "SST"
 
 # Increment when bundled protocol defaults require a one-time user-data refresh.
 BUNDLED_PRODUCT_SEED_REVISION = "3.1.0-r1"

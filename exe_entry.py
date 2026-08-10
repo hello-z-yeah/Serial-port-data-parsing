@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-from protocol_parser.app_info import APP_NAME
+from protocol_parser.app_info import APP_DATA_DIR_NAME, APP_NAME
 
 
 class DummyFileIO(io.StringIO):
@@ -122,7 +122,7 @@ def _exe_crash_dir() -> Path:
     except Exception:
         base = os.environ.get("LOCALAPPDATA")
         root = Path(base) if base else Path.home() / "AppData" / "Local"
-        path = root / "SuperMaxSerialTool" / "logs"
+        path = root / APP_DATA_DIR_NAME / "logs"
         try:
             path.mkdir(parents=True, exist_ok=True)
         except OSError:
