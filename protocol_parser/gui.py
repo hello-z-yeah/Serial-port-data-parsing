@@ -5334,6 +5334,8 @@ def main():
         # 1. 必须先创建 QApplication，再创建任何 QWidget / FluentWindow
         app = QApplication(sys.argv)
         app.setStyle("Fusion")
+        app.setApplicationName(APP_NAME)
+        app.setApplicationDisplayName(APP_NAME)
 
         # The application font is applied after the Fluent theme is selected so
         # its DPI/resolution-aware point size is not overwritten by theme setup.

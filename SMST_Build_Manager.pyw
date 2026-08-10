@@ -18,7 +18,12 @@ try:
 except Exception as exc:  # pragma: no cover - Windows installation issue
     raise SystemExit(f"无法加载 Python tkinter：{exc}")
 
-from build_tools.build_manager import BuildRunner, PYTHON_EXECUTABLE, TeeLogger  # noqa: E402
+from build_tools.build_manager import (  # noqa: E402
+    APP_NAME,
+    BuildRunner,
+    PYTHON_EXECUTABLE,
+    TeeLogger,
+)
 
 
 class BuildManagerWindow(tk.Tk):
@@ -34,7 +39,7 @@ class BuildManagerWindow(tk.Tk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title("Super Max Serial Tool 3.1.0 - 构建管理器")
+        self.title(f"{APP_NAME} 3.1.0 - 构建管理器")
         self.geometry("920x680")
         self.minsize(780, 560)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -54,7 +59,11 @@ class BuildManagerWindow(tk.Tk):
         outer = ttk.Frame(self, padding=12)
         outer.pack(fill=tk.BOTH, expand=True)
 
-        title = ttk.Label(outer, text="Super Max Serial Tool 构建管理器", font=("Microsoft YaHei UI", 16, "bold"))
+        title = ttk.Label(
+            outer,
+            text=f"{APP_NAME} 构建管理器",
+            font=("Microsoft YaHei UI", 16, "bold"),
+        )
         title.pack(anchor=tk.W)
         ttk.Label(
             outer,
@@ -128,7 +137,7 @@ class BuildManagerWindow(tk.Tk):
         self._runner = runner
         code = 1
         try:
-            runner.log(f"Super Max Serial Tool 构建工具 - 操作：{action}")
+            runner.log(f"{APP_NAME} 构建工具 - 操作：{action}")
             runner.log(f"当前 Python：{PYTHON_EXECUTABLE}")
             runner.log(f"项目目录：{ROOT}")
             if action == "diagnose":

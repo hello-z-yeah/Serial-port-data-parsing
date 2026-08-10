@@ -476,73 +476,112 @@ class OptimizedSerialCollector:
         serial_obj = self._serial
         if tx_queue is None or serial_obj is None:
             return
+        try:
+            while True:
+                if gen != self._generation:
+                    # Stale generation — drain remaining items before
+                    # returning so external queue.join() does not hang.
+                    self._drain_tx_queue(tx_queue)
+                    break
+                try:
+                    item = tx_queue.get(timeout=0.1)
+                except queue.Empty:
+                    if self._stop_event.is_set():
+                        break
+                    continue
+                try:
+                    if item is _TX_STOP:
+                        break
+                    request = item
+                    if not isinstance(request, TxRequest):
+                        continue
+                    if self._stop_event.is_set() and not getattr(
+                        serial_obj, "is_open", False
+                    ):
+                        break
+                    try:
+                        write_lock = self._write_lock
+                        if write_lock is None:
+                            raise SerialStateError("串口发送锁未初始化")
+                        with write_lock:
+                            cur_serial = self._serial
+                            if (
+                                cur_serial is not serial_obj
+                                or not getattr(serial_obj, "is_open", False)
+                            ):
+                                raise SerialStateError(
+                                    "串口连接已失效，请重新开始监控"
+                                )
+                            written = serial_obj.write(request.payload)
+                            if written != len(request.payload):
+                                raise SerialOperationError(
+                                    f"串口只写入 {written}/{len(request.payload)} 字节"
+                                )
+                    except SerialTimeoutException as exc:
+                        self._notify_error(
+                            f"串口写超时，本次发送已丢弃: {exc}"
+                        )
+                        continue
+                    except (
+                        serial.SerialException,
+                        OSError,
+                        SerialOperationError,
+                    ) as exc:
+                        intentional_stop = self._stop_event.is_set()
+                        with self._state_lock:
+                            if gen == self._generation:
+                                self.running = False
+                                self._connected = False
+                                self._stop_event.set()
+                        if not intentional_stop:
+                            kind = _classify_serial_error(exc)
+                            self._notify_connection_error(
+                                f"串口写入错误: "
+                                f"{_friendly_serial_error(self.port, exc, kind)}",
+                                kind,
+                            )
+                        break
+                    self._invoke_tx_callback(request, time.time())
+                finally:
+                    try:
+                        tx_queue.task_done()
+                    except ValueError:
+                        pass
+        finally:
+            # Balanced drain on any exit path (generation mismatch,
+            # stop signal, exception, or normal termination).
+            # The ``finally`` block does NOT run when the loop is
+            # still active; only when ``break``/exception has been
+            # unwound. When the loop breaks because ``gen`` became
+            # stale, the early drain above already handled the
+            # remainder, so this block is a safety net for the
+            # ``_TX_STOP`` and error branches that ``task_done``
+            # their own item via the inner ``finally``.
+            # We avoid double-draining by checking whether the queue
+            # still has unfinished work that was NOT balanced by the
+            # inner ``task_done`` call: any leftover items represent
+            # requests that were never pulled by this worker (e.g.
+            # arrived after the loop had already exited via
+            # ``_TX_STOP``). Draining them here prevents leaks.
+            if tx_queue is not None:
+                self._drain_tx_queue(tx_queue)
+
+    @staticmethod
+    def _drain_tx_queue(q: "queue.Queue") -> None:
+        """Best-effort drain: empty the queue and call ``task_done`` for each.
+
+        Caller should only invoke this once per queue lifecycle; otherwise
+        ``task_done`` may raise ``ValueError`` (handled below).
+        """
         while True:
-            if gen != self._generation:
+            try:
+                q.get_nowait()
+            except queue.Empty:
                 break
             try:
-                item = tx_queue.get(timeout=0.1)
-            except queue.Empty:
-                if self._stop_event.is_set():
-                    break
-                continue
-            try:
-                if item is _TX_STOP:
-                    break
-                request = item
-                if not isinstance(request, TxRequest):
-                    continue
-                if self._stop_event.is_set() and not getattr(
-                    serial_obj, "is_open", False
-                ):
-                    break
-                try:
-                    write_lock = self._write_lock
-                    if write_lock is None:
-                        raise SerialStateError("串口发送锁未初始化")
-                    with write_lock:
-                        cur_serial = self._serial
-                        if (
-                            cur_serial is not serial_obj
-                            or not getattr(serial_obj, "is_open", False)
-                        ):
-                            raise SerialStateError(
-                                "串口连接已失效，请重新开始监控"
-                            )
-                        written = serial_obj.write(request.payload)
-                        if written != len(request.payload):
-                            raise SerialOperationError(
-                                f"串口只写入 {written}/{len(request.payload)} 字节"
-                            )
-                except SerialTimeoutException as exc:
-                    self._notify_error(
-                        f"串口写超时，本次发送已丢弃: {exc}"
-                    )
-                    continue
-                except (
-                    serial.SerialException,
-                    OSError,
-                    SerialOperationError,
-                ) as exc:
-                    intentional_stop = self._stop_event.is_set()
-                    with self._state_lock:
-                        if gen == self._generation:
-                            self.running = False
-                            self._connected = False
-                            self._stop_event.set()
-                    if not intentional_stop:
-                        kind = _classify_serial_error(exc)
-                        self._notify_connection_error(
-                            f"串口写入错误: "
-                            f"{_friendly_serial_error(self.port, exc, kind)}",
-                            kind,
-                        )
-                    break
-                self._invoke_tx_callback(request, time.time())
-            finally:
-                try:
-                    tx_queue.task_done()
-                except ValueError:
-                    pass
+                q.task_done()
+            except ValueError:
+                pass
 
     def _read_loop_optimized(self, gen: int) -> None:
         # Capture the serial object THIS thread is working with.

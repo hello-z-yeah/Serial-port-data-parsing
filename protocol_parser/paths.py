@@ -1,7 +1,7 @@
 """Resource and writable user-data paths (PyInstaller compatible).
 
 Installed program files are treated as read-only.  All mutable state lives
-under ``%LOCALAPPDATA%\\SuperMaxSerialTool`` on Windows.
+under ``%LOCALAPPDATA%\\SST_串口工具`` on Windows.
 """
 from __future__ import annotations
 
@@ -346,7 +346,12 @@ def _legacy_candidates() -> list[tuple[Path, str]]:
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
         programs = Path(local_app_data) / "Programs"
-        for legacy_name in ("串口数据解析", "SerialPortParser", "Super Max Serial Tool"):
+        for legacy_name in (
+            "串口数据解析",
+            "SerialPortParser",
+            "Super Max Serial Tool",
+            "SuperMaxSerialTool",
+        ):
             legacy_root = programs / legacy_name
             candidates.extend(
                 [
