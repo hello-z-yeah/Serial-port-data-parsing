@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import Callable
 
 from .exceptions import SerialOperationError, SerialStateError
@@ -50,7 +51,12 @@ class SerialManager:
         """Register and start a serial port collector.
 
         Uses OptimizedSerialCollector with full callback arguments.
+        Maps the logical ``port_id`` to the physical port via
+        ``cfg["port"]`` when available, falling back to ``port_id``.
         """
+        physical_port = (
+            cfg.get("port", port_id) if isinstance(cfg, dict) else port_id
+        )
         with self._state_lock:
             if port_id in self._collectors:
                 existing = self._collectors[port_id]
@@ -58,7 +64,7 @@ class SerialManager:
                     raise SerialStateError(f"串口 {port_id} 已注册且正在运行")
             collector = OptimizedSerialCollector(
                 cfg=cfg,
-                port=port_id,
+                port=physical_port,
                 baudrate=baudrate,
                 bytesize=bytesize,
                 stopbits=stopbits,
@@ -88,6 +94,8 @@ class SerialManager:
         Retrieves collector reference inside the lock, releases the lock,
         then calls collector.stop() outside the lock to prevent deadlocks
         with connection_changed callbacks.
+
+        Raises SerialOperationError if the collector fails to stop cleanly.
         """
         with self._state_lock:
             collector = self._collectors.pop(port_id, None)
@@ -95,17 +103,14 @@ class SerialManager:
         if collector is None:
             return
 
-        try:
-            collector.stop()
-        except SerialOperationError:
-            pass
-
+        collector.stop()
         self._notify_connection_changed(port_id, "disconnected")
 
     def stop_port(self, port_id: str) -> None:
         """Stop a port's collector without removing it from the registry.
 
         Avoids holding self._state_lock while waiting for collector to stop.
+        Raises SerialOperationError if the collector fails to stop cleanly.
         """
         with self._state_lock:
             collector = self._collectors.get(port_id)
@@ -113,11 +118,7 @@ class SerialManager:
         if collector is None:
             raise SerialStateError(f"串口 {port_id} 未注册")
 
-        try:
-            collector.stop()
-        except SerialOperationError:
-            pass
-
+        collector.stop()
         self._notify_connection_changed(port_id, "disconnected")
 
     def start_port(self, port_id: str) -> None:
@@ -140,15 +141,27 @@ class SerialManager:
             return list(self._collectors.keys())
 
     def stop_all(self) -> None:
-        """Stop all registered ports."""
+        """Stop all registered ports.
+
+        Attempts to stop every port even if some fail, then raises the
+        first SerialOperationError encountered (if any) after all ports
+        have been processed.
+        """
         with self._state_lock:
             port_ids = list(self._collectors.keys())
 
+        first_error: SerialOperationError | None = None
         for port_id in port_ids:
             try:
                 self.unregister_port(port_id)
+            except SerialOperationError as exc:
+                if first_error is None:
+                    first_error = exc
             except Exception:
                 pass
+
+        if first_error is not None:
+            raise first_error
 
     def _notify_connection_changed(self, port_id: str, state: str) -> None:
         callback = self._on_connection_changed
@@ -178,8 +191,25 @@ class SerialManager:
             )
             self._monitor_thread.start()
 
-    def stop_resource_monitor(self) -> None:
-        self._monitor_stop.set()
+    def stop_resource_monitor(self, *, timeout: float = 5.0) -> None:
+        """Stop the resource monitor and wait for it to exit.
+
+        Uses a shared timeout deadline to avoid permanent blocking.
+        Guarantees the thread exits before clearing references, preventing
+        leaks when start_resource_monitor is called immediately after.
+        """
+        with self._state_lock:
+            monitor_thread = self._monitor_thread
+            self._monitor_stop.set()
+
+        if monitor_thread is not None:
+            current = threading.current_thread()
+            if monitor_thread is not current:
+                deadline = time.monotonic() + max(0.0, float(timeout))
+                monitor_thread.join(timeout=max(0.0, deadline - time.monotonic()))
+                if monitor_thread.is_alive():
+                    monitor_thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
         with self._state_lock:
             self._monitor_thread = None
 
@@ -230,3 +260,99 @@ class SerialManager:
                     "error_count": collector.get_error_count(),
                 }
             return status
+
+
+@dataclass
+class SerialPortConfig:
+    """Serializable configuration for a serial port registration.
+
+    This is a convenience wrapper around the ``register_port`` arguments
+    so that GUI or configuration-driven code can construct a port
+    definition and pass it uniformly.
+    """
+
+    port: str = ""
+    baudrate: int = 9600
+    bytesize: int = 8
+    stopbits: float = 1.0
+    direction: str | None = None
+    cfg: dict = field(default_factory=dict)
+    mcu_cfg: dict | None = None
+    primary_enabled: bool = True
+    tx_queue_size: int = 1000
+    max_reconnect_attempts: int = 5
+    reconnect_delay: float = 1.0
+
+
+@dataclass
+class SerialPortStatus:
+    """Snapshot of a port's current lifecycle state."""
+
+    port_id: str
+    running: bool = False
+    connected: bool = False
+    error_count: int = 0
+    last_error: str = ""
+    last_error_kind: str = ""
+
+    @classmethod
+    def from_collector(
+        cls, port_id: str, collector: OptimizedSerialCollector
+    ) -> "SerialPortStatus":
+        return cls(
+            port_id=port_id,
+            running=collector.is_running(),
+            connected=collector.is_connected(),
+            error_count=collector.get_error_count(),
+            last_error=collector.last_connection_error,
+            last_error_kind=collector.last_connection_error_kind,
+        )
+
+
+class DistributedSerialManager(SerialManager):
+    """Backward-compatible alias for SerialManager.
+
+    Provided so code that imports ``DistributedSerialManager`` continues
+    to work without modification.
+    """
+
+    def register_port_from_config(
+        self,
+        port_id: str,
+        config: SerialPortConfig,
+        *,
+        on_frame: Callable | None = None,
+        on_raw: Callable | None = None,
+        on_error: Callable | None = None,
+        on_mcu_frame: Callable | None = None,
+        on_connection_error: Callable | None = None,
+    ) -> OptimizedSerialCollector:
+        """Register a port using a SerialPortConfig dataclass."""
+        merged_cfg = dict(config.cfg)
+        if config.port:
+            merged_cfg["port"] = config.port
+        collector = self.register_port(
+            port_id,
+            merged_cfg,
+            baudrate=config.baudrate,
+            bytesize=config.bytesize,
+            stopbits=config.stopbits,
+            direction=config.direction,
+            on_frame=on_frame,
+            on_raw=on_raw,
+            on_error=on_error,
+            on_mcu_frame=on_mcu_frame,
+            on_connection_error=on_connection_error,
+            mcu_cfg=config.mcu_cfg,
+        )
+        collector.tx_queue_size = config.tx_queue_size
+        collector.max_reconnect_attempts = config.max_reconnect_attempts
+        collector.reconnect_delay = config.reconnect_delay
+        return collector
+
+    def get_port_status(self, port_id: str) -> SerialPortStatus | None:
+        """Get a structured status snapshot for a port."""
+        collector = self.get_collector(port_id)
+        if collector is None:
+            return None
+        return SerialPortStatus.from_collector(port_id, collector)

@@ -477,6 +477,8 @@ class OptimizedSerialCollector:
         if tx_queue is None or serial_obj is None:
             return
         while True:
+            if gen != self._generation:
+                break
             try:
                 item = tx_queue.get(timeout=0.1)
             except queue.Empty:
@@ -485,12 +487,7 @@ class OptimizedSerialCollector:
                 continue
             try:
                 if item is _TX_STOP:
-                    # Sentinel: do NOT call task_done() — it will be drained
-                    # by stop() with task_done(). Skipping here avoids
-                    # double-task_done() that corrupts the queue counter.
-                    if tx_queue.empty():
-                        break
-                    continue
+                    break
                 request = item
                 if not isinstance(request, TxRequest):
                     continue
@@ -527,9 +524,10 @@ class OptimizedSerialCollector:
                     SerialOperationError,
                 ) as exc:
                     intentional_stop = self._stop_event.is_set()
-                    self.running = False
-                    self._connected = False
-                    self._stop_event.set()
+                    with self._state_lock:
+                        self.running = False
+                        self._connected = False
+                        self._stop_event.set()
                     if not intentional_stop:
                         kind = _classify_serial_error(exc)
                         self._notify_connection_error(
@@ -540,11 +538,10 @@ class OptimizedSerialCollector:
                     break
                 self._invoke_tx_callback(request, time.time())
             finally:
-                if item is not _TX_STOP:
-                    try:
-                        tx_queue.task_done()
-                    except ValueError:
-                        pass
+                try:
+                    tx_queue.task_done()
+                except ValueError:
+                    pass
 
     def _read_loop_optimized(self, gen: int) -> None:
         # Capture the serial object THIS thread is working with.
@@ -593,9 +590,10 @@ class OptimizedSerialCollector:
                 except (serial.SerialException, OSError) as exc:
                     if self._stop_event.is_set() or gen != self._generation:
                         break
-                    self.running = False
-                    self._connected = False
-                    self._stop_event.set()
+                    with self._state_lock:
+                        self.running = False
+                        self._connected = False
+                        self._stop_event.set()
                     kind = _classify_serial_error(exc)
                     self._error_count += 1
                     self._notify_connection_error(
@@ -665,9 +663,10 @@ class OptimizedSerialCollector:
             flush_raw(True)
         except Exception as exc:
             if not self._stop_event.is_set():
-                self.running = False
-                self._connected = False
-                self._stop_event.set()
+                with self._state_lock:
+                    self.running = False
+                    self._connected = False
+                    self._stop_event.set()
                 kind = _classify_serial_error(exc)
                 self._error_count += 1
                 self._notify_connection_error(f"采集异常: {exc}", kind)
