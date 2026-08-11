@@ -338,6 +338,8 @@ def _format_fields_summary(
 
         attr_semantic = _format_attr_semantics(field_obj, attr_center)
         if attr_semantic:
+            if cmd_code == "0x21" and attr_semantic.startswith("照明-开关状态"):
+                continue
             summaries.append(attr_semantic)
             continue
 
@@ -369,7 +371,8 @@ def _format_fields_summary(
                     summaries.append("，".join(child_parts))
             continue
         summaries.append(f"{name}:{text}")
-    return "；".join(summaries)
+    joiner = "\n" if cmd_code == "0x24" else "；"
+    return joiner.join(summaries)
 
 
 _MCU_TX_COMMAND_NAMES = {

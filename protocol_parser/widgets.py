@@ -1,18 +1,55 @@
 """PySide6 + qfluentwidgets 通用控件辅助。"""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QModelIndex
 from PySide6.QtWidgets import (
     QLabel, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton,
     QButtonGroup, QDialog, QSizePolicy,
 )
 from qfluentwidgets import (
     ToolTipFilter, ToolTipPosition, CardWidget, StrongBodyLabel,
-    BodyLabel, PrimaryPushButton,
+    BodyLabel, PrimaryPushButton, TableWidget,
 )
 
 from .theme import PALETTE
 from .dpi_font import fit_text_control, apply_adaptive_geometry, fit_window_to_screen
+
+
+class CellWidgetAlignedTable(TableWidget):
+    """修复 qfluentwidgets 表格 cellWidget 的两种错位。
+
+    1) cellWidget 不随滚动条移动(冻结在初始位置) → 滚动条
+       valueChanged 时按 visualRect 强制对齐;
+    2) 表格尺寸/几何更新时 cellWidget 被 Qt 摆到瞬态错误位置
+       (开关发送面板、窗口缩放时的复选框抖动) → 在 Qt 摆放的
+       同一帧内立即校正, 消除可见抖动。
+    """
+
+    def _reposition_cell_widgets(self) -> None:
+        model = self.model()
+        if model is None:
+            return
+        for row in range(self.rowCount()):
+            for column in range(self.columnCount()):
+                widget = self.cellWidget(row, column)
+                if widget is not None:
+                    widget.setGeometry(self.visualRect(model.index(row, column)))
+
+    def _on_scroll_changed(self, *_args) -> None:
+        self._reposition_cell_widgets()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
+
+    def updateGeometries(self):
+        super().updateGeometries()
+        self._reposition_cell_widgets()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_cell_widgets()
 
 
 def apply_tooltip(widget: QWidget, text: str) -> None:

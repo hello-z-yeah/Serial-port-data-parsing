@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from protocol_parser.app_info import APP_EXE_NAME, APP_NAME, APP_VERSION  # noqa: E402
+from protocol_parser.app_info import APP_EXE_BASENAME, APP_EXE_NAME, APP_NAME, APP_VERSION  # noqa: E402
 
 iss = (ROOT / "installer" / "serial_port_parser.iss").read_text(encoding="utf-8")
 spec = (ROOT / "serial_port_parser_fast.spec").read_text(encoding="utf-8")
@@ -15,6 +15,8 @@ checks = {
     "installer app name": f'#define MyAppName          "{APP_NAME}"' in iss,
     "installer version": f'#define MyAppVersion       "{APP_VERSION}"' in iss,
     "installer exe": f'#define MyAppExeName       "{APP_EXE_NAME}"' in iss,
+    "installer base name": f'#define MyAppBaseName      "{APP_EXE_BASENAME}"' in iss,
+    "installer OutputBaseFilename uses base name": f"OutputBaseFilename={{#MyAppBaseName}}Setup{{#MyAppVersion}}_x64" in iss,
     "installer stable AppId": "AppId={#MyAppAssistedGUID}" in iss,
     "PyInstaller exe name": f'name="{Path(APP_EXE_NAME).stem}"' in spec,
 }

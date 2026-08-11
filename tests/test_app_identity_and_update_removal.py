@@ -42,6 +42,8 @@ def test_product_name_and_version_are_consistent_across_build_files() -> None:
     assert f'#define MyAppName          "{APP_NAME}"' in iss
     assert f'#define MyAppVersion       "{APP_VERSION}"' in iss
     assert f'#define MyAppExeName       "{APP_EXE_NAME}"' in iss
+    assert f'#define MyAppBaseName      "{APP_EXE_BASENAME}"' in iss
+    assert f"OutputBaseFilename={{#MyAppBaseName}}Setup{{#MyAppVersion}}_x64" in iss
     assert f'name="{APP_EXE_BASENAME}"' in spec
     assert '(str(PROJECT_ROOT / "data"), "defaults/data")' in spec
     assert f"StringStruct('ProductName', '{APP_NAME}')" in version_info

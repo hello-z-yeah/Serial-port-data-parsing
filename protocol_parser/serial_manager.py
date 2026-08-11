@@ -69,8 +69,11 @@ class SerialManager:
         with self._state_lock:
             if port_id in self._collectors:
                 existing = self._collectors[port_id]
-                if existing.is_running():
-                    raise SerialStateError(f"串口 {port_id} 已注册且正在运行")
+                if not existing.is_safely_stopped():
+                    raise SerialStateError(
+                        f"串口 {port_id} 仍在运行或未完全停止，"
+                        f"无法重新注册。请先停止该串口。"
+                    )
             collector = OptimizedSerialCollector(
                 cfg=cfg,
                 port=physical_port,
@@ -106,19 +109,28 @@ class SerialManager:
     def unregister_port(self, port_id: str) -> None:
         """Stop and unregister a serial port collector.
 
-        Retrieves collector reference inside the lock, releases the lock,
-        then calls collector.stop() outside the lock to prevent deadlocks
-        with connection_changed callbacks.
+        Keeps the collector registered until ``stop()`` succeeds.
+        If ``stop()`` times out or raises, the collector remains in
+        the registry so the user/UI can retry cleanup later —
+        preventing orphaned serial handles, worker threads, or
+        reconnect loops from being lost.
 
-        Raises SerialOperationError if the collector fails to stop cleanly.
+        Raises SerialOperationError if the collector fails to stop
+        cleanly; in that case the collector is NOT removed.
         """
         with self._state_lock:
-            collector = self._collectors.pop(port_id, None)
+            collector = self._collectors.get(port_id)
 
         if collector is None:
             return
 
+        # Stop outside the lock to avoid deadlocks with callbacks.
         collector.stop()
+
+        # Only remove from registry AFTER stop() returns successfully.
+        with self._state_lock:
+            self._collectors.pop(port_id, None)
+
         self._notify_connection_changed(port_id, "disconnected")
 
     def stop_port(self, port_id: str) -> None:

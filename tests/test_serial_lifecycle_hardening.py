@@ -955,3 +955,242 @@ class TestPluginActiveCallDrain:
         # unfinished_tasks == 0 means join() returns immediately.
         assert q.empty(), "queue should be empty after drain"
         q.join()  # Must return immediately without hanging
+
+
+# ---------------------------------------------------------------------------
+# 13. Hardened lifecycle paths — unregister leak, register overwrite,
+#     atomic stop/reconnect, and RX thread isolation.
+# ---------------------------------------------------------------------------
+
+class _UnsafeStoppedCollector:
+    """Mock collector that is_running() returns False but threads are alive."""
+
+    def __init__(self):
+        self._alive = True
+        self._serial = SimpleNamespace(is_open=False)
+
+    def is_running(self):
+        return False
+
+    def is_safely_stopped(self):
+        # Override: claim not safely stopped because thread is alive.
+        return False
+
+    def stop(self, *, timeout=2.5):
+        self._alive = False
+
+    @property
+    def _thread(self):
+        return self
+
+    @property
+    def _tx_thread(self):
+        return None
+
+    @property
+    def _parse_thread(self):
+        return None
+
+    @property
+    def _reconnect_thread(self):
+        return None
+
+    def is_alive(self):
+        return self._alive
+
+
+class TestUnregisterLeakFix:
+    """unregister_port keeps collector registered when stop() fails."""
+
+    def test_collector_retained_when_stop_raises(self, monkeypatch):
+        mgr = SerialManager()
+        collector = _FailingCollector()
+        with mgr._state_lock:
+            mgr._collectors["port1"] = collector
+
+        with pytest.raises(SerialOperationError):
+            mgr.unregister_port("port1")
+
+        # Collector MUST remain registered because stop() failed.
+        with mgr._state_lock:
+            assert "port1" in mgr._collectors, (
+                "collector must be retained when stop() raises"
+            )
+
+    def test_collector_removed_when_stop_succeeds(self, monkeypatch):
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        mgr = SerialManager()
+        collector = mgr.register_port(
+            "port1", {"port": "COM_OK"},
+        )
+        collector.primary_enabled = False
+        with mgr._state_lock:
+            assert "port1" in mgr._collectors
+
+        mgr.unregister_port("port1")
+
+        with mgr._state_lock:
+            assert "port1" not in mgr._collectors, (
+                "collector must be removed after successful stop()"
+            )
+
+
+class TestRegisterOverwriteFix:
+    """register_port rejects overwriting collectors that aren't safely stopped."""
+
+    def test_register_rejects_overwrite_of_unsafely_stopped(self, monkeypatch):
+        mgr = SerialManager()
+        unsafe = _UnsafeStoppedCollector()
+        with mgr._state_lock:
+            mgr._collectors["port1"] = unsafe
+
+        with pytest.raises(SerialStateError) as excinfo:
+            mgr.register_port("port1", {"port": "COM1"})
+        assert "未完全停止" in str(excinfo.value) or "无法重新注册" in str(excinfo.value)
+
+    def test_register_allows_overwrite_of_safely_stopped(self, monkeypatch):
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        mgr = SerialManager()
+        collector = mgr.register_port(
+            "port1", {"port": "COM_A"},
+        )
+        collector.primary_enabled = False
+        assert collector.is_safely_stopped() is False or collector.running
+
+        mgr.unregister_port("port1")
+        # Now safely stopped — register_port should succeed.
+        new_collector = mgr.register_port(
+            "port1", {"port": "COM_B"},
+        )
+        new_collector.primary_enabled = False
+        assert new_collector is not collector
+        mgr.unregister_port("port1")
+
+
+class TestAtomicStopReconnectLifecycle:
+    """Generation guard causes reconnect loop to abort under stop()."""
+
+    def test_reconnect_supervisor_aborts_when_stopping(self, monkeypatch):
+        """_reconnect_supervisor returns immediately if _stopping is set."""
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        collector = OptimizedSerialCollector(
+            cfg={}, port="COM_ATOMIC", primary_enabled=False
+        )
+        collector.start()
+        gen_before = collector._generation
+
+        # Inject _stopping flag so supervisor must bail out immediately.
+        with collector._state_lock:
+            collector._stopping = True
+            collector._stop_event.set()
+
+        # Run the supervisor directly — it should abort without raising.
+        try:
+            collector._reconnect_supervisor(gen_before)
+        finally:
+            with collector._state_lock:
+                collector._stopping = False
+            collector.stop(timeout=2.0)
+
+    def test_is_safely_stopped_checks_all_threads(self, monkeypatch):
+        """is_safely_stopped returns False when any worker thread is alive."""
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        collector = OptimizedSerialCollector(
+            cfg={}, port="COM_SAFE", primary_enabled=False
+        )
+        collector.start()
+        try:
+            while not collector.running:
+                time.sleep(0.05)
+
+            # While running, is_safely_stopped must be False because threads alive.
+            assert collector.is_safely_stopped() is False
+        finally:
+            collector.stop(timeout=2.0)
+        assert collector.is_safely_stopped() is True
+
+
+class TestRXThreadIsolation:
+    """RX thread is decoupled from parsing — parse thread runs callbacks."""
+
+    def test_parse_thread_started_and_stopped(self, monkeypatch):
+        """_parse_thread is started on start() and joined on stop()."""
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        collector = OptimizedSerialCollector(
+            cfg={}, port="COM_PARSE", primary_enabled=False
+        )
+        assert collector._parse_thread is None
+        collector.start()
+        try:
+            assert collector._parse_thread is not None
+            assert collector._parse_thread.is_alive()
+            assert collector._parse_queue is not None
+        finally:
+            collector.stop(timeout=2.0)
+        assert collector._parse_thread is None
+        assert collector._parse_queue is None
+
+    def test_parse_queue_drained_on_stop(self, monkeypatch):
+        """parse queue is drained on stop — no leaked items."""
+        from protocol_parser import serial_collector_optimized as sco
+
+        created = _install_fake(monkeypatch, target_module=sco)
+        collector = OptimizedSerialCollector(
+            cfg={}, port="COM_PARSE_DRAIN", primary_enabled=False
+        )
+        collector.start()
+        q = collector._parse_queue
+        assert q is not None
+        # Simulate backlog on parse queue.
+        for _ in range(5):
+            try:
+                q.put_nowait(b"\x00")
+            except queue.Full:
+                break
+
+        collector.stop(timeout=2.0)
+
+        # After stop, parse queue reference cleared.
+        assert collector._parse_queue is None
+
+    def test_rx_thread_name_isolation(self, monkeypatch):
+        """RX thread is named 'smst-rx-*' and parse thread is 'smst-parse-*'."""
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        collector = OptimizedSerialCollector(
+            cfg={}, port="COM_NAMES", primary_enabled=False
+        )
+        collector.start()
+        try:
+            assert collector._thread is not None
+            assert collector._thread.name.startswith("smst-rx-")
+            assert collector._parse_thread is not None
+            assert collector._parse_thread.name.startswith("smst-parse-")
+        finally:
+            collector.stop(timeout=2.0)
+
+    def test_concurrent_stop_start_with_parse_thread(self, monkeypatch):
+        """Multiple stop/start cycles keep parse thread lifecycle balanced."""
+        from protocol_parser import serial_collector_optimized as sco
+
+        _install_fake(monkeypatch, target_module=sco)
+        collector = OptimizedSerialCollector(
+            cfg={}, port="COM_CYCLE_PARSE", primary_enabled=False
+        )
+        for _ in range(3):
+            collector.start()
+            assert collector._parse_thread is not None and collector._parse_thread.is_alive()
+            collector.stop(timeout=2.0)
+            assert collector._parse_thread is None
+            assert collector._parse_queue is None

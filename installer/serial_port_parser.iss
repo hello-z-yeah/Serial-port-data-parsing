@@ -3,6 +3,7 @@
 #define MyAppVersion       "3.1.0"
 #define MyAppPublisher     "SST"
 #define MyAppExeName       "SST_SerialTool.exe"
+#define MyAppBaseName      "SST_SerialTool"
 #define MyAppAssistedGUID  "{{B1F3A7D8-6C9E-4F2B-9A8C-7D5E3F1A2B4C}"
 
 [Setup]
@@ -17,7 +18,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 OutputDir=..\release
-OutputBaseFilename=SST_串口工具Setup{#MyAppVersion}_x64
+OutputBaseFilename={#MyAppBaseName}Setup{#MyAppVersion}_x64
 Compression=lzma2/ultra
 SolidCompression=yes
 WizardStyle=modern
