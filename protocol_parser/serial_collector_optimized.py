@@ -62,6 +62,7 @@ class OptimizedSerialCollector:
     running: bool = False
     _thread: threading.Thread | None = None
     _tx_thread: threading.Thread | None = None
+    _parse_thread: threading.Thread | None = None
     _reconnect_thread: threading.Thread | None = None
     _serial: "serial.Serial | None" = None
     sync: FrameSynchronizer | None = None
@@ -69,10 +70,12 @@ class OptimizedSerialCollector:
     _write_lock: threading.Lock | None = None
     _mcu_sync_lock: threading.Lock = field(default_factory=threading.Lock)
     _tx_queue: queue.Queue | None = None
+    _parse_queue: queue.Queue | None = None
     _stop_event: threading.Event = field(default_factory=threading.Event)
     _state_lock: threading.RLock = field(default_factory=threading.RLock)
     _stopping: bool = False
     tx_dropped_on_stop: int = 0
+    rx_parse_overflows: int = 0
     last_connection_error_kind: str = ""
     last_connection_error: str = ""
     _error_count: int = 0
@@ -88,6 +91,34 @@ class OptimizedSerialCollector:
 
     def get_error_count(self) -> int:
         return self._error_count
+
+    def is_safely_stopped(self) -> bool:
+        """Return True if this collector can be safely replaced.
+
+        Checks that all background threads (RX, TX, reconnect) are
+        fully dead and the serial handle is closed. This prevents
+        resource leaks and locked COM ports when ``register_port``
+        overwrites an existing entry during a failing stop/reconnect
+        phase.
+        """
+        with self._state_lock:
+            if self.running or self._connected or self._stopping:
+                return False
+            threads_alive = any(
+                t is not None and t.is_alive()
+                for t in (
+                    self._thread,
+                    self._tx_thread,
+                    self._parse_thread,
+                    self._reconnect_thread,
+                )
+            )
+            if threads_alive:
+                return False
+            ser = self._serial
+            if ser is not None and getattr(ser, "is_open", False):
+                return False
+            return True
 
     def start(self) -> None:
         if not HAS_SERIAL:
@@ -107,8 +138,10 @@ class OptimizedSerialCollector:
             self._serial = self._open_serial()
             self._write_lock = self._write_lock or threading.Lock()
             self._tx_queue = queue.Queue(maxsize=max(1, int(self.tx_queue_size)))
+            self._parse_queue = queue.Queue(maxsize=256)
             self._stop_event.clear()
             self.tx_dropped_on_stop = 0
+            self.rx_parse_overflows = 0
             self.last_connection_error_kind = ""
             self.last_connection_error = ""
             self._error_count = 0
@@ -122,6 +155,12 @@ class OptimizedSerialCollector:
                 daemon=True,
                 name=f"smst-tx-{self.port}",
             )
+            self._parse_thread = threading.Thread(
+                target=self._parse_loop,
+                args=(gen,),
+                daemon=True,
+                name=f"smst-parse-{self.port}",
+            )
             self._thread = threading.Thread(
                 target=self._read_loop_optimized,
                 args=(gen,),
@@ -129,6 +168,7 @@ class OptimizedSerialCollector:
                 name=f"smst-rx-{self.port}",
             )
             self._tx_thread.start()
+            self._parse_thread.start()
             self._thread.start()
 
     def _open_serial(self) -> "serial.Serial":
@@ -205,7 +245,9 @@ class OptimizedSerialCollector:
             serial_obj = self._serial
             rx_thread = self._thread
             tx_thread = self._tx_thread
+            parse_thread = self._parse_thread
             tx_queue = self._tx_queue
+            parse_queue = self._parse_queue
             reconnect_thread = self._reconnect_thread
 
         # Close after cancellation — some Windows USB drivers unblock only on close.
@@ -214,7 +256,7 @@ class OptimizedSerialCollector:
         current = threading.current_thread()
         deadline = time.monotonic() + max(0.0, float(timeout))
 
-        for worker in (rx_thread, tx_thread, reconnect_thread):
+        for worker in (rx_thread, parse_thread, tx_thread, reconnect_thread):
             if worker is None or worker is current:
                 continue
             remaining = max(0.0, deadline - time.monotonic())
@@ -224,7 +266,7 @@ class OptimizedSerialCollector:
 
         alive = [
             worker.name
-            for worker in (rx_thread, tx_thread, reconnect_thread)
+            for worker in (rx_thread, parse_thread, tx_thread, reconnect_thread)
             if worker is not None and worker is not current and worker.is_alive()
         ]
         if alive:
@@ -252,12 +294,21 @@ class OptimizedSerialCollector:
                                 tx_queue.task_done()
                             except ValueError:
                                 pass
+            # Drain parse queue — no task_done accounting for it (simple Queue).
+            if parse_queue is not None:
+                while True:
+                    try:
+                        parse_queue.get_nowait()
+                    except queue.Empty:
+                        break
             self.tx_dropped_on_stop += dropped
             self._thread = None
             self._tx_thread = None
+            self._parse_thread = None
             self._reconnect_thread = None
             self._serial = None
             self._tx_queue = None
+            self._parse_queue = None
             if self.sync is not None:
                 self.sync.reset()
             with self._mcu_sync_lock:
@@ -584,14 +635,84 @@ class OptimizedSerialCollector:
                 pass
 
     def _read_loop_optimized(self, gen: int) -> None:
-        # Capture the serial object THIS thread is working with.
-        # The finally block will close ONLY this specific handle,
-        # preventing accidental closing of a replacement serial
-        # object created by _reconnect().
+        """RX thread — reads raw bytes and pushes them into the parse queue.
+
+        Keeps the serial RX path strictly focused on consuming bytes as
+        fast as possible. All frame sync, plugin execution, and callback
+        dispatch happens in the separate ``_parse_loop`` thread to prevent
+        slow GUI/log delays from blocking the next read.
+        """
         serial_obj = self._serial
-        sync = self.sync
-        if serial_obj is None or sync is None:
+        parse_queue = self._parse_queue
+        if serial_obj is None or parse_queue is None:
             return
+        try:
+            while not self._stop_event.is_set():
+                if gen != self._generation:
+                    break
+                try:
+                    raw = serial_obj.read(4096)
+                except (serial.SerialException, OSError) as exc:
+                    if self._stop_event.is_set() or gen != self._generation:
+                        break
+                    with self._state_lock:
+                        if gen != self._generation:
+                            break
+                        self.running = False
+                        self._connected = False
+                        self._stop_event.set()
+                    kind = _classify_serial_error(exc)
+                    self._error_count += 1
+                    self._notify_connection_error(
+                        f"串口读取错误: "
+                        f"{_friendly_serial_error(self.port, exc, kind)}",
+                        kind,
+                    )
+                    self._schedule_reconnect(gen)
+                    break
+                if not raw:
+                    continue
+                try:
+                    parse_queue.put_nowait(bytes(raw))
+                except queue.Full:
+                    # Back-pressure: the parser cannot keep up. Drop the
+                    # oldest chunk to make room and record the overflow.
+                    try:
+                        parse_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        parse_queue.put_nowait(bytes(raw))
+                    except queue.Full:
+                        pass
+                    self.rx_parse_overflows += 1
+        except Exception as exc:
+            if not self._stop_event.is_set():
+                with self._state_lock:
+                    if gen == self._generation:
+                        self.running = False
+                        self._connected = False
+                        self._stop_event.set()
+                kind = _classify_serial_error(exc)
+                self._error_count += 1
+                self._notify_connection_error(f"采集异常: {exc}", kind)
+        finally:
+            # Only close the specific serial handle this thread used.
+            # Do NOT touch self._serial — it may have been replaced
+            # by a reconnect thread.
+            self._close_serial_safe(serial_obj)
+
+    def _parse_loop(self, gen: int) -> None:
+        """Parser/dispatch thread — frame sync, plugins, callbacks.
+
+        Consumes raw byte chunks from ``_parse_queue`` and performs
+        frame synchronization, plugin execution, and callback dispatch
+        OUTSIDE the RX thread so slow callbacks cannot starve reads.
+        """
+        parse_queue = self._parse_queue
+        if parse_queue is None:
+            return
+        sync = self.sync
         raw_buf = bytearray()
         last_flush = time.time()
 
@@ -621,33 +742,17 @@ class OptimizedSerialCollector:
 
         try:
             while not self._stop_event.is_set():
-                # Check generation — if a newer reconnect happened,
-                # this loop is stale and should exit.
                 if gen != self._generation:
                     break
                 try:
-                    raw = serial_obj.read(4096)
-                except (serial.SerialException, OSError) as exc:
-                    if self._stop_event.is_set() or gen != self._generation:
-                        break
-                    with self._state_lock:
-                        if gen != self._generation:
-                            break
-                        self.running = False
-                        self._connected = False
-                        self._stop_event.set()
-                    kind = _classify_serial_error(exc)
-                    self._error_count += 1
-                    self._notify_connection_error(
-                        f"串口读取错误: "
-                        f"{_friendly_serial_error(self.port, exc, kind)}",
-                        kind,
-                    )
-                    self._schedule_reconnect(gen)
-                    break
-                if not raw:
+                    raw = parse_queue.get(timeout=0.1)
+                except queue.Empty:
                     flush_raw(False)
                     continue
+                if self._stop_event.is_set():
+                    break
+                if gen != self._generation:
+                    break
                 now = time.time()
 
                 if self.on_mcu_frame is not None:
@@ -710,14 +815,9 @@ class OptimizedSerialCollector:
                         self.running = False
                         self._connected = False
                         self._stop_event.set()
-                kind = _classify_serial_error(exc)
-                self._error_count += 1
-                self._notify_connection_error(f"采集异常: {exc}", kind)
-        finally:
-            # Only close the specific serial handle this thread used.
-            # Do NOT touch self._serial — it may have been replaced
-            # by a reconnect thread.
-            self._close_serial_safe(serial_obj)
+                self._notify_connection_error(
+                    f"解析异常: {exc}",
+                )
 
     def _schedule_reconnect(self, old_gen: int) -> None:
         """Launch a background reconnect supervisor thread.
@@ -794,12 +894,20 @@ class OptimizedSerialCollector:
                         return
                     self._stop_event.clear()
                     self.running = True
+                    self._parse_queue = queue.Queue(maxsize=256)
+                    self._parse_thread = threading.Thread(
+                        target=self._parse_loop,
+                        args=(new_gen,),
+                        daemon=True,
+                        name=f"smst-parse-{self.port}",
+                    )
                     self._thread = threading.Thread(
                         target=self._read_loop_optimized,
                         args=(new_gen,),
                         daemon=True,
                         name=f"smst-rx-{self.port}",
                     )
+                    self._parse_thread.start()
                     self._thread.start()
                     if self._tx_thread is None or not self._tx_thread.is_alive():
                         self._tx_thread = threading.Thread(

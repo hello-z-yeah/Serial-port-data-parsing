@@ -79,6 +79,7 @@ from protocol_parser.paths import (  # noqa: E402
 from protocol_parser.theme import ThemeManager, PALETTE  # noqa: E402
 from protocol_parser.widgets import (  # noqa: E402
     apply_tooltip, TwoOptionSegmentSwitch, StyledMessageBox, apply_fluent_dialog_style,
+    CellWidgetAlignedTable,
 )
 from protocol_parser.ui_error import build_user_error_presentation  # noqa: E402
 from protocol_parser.attr_center import AttrStateCenter  # noqa: E402
@@ -574,7 +575,7 @@ class UiBridge(QObject):
     collector_stopped_signal = Signal(int, object, object)  # generation, callback, error
 
 
-class CycleOrderTable(TableWidget):
+class CycleOrderTable(CellWidgetAlignedTable):
     """循环发送配置表：支持拖动整行调整发送顺序。"""
 
     rowMoveRequested = Signal(int, int)
@@ -2686,7 +2687,7 @@ class ProtocolParserApp(FluentWindow):
         bar.addStretch(1)
         layout.addLayout(bar)
 
-        self.cmdlib_table = TableWidget()
+        self.cmdlib_table = CellWidgetAlignedTable()
         self.cmdlib_table.setObjectName("CommandLibraryTable")
         # 指令库正文、表头和行按钮与主界面使用同一正常字号；顶部
         # 三个工具按钮保持原样。Qt 点值字体会自动适配系统 DPI。

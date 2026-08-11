@@ -33,7 +33,7 @@ from protocol_parser.ui_helpers import (
 from protocol_parser.product_importer import localized_attribute_name
 from protocol_parser.exceptions import ProductConfigError
 from protocol_parser.combo_font import MatchedPopupComboBox
-from protocol_parser.widgets import StyledMessageBox, apply_fluent_dialog_style
+from protocol_parser.widgets import StyledMessageBox, apply_fluent_dialog_style, CellWidgetAlignedTable
 from protocol_parser.theme import PALETTE
 from protocol_parser.dpi_font import (
     responsive_point_size,
@@ -393,6 +393,15 @@ class McuSimulatePage(QWidget):
 
         self.attr_card = self._build_attr_card()
         self.preset_card = self._build_preset_card()
+        # 修复: 本环境下 cellWidget 不随滚动条移动(滚动即错位),
+        # 滚动值变化时按 visualRect 强制对齐, 否则复选框/按钮漂移。
+        for table in (self.attr_table, self.poweron_table, self.autoreply_table):
+            table.horizontalScrollBar().valueChanged.connect(
+                lambda _v: self._fix_cell_widget_positions()
+            )
+            table.verticalScrollBar().valueChanged.connect(
+                lambda _v: self._fix_cell_widget_positions()
+            )
         self.data_card.setMinimumWidth(320)
         self.attr_card.setMinimumWidth(260)
         self.preset_card.setMinimumWidth(260)
@@ -711,7 +720,7 @@ class McuSimulatePage(QWidget):
         self._relayout_attr_header()
         layout.addLayout(self.attr_header_layout)
 
-        self.attr_table = TableWidget(card)
+        self.attr_table = CellWidgetAlignedTable(card)
         self.attr_table.setColumnCount(8)
         self.attr_table.setHorizontalHeaderLabels([
             "选", "ID", "名称", "属性文本", "权限", "格式", "当前值", "发送",
@@ -836,7 +845,7 @@ QTableView#AttributeTable::item:selected {{
         page = QWidget(self)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.poweron_table = TableWidget(page)
+        self.poweron_table = CellWidgetAlignedTable(page)
         self.poweron_table.setColumnCount(3)
         self.poweron_table.setHorizontalHeaderLabels(["序号", "命令", "操作"])
         header = self.poweron_table.horizontalHeader()
@@ -877,7 +886,7 @@ QTableView#AttributeTable::item:selected {{
         )
         self._relayout_autoreply_header()
         layout.addLayout(self.autoreply_header_layout)
-        self.autoreply_table = TableWidget(page)
+        self.autoreply_table = CellWidgetAlignedTable(page)
         self.autoreply_table.setColumnCount(3)
         self.autoreply_table.setHorizontalHeaderLabels(["启用", "名称", "说明"])
         header = self.autoreply_table.horizontalHeader()
@@ -938,6 +947,24 @@ QTableView#AttributeTable::item:selected {{
             self._panel_width_mem["attr"] = sizes[1]
         if not preset_card.isHidden() and sizes[2] > 0:
             self._panel_width_mem["preset"] = sizes[2]
+
+    def _fix_cell_widget_positions(self) -> None:
+        """修复 qfluentwidgets 表格 cellWidget 错位。
+
+        横向滚动条非 0 位时,列宽/行高/表格尺寸变化后,控件位置不会
+        按新滚动偏移刷新,这里用 visualRect 强制对齐,防止复选框/按钮漂移。
+        """
+        for table in (getattr(self, "attr_table", None),
+                      getattr(self, "poweron_table", None),
+                      getattr(self, "autoreply_table", None)):
+            if table is None:
+                continue
+            model = table.model()
+            for row in range(table.rowCount()):
+                for column in range(table.columnCount()):
+                    widget = table.cellWidget(row, column)
+                    if widget is not None:
+                        widget.setGeometry(table.visualRect(model.index(row, column)))
 
     def _measure_attr_column_width(self, column: int) -> int:
         """按表头、文本和单元格控件的实际尺寸计算属性列宽。"""
@@ -1067,6 +1094,7 @@ QTableView#AttributeTable::item:selected {{
         finally:
             table.setUpdatesEnabled(True)
             table.viewport().update()
+            QTimer.singleShot(0, self._fix_cell_widget_positions)
 
     def _schedule_attr_row_resize(self, delay_ms: int = 80) -> None:
         """在列宽和 cellWidget 几何稳定后防抖重算全部属性行高。"""
@@ -1097,6 +1125,7 @@ QTableView#AttributeTable::item:selected {{
         finally:
             table.setUpdatesEnabled(True)
             table.viewport().update()
+            QTimer.singleShot(0, self._fix_cell_widget_positions)
         if any(column in self._attr_wrapped_column_maximums for column in selected):
             self._resize_attr_rows_to_wrapped_content()
             self._schedule_attr_row_resize(0)
@@ -1182,6 +1211,8 @@ QTableView#AttributeTable::item:selected {{
             autoreply.setHorizontalScrollBarPolicy(
                 Qt.ScrollBarPolicy.ScrollBarAsNeeded
             )
+        # 保险调用: 修复预置命令表格 cellWidget 可能的错位
+        QTimer.singleShot(0, self._fix_cell_widget_positions)
 
     def _attr_ideal_width(self) -> int:
         """实时属性面板完整显示表格所有列所需的理想宽度。"""
@@ -1259,6 +1290,7 @@ QTableView#AttributeTable::item:selected {{
             self._relayout_data_bar()
             self._relayout_attr_header()
             self._relayout_autoreply_header()
+            QTimer.singleShot(0, self._fix_cell_widget_positions)
             return
 
         total = max(1, splitter.contentsRect().width() - splitter.handleWidth() * 2)
@@ -1300,6 +1332,7 @@ QTableView#AttributeTable::item:selected {{
         QTimer.singleShot(0, self._relayout_attr_header)
         QTimer.singleShot(0, self._relayout_autoreply_header)
         QTimer.singleShot(0, self._layout_common_commands)
+        QTimer.singleShot(0, self._fix_cell_widget_positions)
 
     def _relayout_all_mcu(self) -> None:
         """页面几何稳定后统一执行 MCU 页的全部响应式重排。"""
