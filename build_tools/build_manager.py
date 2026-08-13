@@ -32,10 +32,10 @@ ISS_FILE = PROJECT_ROOT / "installer" / "serial_port_parser.iss"
 
 # Identity constants (single source of truth).  Loaded lazily so that the
 # module can be imported before the project root is added to sys.path.
-APP_EXE_BASENAME = "SST_SerialTool"
+APP_EXE_BASENAME = "SerialX"
 APP_EXE_NAME = f"{APP_EXE_BASENAME}.exe"
-APP_NAME = "SST_串口工具"
-APP_VERSION = "3.1.0"
+APP_NAME = "SerialX"
+APP_VERSION = "3.1.8"
 
 EXPECTED_APP_DIR = DIST_DIR / APP_EXE_BASENAME
 EXPECTED_APP_EXE = EXPECTED_APP_DIR / APP_EXE_NAME

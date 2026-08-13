@@ -1,9 +1,9 @@
 ; Fast-start onedir installer
-#define MyAppName          "SST_串口工具"
-#define MyAppVersion       "3.1.0"
-#define MyAppPublisher     "SST"
-#define MyAppExeName       "SST_SerialTool.exe"
-#define MyAppBaseName      "SST_SerialTool"
+#define MyAppName          "SerialX"
+#define MyAppVersion       "3.1.8"
+#define MyAppPublisher     "SerialX"
+#define MyAppExeName       "SerialX.exe"
+#define MyAppBaseName      "SerialX"
 #define MyAppAssistedGUID  "{{B1F3A7D8-6C9E-4F2B-9A8C-7D5E3F1A2B4C}"
 
 [Setup]
@@ -38,7 +38,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Files]
 ; onedir 的全部运行文件。安装后无需每次启动临时解压。
-Source: "..\dist\SST_SerialTool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\{#MyAppBaseName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\USER_GUIDE.md"; DestDir: "{app}"; Flags: ignoreversion
 

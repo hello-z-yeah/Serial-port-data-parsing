@@ -89,7 +89,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="SST_SerialTool",
+    name="SerialX",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -111,5 +111,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="SST_SerialTool",
+    name="SerialX",
 )

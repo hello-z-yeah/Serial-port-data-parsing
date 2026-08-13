@@ -255,6 +255,8 @@ class AttributeEditorDialog(QDialog):
 
         # 表格
         self.table = TableWidget()
+        from protocol_parser.widgets import FluentCellToolTipFilter
+        FluentCellToolTipFilter(self.table)
         # Use Qt's row index internally so odd/even colors cannot get stuck on
         # the same tag when rows are inserted or refreshed.
         self.table.setAlternatingRowColors(True)

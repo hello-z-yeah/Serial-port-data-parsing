@@ -6,14 +6,15 @@ ProtocolParserApp 及既有业务模块维护。
 from __future__ import annotations
 
 import json
+import re
 from collections import deque
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import Qt, QTimer, QEvent, QSize
+from PySide6.QtCore import Qt, QTimer, QEvent, QSize, QRectF, QPointF
 from PySide6.QtGui import (
     QFont, QFontMetrics, QTextCursor, QTextCharFormat, QColor, QIntValidator,
-    QTextDocument, QTextOption, QPalette,
+    QTextDocument, QTextOption, QPalette, QPainter, QTextFormat,
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter,
@@ -33,7 +34,7 @@ from protocol_parser.ui_helpers import (
 from protocol_parser.product_importer import localized_attribute_name
 from protocol_parser.exceptions import ProductConfigError
 from protocol_parser.combo_font import MatchedPopupComboBox
-from protocol_parser.widgets import StyledMessageBox, apply_fluent_dialog_style, CellWidgetAlignedTable
+from protocol_parser.widgets import StyledMessageBox, apply_fluent_dialog_style, CellWidgetAlignedTable, apply_tooltip
 from protocol_parser.theme import PALETTE
 from protocol_parser.dpi_font import (
     responsive_point_size,
@@ -56,10 +57,10 @@ QTextEdit {{
 QTextEdit:focus {{ border: 1px solid {PALETTE['primary']}; }}
 """
 
-_RX_TAG_COLOR = "#0078D4"
-_TX_TAG_COLOR = "#16833D"
-_RX_PARSED_COLOR = "#0066CC"   # RX 解析文字：蓝色
-_TX_PARSED_COLOR = "#008800"   # TX 解析文字：绿色
+_RX_TAG_COLOR = "#0000CD"
+_TX_TAG_COLOR = "#008000"
+_RX_PARSED_COLOR = "#0000CD"   # RX 解析文字：深蓝
+_TX_PARSED_COLOR = "#008000"   # TX 解析文字：绿
 
 
 class WrappedAttributeTextDelegate(QStyledItemDelegate):
@@ -140,8 +141,25 @@ class CtrlWheelZoomTextEdit(TextEdit):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._data_font_point_size = 10
+        self._doc_origin: tuple[float, float] | None = None
         self.viewport().installEventFilter(self)
-        self.setToolTip("按住 Ctrl 并滚动鼠标滚轮可调整本数据框字体大小")
+        apply_tooltip(self, "按住 Ctrl 并滚动鼠标滚轮可调整本数据框字体大小")
+        QTimer.singleShot(0, self._cache_doc_origin)
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        QTimer.singleShot(0, self._cache_doc_origin)
+
+    def _cache_doc_origin(self) -> None:
+        """缓存文档原点在 viewport 中的位置(含 QSS padding/边框)。"""
+        try:
+            doc = self.document()
+            oc = QTextCursor(doc)
+            oc.setPosition(0)
+            o = self.cursorRect(oc).topLeft()
+            self._doc_origin = (float(o.x()), float(o.y()))
+        except Exception:
+            self._doc_origin = (0.0, 0.0)
 
     def data_font_point_size(self) -> int:
         """返回当前数据框字号（pt）。"""
@@ -358,7 +376,7 @@ class McuSimulatePage(QWidget):
         self.data_font_spin.lineEdit().setAlignment(
             Qt.AlignmentFlag.AlignCenter
         )
-        self.data_font_spin.setToolTip("仅调整模拟 MCU 实时数据框中的字体大小")
+        apply_tooltip(self.data_font_spin, "仅调整模拟 MCU 实时数据框中的字体大小")
         # 保留完整字号逻辑、取值范围和 valueChanged 连接，但不再在界面上
         # 展示标签与 SpinBox，避免工具栏被字号控件占用。
         self.data_font_label.hide()
@@ -385,6 +403,19 @@ class McuSimulatePage(QWidget):
         max_lines = max(100, int(getattr(self._mw, "max_display_lines", 10000)))
         self.data_text.document().setMaximumBlockCount(max_lines)
         self.data_text.setFont(QFont(self._mw.font()))
+        from protocol_parser.gui import ensure_log_font_family
+        family = ensure_log_font_family()
+        if family:
+            font = QFont(self.data_text.font())
+            font.setFamily(family)
+            self.data_text.setFont(font)
+            self.data_text.setStyleSheet(
+                self.data_text.styleSheet()
+                + f'\nQTextEdit#McuRealtimeDataText {{ font-family: "{family}"; }}'
+            )
+            doc_font = QFont(self.data_text.document().defaultFont())
+            doc_font.setFamily(family)
+            self.data_text.document().setDefaultFont(doc_font)
         self.data_text.set_data_font_point_size(self.data_font_spin.value())
         self.data_font_spin.valueChanged.connect(
             self.data_text.set_data_font_point_size
@@ -393,15 +424,6 @@ class McuSimulatePage(QWidget):
 
         self.attr_card = self._build_attr_card()
         self.preset_card = self._build_preset_card()
-        # 修复: 本环境下 cellWidget 不随滚动条移动(滚动即错位),
-        # 滚动值变化时按 visualRect 强制对齐, 否则复选框/按钮漂移。
-        for table in (self.attr_table, self.poweron_table, self.autoreply_table):
-            table.horizontalScrollBar().valueChanged.connect(
-                lambda _v: self._fix_cell_widget_positions()
-            )
-            table.verticalScrollBar().valueChanged.connect(
-                lambda _v: self._fix_cell_widget_positions()
-            )
         self.data_card.setMinimumWidth(320)
         self.attr_card.setMinimumWidth(260)
         self.preset_card.setMinimumWidth(260)
@@ -1452,26 +1474,58 @@ QTableView#AttributeTable::item:selected {{
         normal_color = PALETTE["text"]
         tag_color = _TX_TAG_COLOR if is_tx else _RX_TAG_COLOR
         parsed_color = _TX_PARSED_COLOR if is_tx else _RX_PARSED_COLOR
+        ts_end = raw_line.find("]")
+        if not (0 < ts_end < tag_index):
+            ts_end = -1
 
-        segments: list[tuple[str, str, bool]] = []
+        segments: list[tuple[str, str, bool, str | None]] = []
         if tag_index >= 0:
-            segments.append((raw_line[:tag_index], normal_color, False))
-            segments.append((tag, tag_color, True))
-            segments.append((raw_line[tag_index + len(tag):], normal_color, False))
+            if ts_end > 0:
+                segments.append((raw_line[:ts_end + 1], "#2E86FF", False, None))
+            segments.append((raw_line[ts_end + 1:tag_index], normal_color, False, None))
+            tag_bg = "#E8F5E9" if is_tx else "#E3F2FD"
+            segments.append((tag, tag_color, True, tag_bg))
+            segments.append((raw_line[tag_index + len(tag):], normal_color, False, None))
         else:
-            segments.append((raw_line, normal_color, False))
+            if ts_end > 0:
+                segments.append((raw_line[:ts_end + 1], "#2E86FF", False, None))
+            segments.append((raw_line[ts_end + 1:], normal_color, False, None))
         if parsed_text:
-            segments.append((parsed_text, parsed_color, False))
+            # 解析文本: 头部(→ 命令名 (0xXX) | 方向 |)与每条属性的
+            # "属性id:XX 值:XX"前缀带背景, 其余内容(名称值、状态描述等)无背景。
+            first = parsed_text.find(" | ")
+            second = parsed_text.find(" | ", first + 3) if first >= 0 else -1
+            if second >= 0:
+                head = parsed_text[:second]
+                arrow_idx = head.find("→")
+                if arrow_idx >= 0:
+                    # 箭头本身无背景, 后面的命令名/方向保留背景。
+                    segments.append((head[:arrow_idx + 1], parsed_color, False, None))
+                    segments.append((head[arrow_idx + 1:], parsed_color, False, tag_bg))
+                else:
+                    segments.append((head, parsed_color, False, None))
+                body = parsed_text[second:]
+            else:
+                segments.append((parsed_text, parsed_color, False, None))
+                body = ""
+            pos = 0
+            for m in re.finditer(r"属性id:[0-9A-Fa-f]{2} 值:\S+", body):
+                if m.start() > pos:
+                    segments.append((body[pos:m.start()], parsed_color, False, None))
+                segments.append((m.group(), parsed_color, False, tag_bg))
+                pos = m.end()
+            if pos < len(body):
+                segments.append((body[pos:], parsed_color, False, None))
 
         self._pending_data_segments.extend(seg for seg in segments if seg[0])
         self._pending_data_chars += sum(len(seg[0]) for seg in segments)
         # Bound the pre-render queue if the GUI thread is temporarily busy.
         if self._pending_data_chars > 1_000_000:
             while self._pending_data_segments and self._pending_data_chars > 500_000:
-                old_text, _, _ = self._pending_data_segments.popleft()
+                old_text, _, _, _ = self._pending_data_segments.popleft()
                 self._pending_data_chars -= len(old_text)
             warning = "[提示] 实时数据显示积压过多，已丢弃最早的待显示文本；串口数据保存不受影响。\n"
-            self._pending_data_segments.appendleft((warning, PALETTE["error"], True))
+            self._pending_data_segments.appendleft((warning, PALETTE["error"], True, None))
             self._pending_data_chars += len(warning)
         if not self._data_flush_timer.isActive():
             self._data_flush_timer.start()
@@ -1487,15 +1541,22 @@ QTableView#AttributeTable::item:selected {{
         saved_scroll_value = scroll_bar.value()
         cursor = QTextCursor(self.data_text.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        format_cache: dict[tuple[str, bool], QTextCharFormat] = {}
-        for text, color, bold in segments:
-            key = (color, bold)
+        format_cache: dict[tuple[str, bool, str | None], QTextCharFormat] = {}
+        for segment in segments:
+            if len(segment) == 4:
+                text, color, bold, bg_color = segment
+            else:
+                text, color, bold = segment
+                bg_color = None
+            key = (color, bold, bg_color)
             fmt = format_cache.get(key)
             if fmt is None:
                 fmt = QTextCharFormat()
                 fmt.setForeground(QColor(color))
                 if bold:
                     fmt.setFontWeight(QFont.Weight.DemiBold.value)
+                if bg_color:
+                    fmt.setBackground(QColor(bg_color))
                 format_cache[key] = fmt
             cursor.insertText(text, fmt)
 
@@ -1526,6 +1587,7 @@ QTableView#AttributeTable::item:selected {{
                 current_text = str(entry.current_value)
                 if item.text() != current_text:
                     item.setText(current_text)
+                    item.setToolTip(current_text)
                     current_value_changed = True
         if current_value_changed:
             self._schedule_attr_column_remeasure(6)
@@ -1593,7 +1655,7 @@ QTableView#AttributeTable::item:selected {{
                 button = PushButton(label, send_cell)
                 button.setMinimumHeight(self._enum_button_height)
                 fit_text_control(button, point_size=self._side_font_point_size)
-                button.setToolTip(label)
+                apply_tooltip(button, label)
                 button.clicked.connect(
                     lambda checked=False, aid=entry.attrid, value=raw_value:
                     self._on_attr_send(aid, value)
@@ -1708,7 +1770,7 @@ QTableView#AttributeTable::item:selected {{
                 check.setChecked(reportable and old_checked.get(entry.attrid, True))
                 check.setEnabled(reportable)
                 if not reportable:
-                    check.setToolTip("只写属性不能由 MCU 主动状态上报")
+                    apply_tooltip(check, "只写属性不能由 MCU 主动状态上报")
                 check.stateChanged.connect(self._on_row_select_changed)
                 check_cell = QWidget(self.attr_table)
                 check_layout = QHBoxLayout(check_cell)

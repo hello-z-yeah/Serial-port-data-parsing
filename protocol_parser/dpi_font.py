@@ -31,8 +31,11 @@ from PySide6.QtWidgets import (
     QLayout,
     QScrollArea,
 )
+from qfluentwidgets import ToolTipFilter, ToolTipPosition
 
 UI_FONT_FAMILY = "Microsoft YaHei UI"
+# 随程序分发的等宽日志字体族名; 启动注册成功后填充, 界面字体保持微软雅黑。
+LOG_FONT_FAMILY: str | None = None
 UI_FONT_BASE_POINT_SIZE = 10
 UI_FONT_MAX_POINT_SIZE = 14
 _QT_MAX_SIZE = 16_777_215
@@ -220,6 +223,9 @@ def _set_full_text_tooltip(widget: QWidget, text: str) -> None:
         current = str(widget.toolTip() or "").strip()
         if not current:
             widget.setToolTip(text)
+            widget.installEventFilter(
+                ToolTipFilter(widget, showDelay=300, position=ToolTipPosition.BOTTOM)
+            )
     except Exception:
         pass
 
@@ -388,7 +394,7 @@ def apply_table_font(table: QTableWidget, font: QFont, *, minimum_padding: int =
             if item is not None:
                 item.setFont(font)
                 try:
-                    if item.text() and not item.toolTip():
+                    if item.text():
                         item.setToolTip(item.text())
                 except Exception:
                     pass
@@ -428,7 +434,7 @@ def adapt_table_geometry(table: QTableWidget, *, point_size: int | None = None) 
         if item is not None:
             header_required = header_metrics.horizontalAdvance(item.text()) + 30
             try:
-                if item.text() and not item.toolTip():
+                if item.text():
                     item.setToolTip(item.text())
             except Exception:
                 pass
@@ -447,7 +453,7 @@ def adapt_table_geometry(table: QTableWidget, *, point_size: int | None = None) 
             item = table.item(row, column)
             if item is not None:
                 try:
-                    if item.text() and not item.toolTip():
+                    if item.text():
                         item.setToolTip(item.text())
                 except Exception:
                     pass

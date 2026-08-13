@@ -1,18 +1,57 @@
 """PySide6 + qfluentwidgets 通用控件辅助。"""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QModelIndex
+from PySide6.QtCore import Qt, Signal, QModelIndex, QObject, QEvent
 from PySide6.QtWidgets import (
     QLabel, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton,
-    QButtonGroup, QDialog, QSizePolicy,
+    QButtonGroup, QDialog, QSizePolicy, QTableWidget,
 )
 from qfluentwidgets import (
     ToolTipFilter, ToolTipPosition, CardWidget, StrongBodyLabel,
-    BodyLabel, PrimaryPushButton, TableWidget,
+    BodyLabel, PrimaryPushButton, TableWidget, ToolTip,
 )
 
 from .theme import PALETTE
 from .dpi_font import fit_text_control, apply_adaptive_geometry, fit_window_to_screen
+
+
+class FluentCellToolTipFilter(QObject):
+    """表格单元格悬停提示统一为灰色 Fluent 气泡, 替代系统黄底。"""
+
+    def __init__(self, table: QTableWidget):
+        super().__init__(table)
+        self._table = table
+        self._tooltip: ToolTip | None = None
+        table.viewport().installEventFilter(self)
+
+    def _hide(self) -> None:
+        if self._tooltip is not None:
+            self._tooltip.hide()
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._table.viewport() and event.type() == QEvent.Type.ToolTip:
+            item = self._table.itemAt(event.pos())
+            if item is not None:
+                text = str(item.toolTip() or "").strip()
+                if text:
+                    if self._tooltip is None:
+                        self._tooltip = ToolTip(text, self._table.window())
+                    else:
+                        self._tooltip.setText(text)
+                    self._tooltip.adjustSize()
+                    gp = self._table.viewport().mapToGlobal(event.pos())
+                    x = gp.x() - self._tooltip.width() // 2
+                    y = gp.y() - self._tooltip.height() - 8
+                    if y < 0:
+                        y = gp.y() + 20
+                    self._tooltip.move(x, y)
+                    self._tooltip.show()
+                    return True
+            self._hide()
+        elif event.type() in (QEvent.Type.Leave, QEvent.Type.Hide,
+                              QEvent.Type.MouseButtonPress):
+            self._hide()
+        return super().eventFilter(obj, event)
 
 
 class CellWidgetAlignedTable(TableWidget):
@@ -42,6 +81,7 @@ class CellWidgetAlignedTable(TableWidget):
         super().__init__(parent)
         self.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
+        FluentCellToolTipFilter(self)
 
     def updateGeometries(self):
         super().updateGeometries()
