@@ -141,7 +141,12 @@ def _enum_key_candidates(value: object) -> list[str]:
     return list(dict.fromkeys(keys))
 
 
-def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
+def _format_attr_semantics(
+    field_obj: dict,
+    attr_center: object | None,
+    *,
+    snapshot_style: bool = False,
+) -> str:
     """Format wire attributes with the current product's Chinese names/enums.
 
     MIOT products may use internal IDs such as 0x41/0x42 in the GUI while the
@@ -218,7 +223,7 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
         # 避免枚举文本本身已经包含属性名时重复显示，例如“照明照明开启”。
         semantic = shown if shown.startswith(name) else f"{name}{shown}"
         unit = str(getattr(entry, "unit", "") or "").strip()
-        if unit and not label:
+        if unit and not label and not snapshot_style:
             semantic += f" {unit}"
 
         # 追加线协议字段（仅用于日志显示，不参与属性更新/自动回复）。
@@ -260,7 +265,10 @@ def _format_attr_semantics(field_obj: dict, attr_center: object | None) -> str:
             data_shown = str(data_val)
 
         tid_shown = f"{tid & 0xFF:02X}" if tid >= 0 else "??"
-        semantic += f" Typeid:{tid_shown} Attrid:{wire_id:02X} Data:{data_shown}"
+        if snapshot_style:
+            semantic = f"属性id:{wire_id:02X} 值:{data_shown} {semantic}"
+        else:
+            semantic += f" Typeid:{tid_shown} Attrid:{wire_id:02X} Data:{data_shown}"
         parts.append(semantic)
 
     return "，".join(parts)
@@ -336,9 +344,15 @@ def _format_fields_summary(
         if not in_data and field_type in ("header", "version", "cmd", "length", "checksum"):
             continue
 
-        attr_semantic = _format_attr_semantics(field_obj, attr_center)
+        attr_semantic = _format_attr_semantics(
+            field_obj,
+            attr_center,
+            snapshot_style=True,
+        )
         if attr_semantic:
-            if cmd_code == "0x21" and attr_semantic.startswith("照明-开关状态"):
+            # 0x21 设备信息回复中的属性列表是映射关系而非实时值,
+            # 不在此处显示; 属性实时值在 0x24 快照/0x01 上报中查看。
+            if cmd_code == "0x21":
                 continue
             summaries.append(attr_semantic)
             continue

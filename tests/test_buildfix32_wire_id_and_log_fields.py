@@ -60,7 +60,7 @@ def test_status_report_log_includes_typeid_wire_attrid_and_data():
     raw = bytes.fromhex("A5 A5 03 10 00 03 02 04 05 00")
     text = format_frame_display(result, raw, 1.0, is_tx=True, attr_center=center)
     assert "照明-模式YHQ" in text
-    assert "Typeid:02 Attrid:04 Data:05" in text
+    assert "属性id:04 值:05" in text
 
 
 def test_command_dispatch_log_includes_typeid_wire_attrid_and_data():
@@ -76,4 +76,4 @@ def test_command_dispatch_log_includes_typeid_wire_attrid_and_data():
     text = format_frame_display(result, raw, 1.0, attr_center=center)
     assert "消息id:7" in text
     assert "照明-模式YHQ" in text
-    assert "Typeid:02 Attrid:04 Data:05" in text
+    assert "属性id:04 值:05" in text

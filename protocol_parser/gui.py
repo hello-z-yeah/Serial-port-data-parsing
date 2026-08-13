@@ -28,7 +28,7 @@ from PySide6.QtCore import (
     Qt, QTimer, Signal, Slot, QObject, QSize, QUrl
 )
 from PySide6.QtGui import (
-    QFont, QFontMetrics, QTextCursor, QTextCharFormat, QColor, QDesktopServices, QIcon, QPen, QGuiApplication
+    QFont, QFontMetrics, QTextCursor, QTextCharFormat, QColor, QDesktopServices, QIcon, QPen, QGuiApplication, QFontDatabase, QTextFormat
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -44,6 +44,7 @@ from qfluentwidgets import (
     CardWidget, BodyLabel, StrongBodyLabel,
     TextEdit, CheckBox, SpinBox, TableWidget,
     FluentIcon, ToggleButton, Pivot,
+    ToolTipFilter, ToolTipPosition,
 )
 
 # 让 exe 也能找到 protocol_parser 包
@@ -1598,7 +1599,7 @@ class ProtocolParserApp(FluentWindow):
         metrics = QFontMetrics(combo_font)
         baud_combo = getattr(self, "baud_combo", None)
         if baud_combo is not None:
-            baud_width = max(110, metrics.horizontalAdvance("6000000") + 46)
+            baud_width = max(110, metrics.horizontalAdvance("2000000") + 46)
             baud_combo.setMinimumWidth(baud_width)
             if baud_combo.maximumWidth() < baud_width:
                 baud_combo.setMaximumWidth(16_777_215)
@@ -2203,8 +2204,7 @@ class ProtocolParserApp(FluentWindow):
         self.baud_combo = ToggleCloseEditableComboBox()
         self.baud_combo.addItems([
             "9600", "19200", "38400", "57600", "115200", "230400",
-            "460800", "921600", "1000000", "1500000", "2000000",
-            "3000000", "4000000", "5000000", "6000000"
+            "460800", "921600", "1000000", "1500000", "2000000"
         ])
         self.baud_combo.setCurrentText("9600")
         # EditableComboBox 的 currentTextChanged 会在每个按键后触发。键入
@@ -2552,7 +2552,7 @@ class ProtocolParserApp(FluentWindow):
         self.realtime_font_spin.lineEdit().setAlignment(
             Qt.AlignmentFlag.AlignCenter
         )
-        self.realtime_font_spin.setToolTip("仅调整当前实时数据框中的字体大小")
+        apply_tooltip(self.realtime_font_spin, "仅调整当前实时数据框中的字体大小")
         self.realtime_font_label.hide()
         self.realtime_font_spin.hide()
 
@@ -2621,14 +2621,26 @@ class ProtocolParserApp(FluentWindow):
 
         # 文本区
         self.serial_text = CtrlWheelZoomTextEdit()
+        self.serial_text.setProperty("smstIndependentDataFont", True)
         self.serial_text.setObjectName("RealtimeDataText")
         self.serial_text.setStyleSheet(_TEXT_EDIT_FRAME_QSS)
         self.serial_text.setReadOnly(True)
         self.serial_text.setUndoRedoEnabled(False)
         self.serial_text.setAcceptRichText(False)
         self.serial_text.document().setMaximumBlockCount(self.max_display_lines)
-        # 与主界面使用同一套清晰字体，避免不同字体回退/缩放造成发虚。
         self.serial_text.setFont(_make_crisp_ui_font(_UI_FONT_POINT_SIZE))
+        family = ensure_log_font_family()
+        if family:
+            font = QFont(self.serial_text.font())
+            font.setFamily(family)
+            self.serial_text.setFont(font)
+            self.serial_text.setStyleSheet(
+                self.serial_text.styleSheet()
+                + f'\nQTextEdit#RealtimeDataText {{ font-family: "{family}"; }}'
+            )
+            doc_font = QFont(self.serial_text.document().defaultFont())
+            doc_font.setFamily(family)
+            self.serial_text.document().setDefaultFont(doc_font)
         self.serial_text.set_data_font_point_size(self.realtime_font_spin.value())
         self.realtime_font_spin.valueChanged.connect(
             self.serial_text.set_data_font_point_size
@@ -2809,6 +2821,9 @@ class ProtocolParserApp(FluentWindow):
         center.addWidget(self.fields_edit)
 
         self.raw_edit = TextEdit()
+        self.raw_edit.installEventFilter(
+            ToolTipFilter(self.raw_edit, showDelay=300, position=ToolTipPosition.BOTTOM)
+        )
         self.raw_edit.setObjectName("SendRawText")
         self.raw_edit.setStyleSheet(_TEXT_EDIT_FRAME_QSS)
         self.raw_edit.setPlaceholderText("HEX 或 ASCII 原始数据")
@@ -4104,34 +4119,49 @@ class ProtocolParserApp(FluentWindow):
             except Exception as exc:
                 _log_error_to_disk(exc)
 
-    def _append_text_segments(self, segments: list[tuple[str, str | None]]) -> None:
-        """一次取得光标并批量插入多个颜色片段，降低高频 UI 更新成本。"""
+    def _append_text_segments(self, segments: list[tuple[str, str | None, str | None]]) -> None:
+        """一次取得光标并批量插入多个颜色片段，降低高频 UI 更新成本。
+
+        每段为 (text, 前景色, 背景色)；背景色为 None 表示无背景。
+        """
         if not segments:
             return
         scroll_bar = self.serial_text.verticalScrollBar()
         saved_scroll_value = scroll_bar.value()
-        # Append with a document cursor instead of moving the QTextEdit's
-        # visible cursor.  Otherwise Qt follows the cursor to the bottom even
-        # after the auto-scroll toggle has been turned off.
         cursor = QTextCursor(self.serial_text.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
         current_color: str | None = None
+        current_bg: str | None = None
+        current_pill: str | None = None
         total_bytes = 0
-        for text, color in segments:
+        for segment in segments:
+            if len(segment) == 4:
+                text, color, bg_color, pill_bg = segment
+            elif len(segment) == 3:
+                text, color, bg_color = segment
+                pill_bg = None
+            else:
+                text, color = segment
+                bg_color = None
+                pill_bg = None
             if not text:
                 continue
-            if color != current_color:
+            if color != current_color or bg_color != current_bg or pill_bg != current_pill:
                 fmt = QTextCharFormat()
                 if color:
                     fmt.setForeground(QColor(color))
+                if pill_bg:
+                    fmt.setBackground(QColor(pill_bg))
+                elif bg_color:
+                    fmt.setBackground(QColor(bg_color))
                 cursor.setCharFormat(fmt)
                 current_color = color
+                current_bg = bg_color
+                current_pill = pill_bg
             cursor.insertText(text)
             total_bytes += len(text.encode("utf-8", errors="replace"))
 
         self._display_utf8_bytes += total_bytes
-        # 文档达到上限后 Qt 会自动删除最早的块；给缓存值设置合理上限，
-        # 避免状态栏数字无限增长，同时不做全量文本扫描。
         self._display_utf8_bytes = min(self._display_utf8_bytes, 32 * 1024 * 1024)
         if self.autoscroll:
             self.serial_text.setTextCursor(cursor)
@@ -4143,14 +4173,16 @@ class ProtocolParserApp(FluentWindow):
     def _append_text(self, text: str, color: str | None = None) -> None:
         self._append_text_segments([(text, color)])
 
-    def _enqueue_display_text(self, text: str, color: str | None = None) -> None:
+    def _enqueue_display_text(self, text: str, color: str | None = None,
+                              bg_color: str | None = None,
+                              pill_bg: str | None = None) -> None:
         if not text:
             return
-        self._disp_buf.append((text, color))
+        self._disp_buf.append((text, color, bg_color, pill_bg))
         self._disp_buf_chars += len(text)
         # 防止主线程暂时繁忙时缓冲无限增大；保留最近的数据。
         if self._disp_buf_chars > 512_000:
-            kept: list[tuple[str, str | None]] = []
+            kept: list[tuple[str, str | None, str | None, str | None]] = []
             chars = 0
             for item in reversed(self._disp_buf):
                 kept.append(item)
@@ -4162,6 +4194,47 @@ class ProtocolParserApp(FluentWindow):
             self._disp_buf_chars = chars
         if not self._disp_flush_timer.isActive():
             self._disp_flush_timer.start()
+
+    _TS_OR_LEVEL_RE = re.compile(
+        r"(\[\d{1,2}:\d{2}:\d{2}(?:\.\d{1,3})?[ ]*\])|"
+        r"(\[\s*(?:EMERG|ERROR|WARN|NOTICE|INFO|DEBUG|TRACE)\s*\])|"
+        r"(\[(?:TX|RX)\])|"
+        r"(Raw-(?:ASCII|HEX))",
+        re.IGNORECASE,
+    )
+    _LEVEL_STYLES = {
+        "EMERG":  ("#C42B1C", "#FDE9E7"),
+        "ERROR":  ("#C42B1C", "#FDE9E7"),
+        "WARN":   ("#E65100", "#FFF3E0"),
+        "NOTICE": ("#0066CC", "#E3F2FD"),
+        "INFO":   ("#374151", "#E8E8E8"),
+        "DEBUG":  ("#607D8B", "#ECEFF1"),
+        "TRACE":  ("#607D8B", "#ECEFF1"),
+    }
+
+    def _enqueue_ts_display_text(self, text: str, color: str | None = None) -> None:
+        """时间戳染天蓝; 级别标签彩色字+浅色背景; TX/RX 绿/蓝字+浅色背景; Raw 跟随 TX 配色。"""
+        pos = 0
+        for match in self._TS_OR_LEVEL_RE.finditer(text):
+            if match.start() > pos:
+                self._enqueue_display_text(text[pos:match.start()], color=color)
+            if match.group(1):
+                self._enqueue_display_text(match.group(1), color="#2E86FF")
+            elif match.group(2):
+                level = match.group(2).strip("[] ").upper()
+                fg, bg = self._LEVEL_STYLES.get(level, ("#374151", "#E8E8E8"))
+                self._enqueue_display_text(match.group(2), color=fg, bg_color=bg)
+            elif match.group(3):
+                tag = match.group(3).strip("[]").upper()
+                if tag == "TX":
+                    self._enqueue_display_text(match.group(3), color="#008000", bg_color="#E8F5E9")
+                else:
+                    self._enqueue_display_text(match.group(3), color="#0000CD", bg_color="#E3F2FD")
+            else:
+                self._enqueue_display_text(match.group(4), color="#008000", bg_color="#E8F5E9")
+            pos = match.end()
+        if pos < len(text):
+            self._enqueue_display_text(text[pos:], color=color)
 
     def _flush_display_buf(self) -> None:
         if not self._disp_buf:
@@ -4204,8 +4277,8 @@ class ProtocolParserApp(FluentWindow):
         if data_fields:
             line += f"  {{ {', '.join(data_fields)} }}"
         line += f"  | {raw_display}\n"
-        color = PALETTE["success"] if ok else PALETTE["error"]
-        self._enqueue_display_text(line, color=color)
+        color = "#0000CD" if ok else PALETTE["error"]
+        self._enqueue_ts_display_text(line, color=color)
 
     def _display_serial_tx(self, data_sent: bytes, ts: float, metadata=None) -> None:
         """按本次发送来源自己的格式显示 TX，不借用其他面板状态。
@@ -4233,7 +4306,7 @@ class ProtocolParserApp(FluentWindow):
         else:
             shown = " ".join(f"{b:02X}" for b in data_sent)
             line = f"[{ts_str}] [TX] Raw-HEX    | {shown}\n"
-        self._enqueue_display_text(line, color=PALETTE["tx"])
+        self._enqueue_ts_display_text(line, color="#008000")
 
     def _display_raw_data(self, data: bytes, ts: float) -> None:
         ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
@@ -4250,7 +4323,7 @@ class ProtocolParserApp(FluentWindow):
                 printable = "".join(ch if (32 <= ord(ch) < 127 or ch == "\t") else "." for ch in line)
                 parts.append(f"[{ts_str}] {printable}\n")
         if parts:
-            self._enqueue_display_text("".join(parts), color=PALETTE["field"])
+            self._enqueue_ts_display_text("".join(parts), color="#0000CD")
 
     def _clear_output(self) -> None:
         self.serial_text.clear()
@@ -5279,6 +5352,42 @@ class ProtocolParserApp(FluentWindow):
 
 # ---------- 启动 ----------
 
+def _register_bundled_font() -> None:
+    """注册随程序分发的等宽日志字体; 失败时静默回退, 不影响启动。"""
+    try:
+        from protocol_parser import dpi_font
+
+        font_file = resource_path("resources/fonts/MapleMono-NF-CN-Regular.ttf")
+        if not font_file.is_file():
+            return
+        font_id = QFontDatabase.addApplicationFont(str(font_file))
+        if font_id < 0:
+            return
+        families = QFontDatabase.applicationFontFamilies(font_id)
+        if not families:
+            return
+        # 仅作为日志窗口等宽字体; 界面字体保持系统微软雅黑(更圆润细腻)。
+        dpi_font.LOG_FONT_FAMILY = str(families[0])
+    except Exception:
+        pass
+
+def ensure_log_font_family() -> str | None:
+    """返回日志等宽字体族名; 启动注册未成功时现场再注册一次, 保证生效。"""
+    from protocol_parser import dpi_font
+    if dpi_font.LOG_FONT_FAMILY:
+        return dpi_font.LOG_FONT_FAMILY
+    try:
+        font_file = resource_path("resources/fonts/MapleMono-NF-CN-Regular.ttf")
+        if font_file.is_file():
+            font_id = QFontDatabase.addApplicationFont(str(font_file))
+            if font_id >= 0:
+                families = QFontDatabase.applicationFontFamilies(font_id)
+                if families:
+                    dpi_font.LOG_FONT_FAMILY = str(families[0])
+    except Exception:
+        pass
+    return dpi_font.LOG_FONT_FAMILY
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
@@ -5337,6 +5446,8 @@ def main():
         app.setStyle("Fusion")
         app.setApplicationName(APP_NAME)
         app.setApplicationDisplayName(APP_NAME)
+
+        _register_bundled_font()
 
         # The application font is applied after the Fluent theme is selected so
         # its DPI/resolution-aware point size is not overwritten by theme setup.

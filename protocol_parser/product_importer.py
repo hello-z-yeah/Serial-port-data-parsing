@@ -680,7 +680,8 @@ def parse_function_json(raw_json: str | dict | list, platform: str = "xiaomi") -
             if not isinstance(service, dict):
                 continue
             siid = int(service.get("iid", service.get("siid", 0)) or 0)
-            service_name = str(service.get("description") or service.get("name") or "")
+            raw_service_name = str(service.get("description") or service.get("name") or "")
+            service_name = str(service.get("comment") or raw_service_name)
             service_cn_name = localized_attribute_name(
                 service_name,
                 fallback=f"服务{siid}",
@@ -694,10 +695,12 @@ def parse_function_json(raw_json: str | dict | list, platform: str = "xiaomi") -
                     attrid += 1
                 used_ids.add(attrid)
                 meta = dict(prop)
-                prop_name = str(meta.get("description") or meta.get("name") or piid)
+                raw_prop_name = str(meta.get("description") or meta.get("name") or piid)
+                prop_name = str(meta.get("comment") or raw_prop_name)
                 meta.setdefault(
                     "original_name",
-                    f"{service_name}-{prop_name}" if service_name else prop_name,
+                    f"{raw_service_name}-{raw_prop_name}"
+                    if raw_service_name else raw_prop_name,
                 )
                 if not meta.get("cn_name"):
                     prop_cn_name = localized_attribute_name(

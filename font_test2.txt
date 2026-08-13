@@ -1,0 +1,3 @@
+app font_id: 0
+family: ['Maple Mono NF CN']
+resolved family: Maple Mono NF CN
