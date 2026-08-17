@@ -33,7 +33,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QSplitter, QFrame, QLabel, QSizePolicy, QFileDialog, QMessageBox,
-    QAbstractItemView, QHeaderView, QTableWidgetItem, QMenu,
+    QAbstractItemView, QHeaderView, QTableWidgetItem, QMenu, QProgressDialog,
     QDialog, QDialogButtonBox, QFormLayout, QSpinBox as QtSpinBox,
     QStyledItemDelegate, QStyleOptionViewItem, QListView, QAbstractButton,
     QStackedWidget, QButtonGroup, QBoxLayout, QScrollArea, QLayout,
@@ -82,6 +82,11 @@ from protocol_parser.widgets import (  # noqa: E402
     apply_tooltip, TwoOptionSegmentSwitch, StyledMessageBox, apply_fluent_dialog_style,
     CellWidgetAlignedTable,
 )
+
+# ---- 在线更新功能总开关 ----
+# 置 False 即彻底禁用；删除功能时删掉本段和"在线更新区域"相关代码即可。
+UPDATE_ENABLED = True
+
 from protocol_parser.ui_error import build_user_error_presentation  # noqa: E402
 from protocol_parser.attr_center import AttrStateCenter  # noqa: E402
 from protocol_parser.auto_cmd import AutoCmdEngine  # noqa: E402
@@ -1198,6 +1203,7 @@ class ProtocolParserApp(FluentWindow):
         QTimer.singleShot(0, self._adapt_navigation_for_width)
         QTimer.singleShot(0, lambda: self._apply_resolution_adaptive_metrics(force=True))
         self._schedule_splitter_rebalance()
+        self._setup_update_feature()
         QTimer.singleShot(1, self._deferred_startup_stage_protocols)
         self._set_status("正在初始化…")
 
@@ -2143,11 +2149,15 @@ class ProtocolParserApp(FluentWindow):
         self.btn_topmost = ToggleButton("置顶")
         self.btn_topmost.toggled.connect(self._safe(self._on_topmost_toggled))
 
+        self.btn_check_update = PushButton("检查更新")
+        self.btn_check_update.clicked.connect(self._safe(self._on_check_update_clicked))
+
         self._top_bar_buttons = (
             self.btn_add_port,
             self.btn_save_log,
             self.btn_send_panel,
             self.btn_topmost,
+            self.btn_check_update,
         )
         for button in self._top_bar_buttons:
             fit_text_control(button)
@@ -5321,6 +5331,59 @@ class ProtocolParserApp(FluentWindow):
             QMessageBox.information(self, "保存日志", f"已保存到:\n{path}")
         except Exception as e:
             self._report_error("日志保存失败", e)
+
+    # ================= 在线更新(整体删除时移除本区域) =================
+    def _setup_update_feature(self) -> None:
+        if not UPDATE_ENABLED:
+            self.btn_check_update.setVisible(False)
+            return
+        from protocol_parser.updater import Updater
+
+        self._updater = Updater(self)
+        self._updater.check_finished.connect(self._on_update_check_finished)
+        self._updater.download_progress.connect(self._on_update_download_progress)
+        self._updater.download_finished.connect(self._on_update_download_finished)
+        # 启动 3 秒后静默检查一次，有新版才提示。
+        QTimer.singleShot(3000, self._updater.check_update)
+
+    def _on_check_update_clicked(self) -> None:
+        self._set_status("正在检查更新…")
+        self._updater.check_update()
+
+    def _on_update_check_finished(self, has_new: bool, info: dict) -> None:
+        if not has_new:
+            self._set_status("已是最新版本")
+            return
+        version = info.get("tag_name", "")
+        notes = str(info.get("body") or "").strip()
+        message = f"发现新版本 {version}\n\n{notes}\n\n是否立即下载并更新?"
+        answer = QMessageBox.question(
+            self, "发现新版本", message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._updater.download_and_install(info)
+
+    def _on_update_download_progress(self, received: int, total: int) -> None:
+        if not hasattr(self, "_update_dialog"):
+            self._update_dialog = QProgressDialog(
+                "正在下载更新…", "取消", 0, 100, self
+            )
+            self._update_dialog.setWindowTitle("下载更新")
+            self._update_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+            self._update_dialog.setAutoClose(False)
+        self._update_dialog.setMaximum(max(1, total))
+        self._update_dialog.setValue(received)
+        if self._update_dialog.wasCanceled():
+            self._updater._reply.abort()
+
+    def _on_update_download_finished(self, ok: bool, message: str) -> None:
+        if hasattr(self, "_update_dialog"):
+            self._update_dialog.close()
+            del self._update_dialog
+        QMessageBox.information(self, "更新", message)
+    # ================= 在线更新区域结束 =================
 
     def closeEvent(self, event) -> None:
         try:
