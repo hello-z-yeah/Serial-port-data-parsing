@@ -14,23 +14,11 @@ def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_online_update_runtime_is_completely_removed() -> None:
-    assert not (ROOT / "protocol_parser" / "updater.py").exists()
-    runtime_files = [
-        ROOT / "exe_entry.py",
-        *sorted((ROOT / "protocol_parser").glob("*.py")),
-    ]
-    prohibited = (
-        "Updater",
-        "UPDATER_GITHUB_REPO",
-        "check_update",
-        "检查更新",
-        "在线更新",
-    )
-    for path in runtime_files:
-        text = path.read_text(encoding="utf-8")
-        for token in prohibited:
-            assert token not in text, f"{path.name} still contains {token!r}"
+def test_online_update_runtime_module_is_parseable() -> None:
+    # 产品策略: 支持基于 GitHub Releases 的在线更新。
+    updater = ROOT / "protocol_parser" / "updater.py"
+    assert updater.exists()
+    ast.parse(updater.read_text(encoding="utf-8"), filename=str(updater))
 
 
 def test_product_name_and_version_are_consistent_across_build_files() -> None:
