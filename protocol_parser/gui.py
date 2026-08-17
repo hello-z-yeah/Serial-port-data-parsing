@@ -4294,15 +4294,21 @@ class ProtocolParserApp(FluentWindow):
             display_format = "HEX" if self.hex_format else "ASCII"
 
         if display_format == "ASCII":
-            text = bytes(data_sent).decode("utf-8", errors="replace")
-            # 将控制字符显式显示，避免 CR/LF 把一条 TX 记录拆成多行。
-            shown = (
-                text.replace("\\", "\\\\")
-                .replace("\r", "\\r")
-                .replace("\n", "\\n")
-                .replace("\t", "\\t")
-            )
-            line = f"[{ts_str}] [TX] Raw-ASCII  | {shown}\n"
+            # 仅当数据全部为可打印 ASCII(含 \t \r \n)时才按 ASCII 显示;
+            # 含二进制/HEX 字节时自动转 HEX 显示, 避免 decode 出乱码并被保存进日志。
+            if all(b in (9, 10, 13) or 32 <= b < 127 for b in data_sent):
+                text = bytes(data_sent).decode("utf-8", errors="replace")
+                # 将控制字符显式显示，避免 CR/LF 把一条 TX 记录拆成多行。
+                shown = (
+                    text.replace("\\", "\\\\")
+                    .replace("\r", "\\r")
+                    .replace("\n", "\\n")
+                    .replace("\t", "\\t")
+                )
+                line = f"[{ts_str}] [TX] Raw-ASCII  | {shown}\n"
+            else:
+                shown = " ".join(f"{b:02X}" for b in data_sent)
+                line = f"[{ts_str}] [TX] Raw-HEX    | {shown}\n"
         else:
             shown = " ".join(f"{b:02X}" for b in data_sent)
             line = f"[{ts_str}] [TX] Raw-HEX    | {shown}\n"
@@ -5285,7 +5291,16 @@ class ProtocolParserApp(FluentWindow):
         self.setWindowTitle(f"{APP_NAME} v{VERSION} - {self._monitor_port} @ {self._monitor_baud}")
 
     def _choose_log(self) -> None:
-        content = self.serial_text.toPlainText()
+        # 按当前活动页保存: 串口接收分析=serial_text, 模拟MCU工具=data_text。
+        if (
+            getattr(self, "stackedWidget", None) is not None
+            and getattr(self, "mcu_page", None) is not None
+            and self.stackedWidget.currentWidget() is self.mcu_page
+        ):
+            text_widget = self.mcu_page.data_text
+        else:
+            text_widget = self.serial_text
+        content = text_widget.toPlainText()
         if not content.strip():
             QMessageBox.information(self, "保存日志", "当前实时数据为空")
             return
