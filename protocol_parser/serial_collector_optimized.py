@@ -56,6 +56,7 @@ class OptimizedSerialCollector:
     raw_mode: bool = False
     on_tx_sent: Callable[..., None] | None = None
     tx_queue_size: int = 1000
+    max_tx_payload_bytes: int = 1024 * 1024
     max_reconnect_attempts: int = 5
     reconnect_delay: float = 1.0
 
@@ -228,9 +229,19 @@ class OptimizedSerialCollector:
             for method_name in ("cancel_read", "cancel_write"):
                 try:
                     method = getattr(serial_obj, method_name, None)
-                    if callable(method):
-                        method()
-                except (OSError, AttributeError):
+                    if not callable(method):
+                        continue
+                    # pyserial win32 cancel_* uses ctypes.byref(overlapped). When no
+                    # read/write is in flight the overlapped handle is None and
+                    # raises TypeError — common when stopping for baud changes.
+                    if method_name == "cancel_read":
+                        if getattr(serial_obj, "_overlapped_read", None) is None:
+                            continue
+                    elif method_name == "cancel_write":
+                        if getattr(serial_obj, "_overlapped_write", None) is None:
+                            continue
+                    method()
+                except (OSError, AttributeError, TypeError, ValueError):
                     pass
         if tx_queue is not None:
             try:
@@ -319,6 +330,40 @@ class OptimizedSerialCollector:
             self._connected = False
         if dropped:
             self._notify_error(f"串口停止时丢弃了 {dropped} 条尚未发送的 TX 请求")
+
+    def stop_async(
+        self,
+        *,
+        timeout: float = 2.5,
+        on_complete: Callable[[], None] | None = None,
+        on_error: Callable[[BaseException], None] | None = None,
+    ) -> threading.Thread:
+        """Compatibility API used by the GUI; stop without blocking its thread."""
+        self.request_stop()
+
+        def worker() -> None:
+            try:
+                self.stop(timeout=timeout)
+            except BaseException as exc:
+                if on_error is not None:
+                    try:
+                        on_error(exc)
+                    except Exception:
+                        pass
+            else:
+                if on_complete is not None:
+                    try:
+                        on_complete()
+                    except Exception:
+                        pass
+
+        thread = threading.Thread(
+            target=worker,
+            daemon=True,
+            name=f"smst-stop-{self.port}",
+        )
+        thread.start()
+        return thread
 
     def _notify_error(self, message: str) -> None:
         callback = self.on_error
@@ -464,6 +509,11 @@ class OptimizedSerialCollector:
             raise SerialStateError("串口未打开，请先开始监控再发送")
         if not payload:
             return 0
+        max_payload = max(1, int(self.max_tx_payload_bytes))
+        if len(payload) > max_payload:
+            raise SerialOperationError(
+                f"单次发送数据不能超过 {max_payload} 字节，当前为 {len(payload)} 字节"
+            )
         tx_queue = self._tx_queue
         if tx_queue is None:
             raise SerialStateError("串口发送线程尚未启动")
@@ -497,6 +547,49 @@ class OptimizedSerialCollector:
             )
         else:
             raise TypeError("send_data() 需要 bytes 或 str")
+        return self._enqueue_tx(payload, "TX", metadata)
+
+    def send(
+        self,
+        frame_bytes: bytes | bytearray | str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
+        """Primary collector-compatible HEX/bytes send API."""
+        return self._enqueue_tx(
+            self._normalize_hex_payload(frame_bytes),
+            "TX",
+            metadata,
+        )
+
+    def send_raw(
+        self,
+        data,
+        *,
+        as_text: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
+        """Primary collector-compatible raw text/bytes send API."""
+        if isinstance(data, (bytes, bytearray)):
+            payload = bytes(data)
+        elif isinstance(data, str):
+            if as_text is None:
+                stripped = data.strip()
+                hex_chars = set("0123456789abcdefABCDEF \t\n\r")
+                looks_like_hex = bool(stripped) and all(
+                    character in hex_chars for character in stripped
+                )
+                payload = (
+                    self._normalize_hex_payload(data)
+                    if looks_like_hex
+                    else data.encode("utf-8")
+                )
+            elif as_text:
+                payload = data.encode("utf-8")
+            else:
+                payload = self._normalize_hex_payload(data)
+        else:
+            raise TypeError("send_raw() 需要 bytes 或 str")
         return self._enqueue_tx(payload, "TX", metadata)
 
     def _invoke_tx_callback(self, request: TxRequest, ts: float) -> None:

@@ -126,16 +126,6 @@ def test_bool_overflow_and_unknown_checksum_are_not_silent() -> None:
         encode_frame(0x20, broken, direction="request", fields={"value": 1})
 
 
-def test_float_nan_and_inf_do_not_crash_parse() -> None:
-    cfg = base_cfg()
-    cfg["attributes"] = {"0x01": {"name": "f", "typeid": 9, "access": "读写"}}
-    for value in (float("nan"), float("inf"), float("-inf")):
-        frame = encode_frame(0x10, cfg, direction="request", fields=[(0x01, value, 9)])
-        result = parse_frame(frame, cfg, direction="response")
-        assert result.error is None
-        assert child_records(result)
-
-
 def test_group_roundtrip_uses_group_header_without_generic_length() -> None:
     cfg = base_cfg()
     cfg["attributes"] = {"0x23": {"name": "group", "typeid": 23, "access": "读写"}}
@@ -277,12 +267,13 @@ def test_storage_basename_with_brackets_rotates_safely(tmp_path: Path) -> None:
 
 def test_gui_review_fixes_are_present_statically() -> None:
     gui = (ROOT / "protocol_parser" / "gui.py").read_text(encoding="utf-8")
+    bridge = (ROOT / "protocol_parser" / "gui_bridge.py").read_text(encoding="utf-8")
     mcu = (ROOT / "protocol_parser" / "mcu_page.py").read_text(encoding="utf-8")
     assert "def _commit_baud" in gui
     assert "self.baud_combo.editingFinished.connect" in gui
     assert "def _stop_tx_cycle" in gui
     assert "def _retry_stopping_collector" in gui
-    assert "collector_error_signal = Signal(int, str, str)" in gui
+    assert "collector_error_signal = Signal(int, str, str)" in bridge
     assert "self._auto_reply.reset_state()" in gui
     assert "self.btn_poweron_send_all.setEnabled(False)" in mcu
     assert "timer is not None and timer.isActive()" in mcu

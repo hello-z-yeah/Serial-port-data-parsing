@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Any
 
 
+MAX_FUNCTION_JSON_CHARS = 8 * 1024 * 1024
+
+
 FORMAT_TO_TYPEID = {
     "bool": 0,
     "int8": 1,
@@ -23,16 +26,16 @@ FORMAT_TO_TYPEID = {
     "uint32": 6,
     "int64": 7,
     "uint64": 8,
-    "float": 9,
-    "float32": 9,
-    "double": 10,
-    "float64": 10,
+    # float 不再映射到 FLOAT32/FLOAT64，默认按有符号定点小数处理，
+    # 具体 typeid 会结合 value-range 的 step 与符号在 _normalize_attr_entry 中推导。
+    "float": 19,
+    "float32": 19,
+    "double": 20,
+    "float64": 20,
     "string": 11,
-    "date": 12,
-    "struct": 13,
     "array": 14,
-    "float.one_decimal": 15,
-    "float.two_decimal": 16,
+    "float.one_decimal": 19,
+    "float.two_decimal": 20,
 }
 
 ACCESS_MAP = {
@@ -252,6 +255,10 @@ def localize_attributes(attributes: dict | None) -> dict:
 def _load_json_value(raw_json: str | dict | list) -> Any:
     if not isinstance(raw_json, str):
         return raw_json
+    if len(raw_json) > MAX_FUNCTION_JSON_CHARS:
+        raise ProductConfigError(
+            f"功能 JSON 不能超过 {MAX_FUNCTION_JSON_CHARS} 个字符"
+        )
     text = raw_json.lstrip("\ufeff").strip()
     if text.startswith("```"):
         lines = text.splitlines()
@@ -278,6 +285,10 @@ def _decode_json_layers(value: Any, *, max_depth: int = 4) -> Any:
         if not isinstance(current, str):
             break
         text = current.lstrip("\ufeff").strip()
+        if len(text) > MAX_FUNCTION_JSON_CHARS:
+            raise ProductConfigError(
+                f"嵌套 JSON 不能超过 {MAX_FUNCTION_JSON_CHARS} 个字符"
+            )
         if not text or text[:1] not in ("{", "[", '"'):
             break
         try:
@@ -596,9 +607,56 @@ def extract_range_value(meta: dict) -> Any:
     return ""
 
 
+def _resolve_float_typeid(meta: dict) -> int | None:
+    """根据 value-range 的 step 和最小值推导 float 对应的定点整型 typeid。
+
+    米家/IoT JSON 中 ``format: "float"`` 通常配合 ``value-range: [min, max, step]``，
+    step 为 0.1 表示保留一位小数，0.01 表示保留两位小数；最小值小于 0 时使用
+    有符号整型，否则使用无符号整型。
+    """
+    fmt = str(meta.get("format") or meta.get("type") or "").strip().lower()
+    if fmt not in (
+        "float", "float32", "double", "float64",
+        "float.one_decimal", "float.two_decimal",
+    ):
+        return None
+
+    range_value = extract_range_value(meta)
+    minimum = step = None
+    if isinstance(range_value, (list, tuple)) and len(range_value) >= 2:
+        minimum = range_value[0]
+        if len(range_value) >= 3:
+            step = range_value[2]
+    elif isinstance(range_value, dict):
+        minimum = range_value.get("min", range_value.get("minimum"))
+        step = range_value.get("step")
+
+    try:
+        step = float(step) if step not in (None, "") else None
+        minimum = float(minimum) if minimum not in (None, "") else None
+    except (TypeError, ValueError):
+        minimum = step = None
+
+    # float.one_decimal / float.two_decimal 固定小数位
+    if fmt == "float.two_decimal":
+        step = 0.01
+    elif fmt == "float.one_decimal":
+        step = 0.1
+
+    signed = minimum is not None and minimum < 0
+    if step == 0.01:
+        return 20 if signed else 16
+    # 默认按一位小数处理
+    return 19 if signed else 15
+
+
 def _normalize_attr_entry(meta: dict, *, fallback_name: str = "") -> dict:
     fmt = str(meta.get("format") or meta.get("type") or "").strip().lower()
-    typeid_raw = meta.get("typeid", FORMAT_TO_TYPEID.get(fmt, 2))
+    typeid_raw = meta.get("typeid")
+    if typeid_raw is None:
+        typeid_raw = _resolve_float_typeid(meta)
+    if typeid_raw is None:
+        typeid_raw = FORMAT_TO_TYPEID.get(fmt, 2)
     try:
         typeid = int(typeid_raw)
     except (TypeError, ValueError):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
 
@@ -25,6 +26,7 @@ def test_product_name_and_version_are_consistent_across_build_files() -> None:
     iss = read("installer/serial_port_parser.iss")
     spec = read("serial_port_parser_fast.spec")
     version_info = read("resources/version_info.txt")
+    version_json = json.loads(read("version.json"))
     init_text = read("protocol_parser/__init__.py")
 
     assert f'#define MyAppName          "{APP_NAME}"' in iss
@@ -36,6 +38,10 @@ def test_product_name_and_version_are_consistent_across_build_files() -> None:
     assert '(str(PROJECT_ROOT / "data"), "defaults/data")' in spec
     assert f"StringStruct('ProductName', '{APP_NAME}')" in version_info
     assert f"StringStruct('ProductVersion', '{APP_VERSION}')" in version_info
+    assert version_json["version"] == APP_VERSION
+    assert version_json["tag_name"] == APP_VERSION
+    assert re.fullmatch(r"[0-9a-f]{64}", version_json["sha256"])
+    assert version_json["download_url"].startswith("https://")
     assert "VERSION: str = APP_VERSION" in init_text
 
 

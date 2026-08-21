@@ -2,13 +2,13 @@ from pathlib import Path
 
 
 def test_every_application_combo_uses_font_matched_base_class() -> None:
-    gui = Path("protocol_parser/gui.py").read_text(encoding="utf-8")
+    combos = Path("protocol_parser/gui_combos.py").read_text(encoding="utf-8")
     mcu = Path("protocol_parser/mcu_page.py").read_text(encoding="utf-8")
     editor = Path("protocol_parser/attr_editor.py").read_text(encoding="utf-8")
     manager = Path("protocol_parser/product_manage_dialog.py").read_text(encoding="utf-8")
 
-    assert "class DpiAwareComboBox(MatchedPopupComboBox)" in gui
-    assert "class ToggleCloseEditableComboBox(MatchedPopupEditableComboBox)" in gui
+    assert "class DpiAwareComboBox(MatchedPopupComboBox)" in combos
+    assert "class ToggleCloseEditableComboBox(MatchedPopupEditableComboBox)" in combos
     assert "self.product_combo = MatchedPopupComboBox(operation)" in mcu
     assert "class _DialogComboBox(MatchedPopupComboBox)" in editor
     assert "class _DialogEditableComboBox(MatchedPopupEditableComboBox)" in editor

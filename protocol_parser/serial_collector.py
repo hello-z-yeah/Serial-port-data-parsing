@@ -1,7 +1,9 @@
-"""串口帧同步与数据采集模块。
+"""串口帧同步与兼容采集模块。
 
 从连续的字节流中识别并切出完整的 V3.0 协议帧，
-供解析器使用。
+供解析器使用。生产 GUI、CLI 和 SerialManager 统一使用
+``OptimizedSerialCollector``；本文件中的 ``SerialCollector`` 暂保留给旧集成，
+共享的 ``FrameSynchronizer`` 仍是协议组帧真源。
 """
 from __future__ import annotations
 
@@ -211,7 +213,7 @@ _TX_STOP = object()
 
 @dataclass
 class SerialCollector:
-    """Serial reader with independent RX and TX worker threads.
+    """Legacy-compatible serial reader with independent RX and TX workers.
 
     ``send`` and ``send_raw`` only validate and enqueue data.  The GUI and RX
     parser therefore never block on a USB driver write/flush operation.
@@ -238,6 +240,7 @@ class SerialCollector:
     # three-argument callbacks remain supported.
     on_tx_sent: Callable[..., None] | None = None
     tx_queue_size: int = 1000
+    max_tx_payload_bytes: int = 1024 * 1024
     running: bool = False
     _thread: threading.Thread | None = None
     _tx_thread: threading.Thread | None = None
@@ -349,9 +352,16 @@ class SerialCollector:
             for method_name in ("cancel_read", "cancel_write"):
                 try:
                     method = getattr(serial_obj, method_name, None)
-                    if callable(method):
-                        method()
-                except (OSError, AttributeError):
+                    if not callable(method):
+                        continue
+                    if method_name == "cancel_read":
+                        if getattr(serial_obj, "_overlapped_read", None) is None:
+                            continue
+                    elif method_name == "cancel_write":
+                        if getattr(serial_obj, "_overlapped_write", None) is None:
+                            continue
+                    method()
+                except (OSError, AttributeError, TypeError, ValueError):
                     pass
         if tx_queue is not None:
             try:
@@ -572,6 +582,11 @@ class SerialCollector:
             raise SerialStateError("串口未打开，请先开始监控再发送")
         if not payload:
             return 0
+        max_payload = max(1, int(self.max_tx_payload_bytes))
+        if len(payload) > max_payload:
+            raise SerialOperationError(
+                f"单次发送数据不能超过 {max_payload} 字节，当前为 {len(payload)} 字节"
+            )
         tx_queue = self._tx_queue
         if tx_queue is None:
             raise SerialStateError("串口发送线程尚未启动")

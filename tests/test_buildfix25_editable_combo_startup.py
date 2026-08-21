@@ -2,7 +2,9 @@ from pathlib import Path
 
 
 def test_baud_combo_uses_editable_combo_signals_directly() -> None:
-    source = Path("protocol_parser/gui.py").read_text(encoding="utf-8")
+    gui = Path("protocol_parser/gui.py").read_text(encoding="utf-8")
+    dialog = Path("protocol_parser/add_serial_port_dialog.py").read_text(encoding="utf-8")
+    source = gui + dialog
 
     # qfluentwidgets EditableComboBox is itself a LineEdit.  Calling
     # baud_combo.lineEdit() caused the BuildFix24 startup crash.

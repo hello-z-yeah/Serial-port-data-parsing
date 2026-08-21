@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
 )
-from qfluentwidgets import CardWidget, ToggleButton, StrongBodyLabel
+from qfluentwidgets import ToggleButton, StrongBodyLabel
 
 
 class ReceiveAnalysisPage(QWidget):
@@ -33,7 +33,7 @@ class ReceiveAnalysisPage(QWidget):
         self._root.setContentsMargins(0, 2, 0, 0)
         self._root.setSpacing(6)
 
-        switch_card = CardWidget(self)
+        switch_card = QWidget(self)
         self.switch_card = switch_card
         switch_layout = QHBoxLayout(switch_card)
         self.switch_layout = switch_layout
@@ -131,7 +131,7 @@ class ReceiveAnalysisPage(QWidget):
             splitter.setSizes([left, right])
         splitter.updateGeometry()
         self.content_layout.activate()
-        relayout = getattr(self._mw, "_relayout_receive_toolbars", None)
+        relayout = getattr(self._mw, "relayout_receive_toolbars", None)
         if callable(relayout):
             QTimer.singleShot(0, relayout)
 
@@ -148,6 +148,6 @@ class ReceiveAnalysisPage(QWidget):
             return
         name = str(combo.currentText() or "").strip()
         if name and name != getattr(self._mw, "product_var", ""):
-            loader = getattr(self._mw, "_load_product_cfg", None)
+            loader = getattr(self._mw, "load_product_cfg", None)
             if callable(loader):
                 loader(name)

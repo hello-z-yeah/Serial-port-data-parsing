@@ -31,6 +31,7 @@ from protocol_parser.ui_helpers import (
     _convert_value, _typeid_name, format_frame_display,
     format_attr_validation_message,
 )
+from protocol_parser.app_host import AppHostProtocol
 from protocol_parser.product_importer import localized_attribute_name
 from protocol_parser.exceptions import ProductConfigError
 from protocol_parser.combo_font import MatchedPopupComboBox
@@ -232,7 +233,7 @@ class McuSimulatePage(QWidget):
     def __init__(self, main_window: QWidget):
         super().__init__(main_window)
         self.setObjectName("mcuSimulateToolPage")
-        self._mw = main_window
+        self._mw: AppHostProtocol = main_window  # type: ignore[assignment]
         self._auto_scroll = True
         self._product_syncing = False
         self._attr_row_by_id: dict[int, int] = {}
@@ -294,7 +295,7 @@ class McuSimulatePage(QWidget):
         root.setContentsMargins(0, 2, 0, 0)
         root.setSpacing(6)
 
-        operation = CardWidget(self)
+        operation = QWidget(self)
         self.operation_card = operation
         self.operation_layout = QGridLayout(operation)
         self.operation_layout.setContentsMargins(12, 8, 12, 8)
@@ -1395,7 +1396,7 @@ QTableView#AttributeTable::item:selected {{
         # 两页产品协议不共享；切回页签2时恢复页签2当前 JSON 产品。
         name = str(self.product_combo.currentText() or "").strip()
         if name and name != getattr(self._mw, "product_var", ""):
-            self._mw._load_product_cfg(name)
+            self._mw.load_product_cfg(name)
             self.refresh_attr_table()
             self.refresh_current_values()
             self._refresh_preset_commands()
@@ -1405,8 +1406,7 @@ QTableView#AttributeTable::item:selected {{
     # ------------------------------------------------------------------
     def sync_products(self, preferred: str | None = None) -> None:
         """页签2只列出由产品 JSON 导入的产品。"""
-        sources = getattr(self._mw, "_product_sources", {}) or {}
-        kinds = getattr(self._mw, "_product_kinds", {}) or {}
+        sources, kinds = self._mw.get_product_catalog()
         names = [name for name in sources if kinds.get(name) == "json"]
         current = preferred or self.product_combo.currentText()
         if current not in names:
@@ -1439,7 +1439,7 @@ QTableView#AttributeTable::item:selected {{
         if self.isVisible():
             try:
                 if getattr(self._mw, "product_var", "") != current:
-                    self._mw._load_product_cfg(current)
+                    self._mw.load_product_cfg(current)
             except Exception:
                 pass
         if getattr(self._mw, "product_var", "") == current:
@@ -1447,6 +1447,8 @@ QTableView#AttributeTable::item:selected {{
             self.refresh_current_values()
             self._refresh_preset_commands()
 
+    def clear_output(self) -> None:
+        self._clear_data()
 
 
     def on_data(
@@ -1857,9 +1859,10 @@ QTableView#AttributeTable::item:selected {{
     def _on_product_changed(self, name: str) -> None:
         if self._product_syncing or not name:
             return
-        if getattr(self._mw, "_product_kinds", {}).get(name) != "json":
+        _sources, kinds = self._mw.get_product_catalog()
+        if kinds.get(name) != "json":
             return
-        self._mw._load_product_cfg(name)
+        self._mw.load_product_cfg(name)
         self.refresh_attr_table()
         self.refresh_current_values()
         self._refresh_preset_commands()
@@ -1878,10 +1881,8 @@ QTableView#AttributeTable::item:selected {{
         from protocol_parser.product_manage_dialog import ProductJsonManageDialog
         from protocol_parser.product_management import collect_product_json_records
 
-        records = collect_product_json_records(
-            getattr(self._mw, "_product_sources", {}) or {},
-            getattr(self._mw, "_product_kinds", {}) or {},
-        )
+        sources, kinds = self._mw.get_product_catalog()
+        records = collect_product_json_records(sources, kinds)
         if not records:
             StyledMessageBox.information(self, "提示", "当前没有可管理的产品 JSON")
             return
@@ -1904,7 +1905,7 @@ QTableView#AttributeTable::item:selected {{
         # MCU 解析和自动回复的产品，避免工作线程持有半更新配置。
         editing_active_monitor_product = bool(
             getattr(self._mw, "is_collecting", False)
-            and getattr(self._mw, "_monitoring_page", None) == 1
+            and self._mw.get_monitoring_page_index() == 1
             and selected_name == active_name
         )
         if editing_active_monitor_product:
@@ -1938,7 +1939,7 @@ QTableView#AttributeTable::item:selected {{
             if not isinstance(raw_cfg, dict):
                 raise ProductConfigError("产品 JSON 顶层必须是对象")
         except Exception as exc:
-            self._mw._report_error("读取所选产品失败", exc)
+            self._mw.report_error("读取所选产品失败", exc)
             return
 
         info = raw_cfg.get("product_info") if isinstance(raw_cfg.get("product_info"), dict) else {}
@@ -2018,32 +2019,28 @@ QTableView#AttributeTable::item:selected {{
             # again during get_protocol_dir().
             mark_product_json_deleted(source_path.name)
             source_path.unlink()
-            self._mw._load_protocols()
+            self._mw.reload_protocols()
 
             if not selected_is_active and active_product:
                 # 删除后台产品时恢复原选择，不重新加载或重建当前产品上下文。
                 self.sync_products(active_product)
-                self._mw._set_status(f"已删除产品JSON：{product_name}")
+                self._mw.set_status(f"已删除产品JSON：{product_name}")
                 return
 
             self.sync_products()
             next_name = str(self.product_combo.currentText() or "").strip()
             if next_name:
-                self._mw._load_product_cfg(next_name)
+                self._mw.load_product_cfg(next_name)
                 self.refresh_attr_table()
                 self.refresh_current_values()
                 self._refresh_preset_commands()
             else:
-                self._mw.cfg = None
-                self._mw._mcu_cfg = {}
-                self._mw.product_var = ""
-                self._mw.get_attr_center().load_product({})
-                self._mw._sync_collector_cfg()
+                self._mw.clear_mcu_product_state()
                 self.refresh_attr_table()
                 self._refresh_preset_commands()
-            self._mw._set_status(f"已删除产品JSON：{product_name}")
+            self._mw.set_status(f"已删除产品JSON：{product_name}")
         except Exception as exc:
-            self._mw._report_error("删除产品JSON失败", exc)
+            self._mw.report_error("删除产品JSON失败", exc)
 
     def _save_product_from_dialog(
         self,
@@ -2073,9 +2070,8 @@ QTableView#AttributeTable::item:selected {{
             if not product_name:
                 raise ProductConfigError("产品名称不能为空")
 
-            existing_source = str(
-                getattr(self._mw, "_product_sources", {}).get(product_name) or ""
-            )
+            sources, _kinds = self._mw.get_product_catalog()
+            existing_source = str(sources.get(product_name) or "")
             if existing_source:
                 same_source = False
                 if old_source_path is not None:
@@ -2228,11 +2224,11 @@ QTableView#AttributeTable::item:selected {{
                     mark_product_json_deleted(old_source_path.name)
                     old_source_path.unlink()
 
-            self._mw._load_protocols()
+            self._mw.reload_protocols()
             selected_name = user_cfg["product"]
             if activate_after_save:
                 self.sync_products(selected_name)
-                if not self._mw._load_product_cfg(selected_name):
+                if not self._mw.load_product_cfg(selected_name):
                     raise ProductConfigError("产品文件已保存，但重新加载校验失败")
             else:
                 # 修改非当前产品时只刷新产品索引，保持正在接收数据的当前
@@ -2240,12 +2236,12 @@ QTableView#AttributeTable::item:selected {{
                 preferred = str(preserve_product or "").strip()
                 self.sync_products(preferred if preferred else None)
             action = "已修改" if old_product_name else "已导入"
-            self._mw._set_status(
+            self._mw.set_status(
                 f"产品JSON{action}：{selected_name}（{save_path.name}）"
             )
         except Exception as exc:
             title = "产品JSON修改失败" if old_product_name else "产品JSON导入失败"
-            self._mw._report_error(title, exc)
+            self._mw.report_error(title, exc)
 
     # ------------------------------------------------------------------
     # Attribute actions
@@ -2271,7 +2267,7 @@ QTableView#AttributeTable::item:selected {{
             value = _convert_value(value_text, entry.typeid)
             value = center.validate_attr_value(attrid, value)
             frame = self._mw.get_cmd_engine().build_attr_report([attrid], {attrid: value})
-            if self._mw._send_generated_frame(frame, entry.cn_name or entry.name):
+            if self._mw.send_generated_frame(frame, entry.cn_name or entry.name):
                 center.set_attr_value(attrid, value)
                 self.refresh_current_values()
         except (ValueError, TypeError, UnicodeError, OverflowError) as exc:
@@ -2290,7 +2286,7 @@ QTableView#AttributeTable::item:selected {{
             )
         except Exception as exc:
             # 串口、编码器或其他非预期异常才按程序故障记录。
-            self._mw._report_error("属性发送失败", exc)
+            self._mw.report_error("属性发送失败", exc)
 
     def _on_batch_report(self) -> None:
         center = self._mw.get_attr_center()
@@ -2312,7 +2308,7 @@ QTableView#AttributeTable::item:selected {{
             frame = self._mw.get_cmd_engine().build_attr_report(
                 [aid for aid, _ in selected], {aid: value for aid, value in selected}
             )
-            if self._mw._send_generated_frame(frame, "MCU-批量上报"):
+            if self._mw.send_generated_frame(frame, "MCU-批量上报"):
                 for aid, value in selected:
                     center.set_attr_value(aid, value)
                 self.refresh_current_values()
@@ -2323,7 +2319,7 @@ QTableView#AttributeTable::item:selected {{
                 f"所选属性中存在不能上报的值：\n\n{exc}\n\n请修改对应属性值后重试。",
             )
         except Exception as exc:
-            self._mw._report_error("批量上报失败", exc)
+            self._mw.report_error("批量上报失败", exc)
 
     # ------------------------------------------------------------------
     # Preset commands / auto reply
@@ -2529,7 +2525,7 @@ QTableView#AttributeTable::item:selected {{
         def _send_reset_heartbeat():
             current = self._mw.get_collector()
             if not (current and getattr(current, "running", False)):
-                self._mw._set_status("IO 唤醒已取消：串口已停止")
+                self._mw.set_status("IO 唤醒已取消：串口已停止")
                 return
             try:
                 reset_frame = auto_reply.wake()
@@ -2537,9 +2533,9 @@ QTableView#AttributeTable::item:selected {{
                     current.send(reset_frame)
                 self._update_lp_status(False)
             except Exception as exc:
-                self._mw._set_status(f"IO 唤醒失败：{exc}")
+                self._mw.set_status(f"IO 唤醒失败：{exc}")
                 try:
-                    self._mw._on_ui_error(f"IO 唤醒失败：{exc}")
+                    self._mw.notify_ui_error(f"IO 唤醒失败：{exc}")
                 except Exception:
                     pass
 
@@ -2561,7 +2557,7 @@ QTableView#AttributeTable::item:selected {{
 
     def _send_preset_builder(self, builder: Callable[[], bytes], label: str) -> None:
         try:
-            self._mw._send_generated_frame(builder(), label)
+            self._mw.send_generated_frame(builder(), label)
         except (ValueError, TypeError, UnicodeError, OverflowError) as exc:
             StyledMessageBox.warning(
                 self,
@@ -2569,12 +2565,12 @@ QTableView#AttributeTable::item:selected {{
                 f"命令“{label}”的参数不符合当前产品定义：\n\n{exc}",
             )
         except Exception as exc:
-            self._mw._report_error("预置命令发送失败", exc)
+            self._mw.report_error("预置命令发送失败", exc)
 
     def _on_poweron_send_all(self) -> None:
         timer = getattr(self, "_poweron_timer", None)
         if timer is not None and timer.isActive():
-            self._mw._set_status("上电流程正在发送，请勿重复点击")
+            self._mw.set_status("上电流程正在发送，请勿重复点击")
             return
         collector = self._mw.get_collector()
         if not (collector and getattr(collector, "running", False)):
@@ -2611,7 +2607,7 @@ QTableView#AttributeTable::item:selected {{
         try:
             collector.send(builder())
             self._poweron_sent += 1
-            self._mw._set_status(f"上电流程: 已发送 {self._poweron_sent}/{len(self._poweron_builders)}")
+            self._mw.set_status(f"上电流程: 已发送 {self._poweron_sent}/{len(self._poweron_builders)}")
         except (ValueError, TypeError, UnicodeError, OverflowError) as exc:
             StyledMessageBox.warning(
                 self,
@@ -2619,12 +2615,12 @@ QTableView#AttributeTable::item:selected {{
                 f"命令“{label}”未发送：\n\n{exc}",
             )
         except Exception as exc:
-            self._mw._report_error("上电流程发送失败", exc)
+            self._mw.report_error("上电流程发送失败", exc)
         if not self._poweron_queue:
             self._poweron_timer.stop()
             self._poweron_timer = None
             self.btn_poweron_send_all.setEnabled(True)
-            self._mw._set_status(f"上电流程已发送 {self._poweron_sent} 条命令")
+            self._mw.set_status(f"上电流程已发送 {self._poweron_sent} 条命令")
 
     def _on_auto_reply_toggled(self, checked: bool) -> None:
         # 自动回复使用独立 MCU HEX 通道，与页面1显示模式完全无关。
@@ -2634,7 +2630,7 @@ QTableView#AttributeTable::item:selected {{
         engine.enable(bool(checked), enable_all_rules=bool(checked))
         if checked:
             self._refresh_autoreply_rules()
-        self._mw._set_status("自动回复已开启（全部规则）" if checked else "自动回复已关闭")
+        self._mw.set_status("自动回复已开启（全部规则）" if checked else "自动回复已关闭")
 
     def _clear_data(self) -> None:
         self._data_flush_timer.stop()
