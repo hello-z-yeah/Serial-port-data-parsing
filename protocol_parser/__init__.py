@@ -35,7 +35,7 @@ VERSION: str = APP_VERSION
 
 _LAZY_EXPORTS = {
     "FrameSynchronizer": (".serial_collector", "FrameSynchronizer"),
-    "SerialCollector": (".serial_collector", "SerialCollector"),
+    "SerialCollector": (".serial_collector_optimized", "OptimizedSerialCollector"),
     "ResultLogger": (".monitor", "ResultLogger"),
     "run_paste_mode": (".monitor", "run_paste_mode"),
     "run_serial_mode": (".monitor", "run_serial_mode"),

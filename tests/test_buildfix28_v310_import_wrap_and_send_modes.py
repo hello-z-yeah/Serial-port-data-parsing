@@ -5,16 +5,17 @@ from protocol_parser.product_importer import parse_function_json
 
 ROOT = Path(__file__).resolve().parents[1]
 GUI = (ROOT / "protocol_parser" / "gui.py").read_text(encoding="utf-8")
+BRIDGE = (ROOT / "protocol_parser" / "gui_bridge.py").read_text(encoding="utf-8")
 MCU = (ROOT / "protocol_parser" / "mcu_page.py").read_text(encoding="utf-8")
 DPI = (ROOT / "protocol_parser" / "dpi_font.py").read_text(encoding="utf-8")
 
 
-def test_application_identity_is_v318_everywhere():
-    assert APP_VERSION == "3.1.8"
-    assert '#define MyAppVersion       "3.1.8"' in (ROOT / "installer" / "serial_port_parser.iss").read_text(encoding="utf-8-sig")
+def test_application_identity_is_v330_everywhere():
+    assert APP_VERSION == "3.3.3"
+    assert '#define MyAppVersion       "3.3.3"' in (ROOT / "installer" / "serial_port_parser.iss").read_text(encoding="utf-8-sig")
     version_info = (ROOT / "resources" / "version_info.txt").read_text(encoding="utf-8")
-    assert "filevers=(3, 1, 8, 0)" in version_info
-    assert "StringStruct('ProductVersion', '3.1.8')" in version_info
+    assert "filevers=(3, 3, 3, 0)" in version_info
+    assert "StringStruct('ProductVersion', '3.3.3')" in version_info
 
 
 def test_receive_font_control_is_hidden_without_removing_logic():
@@ -50,6 +51,68 @@ def test_importer_preserves_or_translates_real_names_instead_of_attr_placeholder
     assert not attributes["0x02"]["cn_name"].startswith("属性0x")
 
 
+def test_importer_maps_float_to_fixed_point_by_range_step_and_sign():
+    # 有符号、一位小数 -> F1_I16
+    attrs = parse_function_json({
+        "services": [{
+            "iid": 2,
+            "description": "Environment",
+            "properties": [{
+                "iid": 1,
+                "format": "float",
+                "access": ["read", "notify"],
+                "value-range": [-20, 120, 0.1],
+                "description": "Temperature",
+                "comment": "温度",
+            }],
+        }]
+    })
+    temp_attr = next(a for a in attrs.values() if a["cn_name"].endswith("温度"))
+    assert temp_attr["typeid"] == 19
+
+    # 无符号、一位小数 -> F1_U16
+    attrs = parse_function_json({
+        "services": [{
+            "iid": 1,
+            "properties": [{
+                "iid": 1,
+                "format": "float",
+                "value-range": [0, 100, 0.1],
+                "description": "Humidity",
+            }],
+        }]
+    })
+    assert list(attrs.values())[0]["typeid"] == 15
+
+    # 有符号、两位小数 -> F2_I16
+    attrs = parse_function_json({
+        "services": [{
+            "iid": 1,
+            "properties": [{
+                "iid": 1,
+                "format": "float",
+                "value-range": [-10, 10, 0.01],
+                "description": "Calibration",
+            }],
+        }]
+    })
+    assert list(attrs.values())[0]["typeid"] == 20
+
+    # 无符号、两位小数 -> F2_U16
+    attrs = parse_function_json({
+        "services": [{
+            "iid": 1,
+            "properties": [{
+                "iid": 1,
+                "format": "float",
+                "value-range": [0, 100, 0.01],
+                "description": "Precision",
+            }],
+        }]
+    })
+    assert list(attrs.values())[0]["typeid"] == 16
+
+
 def test_send_panel_and_command_library_carry_independent_display_formats():
     assert 'metadata={"display_format": "HEX", "send_source": "send_panel"}' in GUI
     assert 'metadata={"display_format": "ASCII", "send_source": "send_panel"}' in GUI
@@ -58,5 +121,6 @@ def test_send_panel_and_command_library_carry_independent_display_formats():
     assert "item.get(\"type\") or (\"HEX\" if self._cmdlib_mode == \"hex\" else \"ASCII\")" in GUI
     assert "mode = self.send_mode" in GUI
     assert "self.collector.send_raw(" in GUI and "as_text=True" in GUI
-    assert "tx_signal = Signal(bytes, float, object)" in GUI
-    assert 'line = f"[{ts_str}] [TX] Raw-ASCII  | {shown}\\n"' in GUI
+    assert "tx_signal = Signal(bytes, float, object)" in BRIDGE
+    assert 'parts.append(f"[{ts_str}] [TX] Raw-ASCII {printable}\\n")' in GUI
+    assert 'parts.append(f"{printable}\\n")' in GUI

@@ -1,9 +1,7 @@
-"""Plugin system with safe loading, configuration, and caching.
+"""Plugin loader kept for unit tests only.
 
-Features:
-- Prevents loading disabled plugins into enabled_plugins
-- Applies configuration to plugin instance before initialization
-- Uses threading.RLock to protect _cache operations
+Production parse/encode paths do not call this module. GUI code must not
+import it until an explicit, user-approved plugin whitelist exists.
 """
 from __future__ import annotations
 
@@ -15,6 +13,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 _logger = logging.getLogger(__name__)
+
+# Explicit guard for future wiring reviews/tests.
+PRODUCTION_WIRED = False
 
 
 class PluginSystem:

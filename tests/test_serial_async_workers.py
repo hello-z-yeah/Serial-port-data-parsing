@@ -29,6 +29,8 @@ class FakeSerialPort:
         self.writes: list[tuple[bytes, str]] = []
         self.cancel_read_called = False
         self.cancel_write_called = False
+        self._overlapped_read = object()
+        self._overlapped_write = object()
 
     def read(self, _size: int) -> bytes:
         if not self.is_open:
@@ -222,3 +224,37 @@ def test_receive_analysis_mode_has_no_hidden_mcu_channel(monkeypatch) -> None:
         assert collector.mcu_sync is None
     finally:
         collector.stop(timeout=2.0)
+
+
+def test_request_stop_tolerates_win32_cancel_without_overlapped(monkeypatch) -> None:
+    import protocol_parser.serial_collector_optimized as optimized
+
+    class BrokenCancelSerial(FakeSerialPort):
+        _overlapped_read = None
+        _overlapped_write = None
+
+        def cancel_read(self) -> None:
+            raise TypeError("byref() argument must be a ctypes instance, not 'NoneType'")
+
+        def cancel_write(self) -> None:
+            raise TypeError("byref() argument must be a ctypes instance, not 'NoneType'")
+
+    created: list[BrokenCancelSerial] = []
+
+    def factory(*args, **kwargs):
+        port = BrokenCancelSerial(*args, **kwargs)
+        created.append(port)
+        return port
+
+    monkeypatch.setattr(optimized, "HAS_SERIAL", True)
+    monkeypatch.setattr(optimized, "serial", FakeSerialModule(factory))
+    collector = optimized.OptimizedSerialCollector(
+        cfg={},
+        port="COM_CANCEL",
+        primary_enabled=False,
+    )
+    collector.start()
+    collector.request_stop()
+    collector.stop(timeout=2.0)
+    assert created
+    assert not created[0].is_open

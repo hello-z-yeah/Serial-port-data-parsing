@@ -218,11 +218,7 @@ TYPEID_MAP = {
     6:  {"name": "UINT32",  "size": 4, "ctype": "uint32_be", "fmt": ">I"},
     7:  {"name": "INT64",   "size": 8, "ctype": "int64_be",  "fmt": ">q"},
     8:  {"name": "UINT64",  "size": 8, "ctype": "uint64_be", "fmt": ">Q"},
-    9:  {"name": "FLOAT32", "size": 4, "ctype": "float32_be", "fmt": ">f"},
-    10: {"name": "FLOAT64", "size": 8, "ctype": "float64_be", "fmt": ">d"},
     11: {"name": "STRING",  "size": None, "ctype": "string"},
-    12: {"name": "DATE",    "size": None, "ctype": "date"},
-    13: {"name": "STRUCT",  "size": None, "ctype": "struct"},
     14: {"name": "ARRAY",   "size": None, "ctype": "array"},
     15: {"name": "F1_U16",  "size": 2, "ctype": "uint16_be", "fmt": ">H", "scale": 0.1},
     16: {"name": "F2_U16",  "size": 2, "ctype": "uint16_be", "fmt": ">H", "scale": 0.01},
@@ -244,7 +240,7 @@ SCALE_TYPEIDS = frozenset(range(15, 23))
 # 变长 typeid 集合（需要 length 字段），编解码共用。
 # GROUP(typeid=23) 有自己的 packet/unit 头，长度由 unit_num/unit_len 推导，
 # 协议线上没有通用 length 字段，不能混入普通变长类型。
-VARLEN_TYPEIDS = frozenset({11, 12, 13, 14, 24})
+VARLEN_TYPEIDS = frozenset({11, 14, 24})
 GROUP_TYPEID = 23
 GROUP_HEADER_SIZE = 5
 

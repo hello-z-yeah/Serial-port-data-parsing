@@ -101,8 +101,9 @@ def test_auto_reply_second_preflight_prevents_partial_write_and_ack() -> None:
 
 def test_raw_writer_callbacks_are_bridged_through_qt_signals() -> None:
     gui = (ROOT / "protocol_parser" / "gui.py").read_text(encoding="utf-8")
-    assert "storage_error_signal = Signal(str)" in gui
-    assert "storage_drop_signal = Signal(int)" in gui
+    bridge = (ROOT / "protocol_parser" / "gui_bridge.py").read_text(encoding="utf-8")
+    assert "storage_error_signal = Signal(str)" in bridge
+    assert "storage_drop_signal = Signal(int)" in bridge
     assert "self.bridge.storage_error_signal.connect(self._on_storage_error)" in gui
     assert "self.bridge.storage_drop_signal.connect(self._on_storage_drop)" in gui
     assert "on_error=lambda message: self.bridge.storage_error_signal.emit(message)" in gui

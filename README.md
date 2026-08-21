@@ -1,16 +1,16 @@
-# SerialX 3.1.8
+# SerialX 3.3.3
 
 SerialX（原名 Super Max Serial Tool / SMST）是 Windows 串口协议分析与模拟 MCU 工具，支持 HEX/ASCII 收发、产品 JSON、实时属性、自动回复、原始数据保存和协议日志。
 
 详细使用说明见 **[USER_GUIDE.md](USER_GUIDE.md)**。
 
-## 3.1.8 关键变化
+## 3.3.3 关键变化
 
-- 品牌重命名为 **SerialX**，安装包、exe、显示名全部更新。
-- 解析日志文本增加分层背景高亮：箭头无背景、命令名/方向带背景、`属性id:XX 值:XX` 前缀带背景。
-- 0x24 快照日志采用快照格式（`属性id:XX 值:XX 名称值`），属性前缀带背景高亮。
-- UI 全量 Fluent 风格灰色 Tooltip，级别标签采用圆角背景样式。
-- 安装脚本改用 `{#MyAppBaseName}` 变量，避免硬编码路径名。
+- 新增监听工具页，支持 HEX/ASCII 规则匹配、记录高亮与 Word 导出。
+- 会话偏好安全恢复；不会自动打开串口或恢复循环发送。
+- 在线更新使用单实例状态机、HTTPS 备用源及安装包 SHA-256 校验。
+- GUI、CLI 与多串口管理器统一使用优化版串口采集实现。
+- 补齐 F5、Shift+F5、Ctrl+F、Ctrl+L、Ctrl+S 与 Ctrl+Shift+E 快捷键。
 
 ## 构建入口
 
@@ -35,7 +35,7 @@ python SMST_Build_Manager.py build-installer
 
 | 产物 | 路径 |
 |---|---|
-| 安装包 | `release\SerialXSetup3.1.8_x64.exe` |
+| 安装包 | `release\SerialXSetup3.3.3_x64.exe` |
 | 文件夹版 | `dist\SerialX\SerialX.exe` |
 | 便携版 | `dist\SerialX_Portable.exe` |
 
@@ -63,7 +63,8 @@ python SMST_Build_Manager.py build-installer
 ```text
 protocol_parser/gui.py               主窗口与监控页面编排
 protocol_parser/mcu_page.py          模拟 MCU 页面
-protocol_parser/serial_collector.py   串口 RX/TX 工作线程
+protocol_parser/serial_collector_optimized.py  生产串口 RX/TX 与解析工作线程
+protocol_parser/serial_collector.py   帧同步与旧集成兼容实现
 protocol_parser/auto_reply.py        自动回复与命令事务处理
 protocol_parser/attr_center.py       属性状态、权限与范围校验
 protocol_parser/storage.py           可靠原始数据写盘

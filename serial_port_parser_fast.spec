@@ -24,6 +24,7 @@ def _collect_package(package_name: str):
 
 qfluent_datas, qfluent_binaries, qfluent_hidden = _collect_package("qfluentwidgets")
 docx_datas, docx_binaries, docx_hidden = _collect_package("docx")
+requests_datas, requests_binaries, requests_hidden = _collect_package("requests")
 
 # qfluentwidgets and python-docx both use package resources that are not always
 # discovered from plain imports, so collect them explicitly.
@@ -36,10 +37,12 @@ datas = [
 ]
 datas += qfluent_datas
 datas += docx_datas
+datas += requests_datas
 
 binaries = []
 binaries += qfluent_binaries
 binaries += docx_binaries
+binaries += requests_binaries
 
 hiddenimports = [
     "shiboken6",
@@ -48,9 +51,11 @@ hiddenimports = [
     "serial.serialwin32",
     "docx",
     "docx.opc.constants",
+    "requests",
 ]
 hiddenimports += qfluent_hidden
 hiddenimports += docx_hidden
+hiddenimports += requests_hidden
 hiddenimports += collect_submodules("protocol_parser")
 
 # Preserve installed distribution metadata used by some qfluentwidgets builds.

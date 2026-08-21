@@ -24,7 +24,7 @@ SMST_Build_Manager.vbs
 生成位置：
 
 ```text
-release\SuperMaxSerialTool_Setup_3.1.0_x64.exe
+release\SerialXSetup3.3.3_x64.exe
 ```
 
 ## 命令行构建

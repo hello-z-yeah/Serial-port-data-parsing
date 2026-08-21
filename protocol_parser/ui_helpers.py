@@ -11,8 +11,7 @@ def _typeid_name(typeid: int) -> str:
     names = {
         0: "BOOL", 1: "INT8", 2: "UINT8", 3: "INT16", 4: "UINT16",
         5: "INT32", 6: "UINT32", 7: "INT64", 8: "UINT64",
-        9: "FLOAT32", 10: "FLOAT64", 11: "STRING", 12: "DATE",
-        13: "STRUCT", 14: "ARRAY", 15: "F1_U16", 16: "F2_U16",
+        11: "STRING", 14: "ARRAY", 15: "F1_U16", 16: "F2_U16",
         17: "F1_U32", 18: "F2_U32", 19: "F1_I16", 20: "F2_I16",
         21: "F1_I32", 22: "F2_I32", 23: "GROUP", 24: "STRING_ARRAY",
     }
@@ -31,11 +30,7 @@ def _convert_value(value_text: str, typeid: int) -> Any:
         if not text:
             raise AttributeValidationError("请输入属性值")
         return int(text, 0)
-    if typeid in (9, 10):
-        if not text:
-            raise AttributeValidationError("请输入属性值")
-        return float(text)
-    if typeid in (13, 14, 23, 24):
+    if typeid in (14, 23, 24):
         if not text:
             raise AttributeValidationError("请输入 JSON 值")
         return json.loads(text)

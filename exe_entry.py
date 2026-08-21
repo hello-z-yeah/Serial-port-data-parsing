@@ -49,6 +49,7 @@ _RUNTIME_DEPENDENCIES = (
     ("qfluentwidgets", "PySide6-Fluent-Widgets>=1.5.0"),
     ("serial", "pyserial>=3.5"),
     ("docx", "python-docx>=0.8.11"),
+    ("requests", "requests>=2.32.0"),
 )
 
 

@@ -90,7 +90,7 @@ def test_delete_marks_bundled_filename_before_protocol_refresh():
     source = Path("protocol_parser/mcu_page.py").read_text(encoding="utf-8")
     marker_call = "mark_product_json_deleted(source_path.name)"
     unlink_call = "source_path.unlink()"
-    reload_call = "self._mw._load_protocols()"
+    reload_call = "self._mw.reload_protocols()"
     start = source.index("def _delete_selected_product")
     end = source.index("def _save_product_from_dialog", start)
     block = source[start:end]

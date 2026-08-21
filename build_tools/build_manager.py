@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import argparse
 import compileall
+import hashlib
 import importlib.util
+import json
 import os
 import platform
 import queue
+import re
 import shutil
 import struct
 import subprocess
@@ -29,13 +32,26 @@ DIST_DIR = PROJECT_ROOT / "dist"
 RELEASE_DIR = PROJECT_ROOT / "release"
 SPEC_FILE = PROJECT_ROOT / "serial_port_parser_fast.spec"
 ISS_FILE = PROJECT_ROOT / "installer" / "serial_port_parser.iss"
+VERSION_INFO_FILE = PROJECT_ROOT / "resources" / "version_info.txt"
+VERSION_JSON_FILE = PROJECT_ROOT / "version.json"
 
-# Identity constants (single source of truth).  Loaded lazily so that the
-# module can be imported before the project root is added to sys.path.
-APP_EXE_BASENAME = "SerialX"
-APP_EXE_NAME = f"{APP_EXE_BASENAME}.exe"
-APP_NAME = "SerialX"
-APP_VERSION = "3.1.8"
+
+def _load_app_identity():
+    """Load canonical identity without relying on the caller's sys.path."""
+    path = PROJECT_ROOT / "protocol_parser" / "app_info.py"
+    spec = importlib.util.spec_from_file_location("_serialx_app_info", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载应用身份配置：{path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_APP_INFO = _load_app_identity()
+APP_EXE_BASENAME = _APP_INFO.APP_EXE_BASENAME
+APP_EXE_NAME = _APP_INFO.APP_EXE_NAME
+APP_NAME = _APP_INFO.APP_NAME
+APP_VERSION = _APP_INFO.APP_VERSION
 
 EXPECTED_APP_DIR = DIST_DIR / APP_EXE_BASENAME
 EXPECTED_APP_EXE = EXPECTED_APP_DIR / APP_EXE_NAME
@@ -83,6 +99,77 @@ def validate_inno_setup_script(path: Path = ISS_FILE) -> None:
             "该文件并非所有 Inno Setup 安装都自带，会导致 Couldn't open include file。"
             "请使用内置默认语言或把语言文件随项目一起提供。"
         )
+
+
+def validate_version_artifacts() -> None:
+    """Fail before a build when generated/release metadata drift from app_info."""
+    errors: list[str] = []
+    try:
+        iss = ISS_FILE.read_text(encoding="utf-8-sig")
+        version_info = VERSION_INFO_FILE.read_text(encoding="utf-8")
+        version_json = json.loads(VERSION_JSON_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BuildManagerError(f"无法读取版本产物：{exc}") from exc
+
+    if f'#define MyAppVersion       "{APP_VERSION}"' not in iss:
+        errors.append("installer/serial_port_parser.iss")
+    if f"StringStruct('ProductVersion', '{APP_VERSION}')" not in version_info:
+        errors.append("resources/version_info.txt ProductVersion")
+    numeric = [int(item) for item in re.findall(r"\d+", APP_VERSION)[:4]]
+    numeric.extend([0] * (4 - len(numeric)))
+    tuple_text = ", ".join(str(item) for item in numeric)
+    if f"filevers=({tuple_text})" not in version_info:
+        errors.append("resources/version_info.txt filevers")
+    if str(version_json.get("version") or "") != APP_VERSION:
+        errors.append("version.json version")
+    if str(version_json.get("tag_name") or "") != APP_VERSION:
+        errors.append("version.json tag_name")
+    if errors:
+        raise BuildManagerError(
+            "版本信息与 protocol_parser/app_info.py 不一致：" + "、".join(errors)
+        )
+
+
+def _sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
+
+
+def write_release_version_json(installer: Path) -> Path:
+    """Generate updater metadata from the canonical identity and built installer."""
+    if not installer.is_file():
+        raise BuildManagerError(f"无法生成更新元数据，安装包不存在：{installer}")
+    notes = f"v{APP_VERSION} update"
+    try:
+        previous = json.loads(VERSION_JSON_FILE.read_text(encoding="utf-8"))
+        if str(previous.get("tag_name") or previous.get("version") or "") == APP_VERSION:
+            notes = str(previous.get("notes") or notes)
+    except (OSError, json.JSONDecodeError, TypeError):
+        pass
+    payload = {
+        "version": APP_VERSION,
+        "tag_name": APP_VERSION,
+        "asset_name": installer.name,
+        "download_url": (
+            f"https://github.com/hello-z-yeah/Serial-port-data-parsing/releases/"
+            f"download/{APP_VERSION}/{installer.name}"
+        ),
+        "sha256": _sha256_file(installer),
+        "notes": notes,
+    }
+    temporary = VERSION_JSON_FILE.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, VERSION_JSON_FILE)
+    bundled = PROJECT_ROOT / "resources" / "version.json"
+    bundled.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(VERSION_JSON_FILE, bundled)
+    return VERSION_JSON_FILE
 
 
 def _resolve_console_python() -> str:
@@ -265,6 +352,7 @@ class BuildRunner:
             "qfluentwidgets": "PySide6-Fluent-Widgets",
             "serial": "pyserial",
             "docx": "python-docx",
+            "requests": "requests",
             "PyInstaller": "PyInstaller",
             "pytest": "pytest",
         }
@@ -403,6 +491,8 @@ class BuildRunner:
     def run_checks(self) -> None:
         self.check_python()
         self.verify_dependencies()
+        validate_inno_setup_script()
+        validate_version_artifacts()
         self.log("\n=== Python 源码语法检查 ===")
         ok = compileall.compile_dir(
             str(PROJECT_ROOT / "protocol_parser"),
@@ -471,6 +561,8 @@ class BuildRunner:
             "docx.opc.constants",
             "--collect-all",
             "qfluentwidgets",
+            "--collect-all",
+            "requests",
             "--icon",
             str(PROJECT_ROOT / "resources" / "lkl.ico"),
             "--add-data",
@@ -504,14 +596,25 @@ class BuildRunner:
         self.run_command([str(iscc), "/Qp", str(ISS_FILE)], description="构建 Windows 安装包")
         if not EXPECTED_INSTALLER.is_file():
             raise BuildManagerError(f"构建结束但未找到：{EXPECTED_INSTALLER}")
+        metadata = write_release_version_json(EXPECTED_INSTALLER)
         self.log(f"安装包构建成功：{EXPECTED_INSTALLER}")
+        self.log(f"更新元数据已生成：{metadata}")
         return EXPECTED_INSTALLER
 
     def start_source(self) -> None:
         self.check_python()
         missing = self.dependency_status()
         runtime_missing = tuple(
-            item for item in missing if item in {"PySide6", "PySide6-Fluent-Widgets", "pyserial", "python-docx"}
+            item
+            for item in missing
+            if item
+            in {
+                "PySide6",
+                "PySide6-Fluent-Widgets",
+                "pyserial",
+                "python-docx",
+                "requests",
+            }
         )
         if runtime_missing:
             raise BuildManagerError(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import ctypes
+import logging
 from ctypes import wintypes
 import threading
 import time
@@ -25,10 +26,10 @@ from types import SimpleNamespace
 from typing import Callable
 
 from PySide6.QtCore import (
-    Qt, QTimer, Signal, Slot, QObject, QSize, QUrl
+    Qt, QTimer, Signal, Slot, QSize, QUrl
 )
 from PySide6.QtGui import (
-    QFont, QFontMetrics, QTextCursor, QTextCharFormat, QColor, QDesktopServices, QIcon, QPen, QGuiApplication, QFontDatabase, QTextFormat
+    QFont, QFontMetrics, QTextCursor, QTextCharFormat, QColor, QDesktopServices, QIcon, QPen, QGuiApplication, QTextFormat, QKeySequence, QShortcut
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -63,9 +64,22 @@ from protocol_parser import (  # noqa: E402
     parse_hex_input,
     to_hex,
 )
-from protocol_parser.serial_collector import FrameSynchronizer, SerialCollector  # noqa: E402
+from protocol_parser.serial_collector import FrameSynchronizer  # noqa: E402
+from protocol_parser.serial_collector_optimized import (  # noqa: E402
+    OptimizedSerialCollector as SerialCollector,
+)
 from protocol_parser.app_info import APP_ID  # noqa: E402
 from protocol_parser.storage import RawDataWriter  # noqa: E402
+from protocol_parser.gui_bridge import UiBridge  # noqa: E402
+from protocol_parser.i18n import install_translator  # noqa: E402
+from protocol_parser.log_find import LogFindBar, LogFindController  # noqa: E402
+from protocol_parser.ui_strings import ui_text  # noqa: E402
+from protocol_parser.ui_corners import CORNER_RADIUS_PX, patch_widget_corners  # noqa: E402
+from protocol_parser.session_bridge import (  # noqa: E402
+    apply_snapshot_to_app,
+    snapshot_from_app,
+)
+from protocol_parser.session_snapshot import load_snapshot, save_snapshot  # noqa: E402
 from protocol_parser.exceptions import (  # noqa: E402
     CommandValidationError,
     StorageOperationError,
@@ -78,6 +92,12 @@ from protocol_parser.paths import (  # noqa: E402
     write_crash_log as _write_crash_log_gui,
 )
 from protocol_parser.theme import ThemeManager, PALETTE  # noqa: E402
+from protocol_parser.log_text_style import (  # noqa: E402
+    TEXT_EDIT_FRAME_QSS as _TEXT_EDIT_FRAME_QSS,
+    ensure_log_font_family,
+    make_crisp_ui_font as _make_crisp_ui_font,
+    register_bundled_log_font as _register_bundled_font,
+)
 from protocol_parser.widgets import (  # noqa: E402
     apply_tooltip, TwoOptionSegmentSwitch, StyledMessageBox, apply_fluent_dialog_style,
     CellWidgetAlignedTable,
@@ -93,16 +113,18 @@ from protocol_parser.auto_cmd import AutoCmdEngine  # noqa: E402
 from protocol_parser.auto_reply import AutoReplyEngine  # noqa: E402
 from protocol_parser.receive_page import ReceiveAnalysisPage  # noqa: E402
 from protocol_parser.mcu_page import McuSimulatePage, CtrlWheelZoomTextEdit  # noqa: E402
-from protocol_parser.combo_font import (  # noqa: E402
-    MatchedPopupComboBox,
-    MatchedPopupEditableComboBox,
+from protocol_parser.monitor_page import MonitorToolPage  # noqa: E402
+from protocol_parser.gui_combos import (  # noqa: E402
+    DpiAwareComboBox,
+    ToggleCloseEditableComboBox,
 )
+from protocol_parser.cycle_config_dialog import CycleConfigDialog  # noqa: E402
+from protocol_parser.add_serial_port_dialog import AddSerialPortDialog  # noqa: E402
 from protocol_parser.dpi_font import (  # noqa: E402
     UI_FONT_FAMILY,
     UI_FONT_BASE_POINT_SIZE,
     effective_resolution_scale,
     responsive_point_size,
-    make_ui_font,
     apply_application_font,
     apply_adaptive_geometry,
     fit_text_control,
@@ -113,12 +135,16 @@ from protocol_parser.dpi_font import (  # noqa: E402
 # 统一所有提示/警告/错误弹窗的 Fluent 外观；保留原 QMessageBox 静态调用接口。
 _QtMessageBox = QMessageBox  # 保留原生 QMessageBox，供“是/否”确认框使用
 QMessageBox = StyledMessageBox
+_log = logging.getLogger(__name__)
 
 
 # Windows 下使用明确的 UI 字体和整数点值，避免系统回退字体与分数缩放
 # 造成小字号文字发虚。数据窗口也继承同一字体。
 _UI_FONT_FAMILY = UI_FONT_FAMILY
 _UI_FONT_POINT_SIZE = UI_FONT_BASE_POINT_SIZE
+_MAX_FIELDS_JSON_CHARS = 1024 * 1024
+_MAX_TX_INPUT_CHARS = 2 * 1024 * 1024
+_MAX_TX_PAYLOAD_BYTES = 1024 * 1024
 # 标题栏使用标准逻辑尺寸。Qt 会按系统 DPI 自动把 pt 字体和逻辑像素
 # 映射到实际像素，因此这里不再叠加 1.5/1.8 倍缩放，避免高分辨率下过大。
 _COMPACT_TITLE_BAR_HEIGHT = 32
@@ -137,11 +163,6 @@ _CMDLIB_FONT_MAX_SIZE = _UI_FONT_POINT_SIZE
 _CMDLIB_ACTION_COLUMN_WIDTH = 128
 _CMDLIB_SEND_BUTTON_MIN_WIDTH = 96
 _CMDLIB_SEND_BUTTON_MIN_HEIGHT = 28
-
-# 弹窗逻辑尺寸。避免 setFixedSize，以便系统 DPI 或更大字体时布局
-# 能按 sizeHint 继续扩展，不裁切文字。
-_ADD_SERIAL_DIALOG_MIN_WIDTH = 600
-_ADD_SERIAL_PORT_COMBO_MIN_WIDTH = 440
 
 
 def _effective_ui_scale(widget: QWidget | None = None) -> float:
@@ -330,22 +351,13 @@ def _sync_combo_popup_font(combo: QWidget) -> None:
         except Exception:
             pass
 
-
-def _make_crisp_ui_font(point_size: int = _UI_FONT_POINT_SIZE) -> QFont:
-    return make_ui_font(point_size)
-
-
-
-
-
-
 # 存储开启时使用与“停止监控”一致的主色按钮视觉；关闭后恢复普通按钮。
 _STORAGE_ACTIVE_QSS = f"""
 QPushButton {{
     color: white;
     background-color: {PALETTE["primary"]};
     border: 1px solid {PALETTE["primary"]};
-    border-radius: 5px;
+    border-radius: {CORNER_RADIUS_PX}px;
     padding: 5px 12px;
 }}
 QPushButton:hover {{
@@ -363,86 +375,18 @@ QPushButton:disabled {{
 }}
 """
 
-
-_TEXT_EDIT_FRAME_QSS = f"""
-QTextEdit {{
-    color: {PALETTE["text"]};
-    background-color: {PALETTE["card_bg"]};
-    border: 1px solid {PALETTE["card_border"]};
-    border-radius: 6px;
-    padding: 6px;
-}}
-QTextEdit:focus {{
-    border: 1px solid {PALETTE["primary"]};
-}}
-"""
-
 _COMMAND_EDITOR_QSS = f"""
 QLineEdit {{
     color: {PALETTE["text"]};
     background-color: {PALETTE["card_bg"]};
     border: 1px solid {PALETTE["card_border"]};
-    border-radius: 5px;
+    border-radius: {CORNER_RADIUS_PX}px;
     padding: 2px 6px;
 }}
 QLineEdit:focus {{
     border: 1px solid {PALETTE["primary"]};
 }}
 """
-
-
-class DpiAwareComboBox(MatchedPopupComboBox):
-    """Fluent combo whose popup inherits the exact same font and row scale."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFont(_make_crisp_ui_font(_responsive_point_size(self, maximum=13)))
-        # Popup font synchronization is provided by MatchedPopupComboBox.
-
-
-class ToggleCloseEditableComboBox(MatchedPopupEditableComboBox):
-    """可编辑下拉框：再次点击箭头时可靠收回菜单。
-
-    qfluentwidgets 的 ``RoundMenu`` 是独立弹窗。在 Windows 上点击已经
-    展开的箭头时，弹窗会先按“点击外部区域”关闭，随后箭头按钮的
-    ``clicked`` 信号又把菜单重新打开，因此视觉上像是无法收回。
-    这里记录菜单刚关闭的时刻，并吞掉同一次鼠标点击产生的重新打开。
-    """
-
-    _REOPEN_GUARD_SECONDS = 0.18
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFont(_make_crisp_ui_font(_responsive_point_size(self, maximum=13)))
-        self._drop_menu_closed_at = 0.0
-
-        # 替换基类直接连接到 _toggleComboMenu 的处理，避免关闭后立刻重开。
-        try:
-            self.dropButton.clicked.disconnect()
-        except (TypeError, RuntimeError):
-            pass
-        self.dropButton.clicked.connect(self._on_drop_button_clicked)
-
-    def _onDropMenuClosed(self) -> None:
-        self._drop_menu_closed_at = time.monotonic()
-        self.dropMenu = None
-
-    def _on_drop_button_clicked(self, checked: bool = False) -> None:
-        del checked
-
-        # 菜单仍存在时，当前点击就是明确的“收回”。
-        if self.dropMenu is not None:
-            self._closeComboMenu()
-            return
-
-        # Windows 会先关闭弹窗、再把同一次点击传给箭头按钮。阻止这次重开。
-        if time.monotonic() - self._drop_menu_closed_at < self._REOPEN_GUARD_SECONDS:
-            return
-
-        self._showComboMenu()
-
-    def _showComboMenu(self) -> None:
-        super()._showComboMenu()
 
 
 # ---------- 资源/数据路径（统一委托给 protocol_parser.paths） ----------
@@ -566,433 +510,6 @@ class CommandLibraryCellDelegate(QStyledItemDelegate):
         editor.setGeometry(option.rect.adjusted(3, 2, -3, -2))
 
 
-class UiBridge(QObject):
-    """把串口线程回调安全投递到主线程。"""
-    frame_signal = Signal(object, float)          # ParseResult, ts
-    raw_signal = Signal(bytes, float)             # data, ts
-    error_signal = Signal(str)                    # 普通解析/回调错误
-    collector_error_signal = Signal(int, str, str)  # generation, message, kind
-    tx_signal = Signal(bytes, float, object)      # data_sent, ts, metadata
-    status_signal = Signal(str)                   # status text
-    attr_updated_signal = Signal(object)          # changed attr IDs
-    mcu_data_signal = Signal(object, object, float, bool, bool)  # result, raw, ts, is_tx, auto_reply
-    storage_error_signal = Signal(str)
-    storage_drop_signal = Signal(int)
-    collector_stopped_signal = Signal(int, object, object)  # generation, callback, error
-
-
-class CycleOrderTable(CellWidgetAlignedTable):
-    """循环发送配置表：支持拖动整行调整发送顺序。"""
-
-    rowMoveRequested = Signal(int, int)
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
-        self.viewport().setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
-        self.setDragDropOverwriteMode(False)
-        self.setDragDropMode(QAbstractItemView.InternalMove)
-        self.setDefaultDropAction(Qt.MoveAction)
-
-    def dropEvent(self, event) -> None:  # type: ignore[override]
-        source_row = self.currentRow()
-        if source_row < 0:
-            event.ignore()
-            return
-
-        try:
-            pos = event.position().toPoint()
-        except AttributeError:
-            pos = event.pos()
-
-        index = self.indexAt(pos)
-        if index.isValid():
-            target_row = index.row()
-            if pos.y() > self.visualRect(index).center().y():
-                target_row += 1
-        else:
-            target_row = self.rowCount()
-
-        # 删除源行后，位于其下方的目标索引需要前移一位。
-        if target_row > source_row:
-            target_row -= 1
-        target_row = max(0, min(target_row, self.rowCount() - 1))
-
-        if target_row != source_row:
-            self.rowMoveRequested.emit(source_row, target_row)
-
-        event.acceptProposedAction()
-
-
-# ---------- 指令库「配置循环发送」对话框 ----------
-
-class CycleConfigDialog(QDialog):
-    """勾选指令、设置独立间隔，并通过鼠标拖动调整发送顺序。"""
-
-    def __init__(
-        self,
-        parent: QWidget | None,
-        items: list[dict],
-        seq: list[dict],
-        is_hex: bool,
-    ):
-        super().__init__(parent)
-        apply_fluent_dialog_style(self)
-        self.setWindowTitle("配置循环发送")
-        self._cycle_font = _make_crisp_ui_font(_UI_FONT_POINT_SIZE)
-        self.setFont(self._cycle_font)
-        self.resize(720, 480)
-        self.setMinimumSize(600, 380)
-        self._items = items
-        self._seq = list(seq)
-        self._is_hex = is_hex
-        self.result_seq: list[dict] | None = None
-
-        pool = {it.get("id"): it for it in items if it.get("id")}
-        seq_map = {s.get("id"): s for s in self._seq}
-        ordered_ids: list[str] = []
-        for s in self._seq:
-            iid = s.get("id")
-            if iid in pool and iid not in ordered_ids:
-                ordered_ids.append(iid)
-        for it in items:
-            iid = it.get("id")
-            if iid and iid not in ordered_ids:
-                ordered_ids.append(iid)
-        self._ordered_ids = ordered_ids
-        self._pool = pool
-        self._seq_map = seq_map
-
-        self._build_ui()
-        apply_adaptive_geometry(self, _UI_FONT_POINT_SIZE)
-        fit_window_to_screen(
-            self,
-            preferred=(760, 520),
-            minimum=(560, 360),
-            margin=(36, 72),
-        )
-
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-
-        intro_label = BodyLabel(
-            "勾选参与循环的指令；每条指令可设置独立间隔(ms)；按住任意一行拖动即可调整发送顺序。"
-        )
-        intro_label.setFont(self._cycle_font)
-        intro_label.setWordWrap(True)
-        layout.addWidget(intro_label)
-
-        body = QHBoxLayout()
-        self.table = CycleOrderTable()
-        self.table.setFont(self._cycle_font)
-        self.table.rowMoveRequested.connect(self._move_row)
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["参与", "名称", "指令数据", "间隔(ms)"])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        cycle_header = self.table.horizontalHeader()
-        cycle_header.setSectionResizeMode(2, QHeaderView.Stretch)
-        header_font = QFont(self._cycle_font)
-        header_font.setWeight(QFont.Weight.DemiBold)
-        cycle_header.setFont(header_font)
-        cycle_metrics = QFontMetrics(self._cycle_font)
-        self._cycle_row_height = max(32, cycle_metrics.height() + 12)
-        cycle_header.setMinimumHeight(max(30, QFontMetrics(header_font).height() + 10))
-        self.table.verticalHeader().setDefaultSectionSize(self._cycle_row_height)
-        self.table.verticalHeader().setMinimumSectionSize(self._cycle_row_height)
-        self.table.setColumnWidth(0, max(50, cycle_metrics.horizontalAdvance("参与") + 24))
-        self.table.setColumnWidth(1, max(140, cycle_metrics.horizontalAdvance("名称") + 80))
-        self.table.setColumnWidth(3, max(100, cycle_metrics.horizontalAdvance("间隔(ms)") + 28))
-        self.table.setRowCount(len(self._ordered_ids))
-
-        for row, cid in enumerate(self._ordered_ids):
-            it = self._pool.get(cid) or {}
-            on = cid in self._seq_map
-            delay = str((self._seq_map.get(cid) or {}).get("delay_ms", 1000))
-
-            chk = CheckBox()
-            chk.setChecked(on)
-            cell = QWidget()
-            lay = QHBoxLayout(cell)
-            lay.setContentsMargins(8, 0, 0, 0)
-            lay.addWidget(chk)
-            lay.addStretch()
-            self.table.setCellWidget(row, 0, cell)
-            # 保存 checkbox 引用
-            cell._chk = chk  # type: ignore
-
-            name_item = QTableWidgetItem(it.get("name") or "")
-            name_item.setFont(self._cycle_font)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
-            name_item.setData(Qt.UserRole, cid)
-            self.table.setItem(row, 1, name_item)
-
-            payload_item = QTableWidgetItem(it.get("payload") or "")
-            payload_item.setFont(self._cycle_font)
-            payload_item.setFlags(payload_item.flags() & ~Qt.ItemIsEditable)
-            self.table.setItem(row, 2, payload_item)
-
-            delay_item = QTableWidgetItem(delay)
-            delay_item.setFont(self._cycle_font)
-            self.table.setItem(row, 3, delay_item)
-            self.table.setRowHeight(row, self._cycle_row_height)
-
-        body.addWidget(self.table, stretch=1)
-
-        # 右侧排序按钮
-        side = QVBoxLayout()
-        for text, slot in [
-            ("上移 ↑", lambda: self._move(-1)),
-            ("下移 ↓", lambda: self._move(1)),
-            ("置顶", lambda: self._move_edge(True)),
-            ("置底", lambda: self._move_edge(False)),
-            ("全选", lambda: self._toggle_all(True)),
-            ("全不选", lambda: self._toggle_all(False)),
-        ]:
-            b = PushButton(text)
-            b.setFont(self._cycle_font)
-            _fit_button_to_text(b, horizontal_padding=22, vertical_padding=10, minimum_height=30)
-            b.clicked.connect(slot)
-            side.addWidget(b)
-        side.addStretch()
-        body.addLayout(side)
-        layout.addLayout(body, stretch=1)
-
-        bf = QHBoxLayout()
-        bf.addStretch()
-        btn_save = PrimaryPushButton("保存")
-        btn_save.setFont(self._cycle_font)
-        _fit_button_to_text(btn_save, horizontal_padding=22, vertical_padding=10, minimum_height=30)
-        btn_save.clicked.connect(self._on_save)
-        bf.addWidget(btn_save)
-        btn_cancel = PushButton("取消")
-        btn_cancel.setFont(self._cycle_font)
-        _fit_button_to_text(btn_cancel, horizontal_padding=22, vertical_padding=10, minimum_height=30)
-        btn_cancel.clicked.connect(self.reject)
-        bf.addWidget(btn_cancel)
-        layout.addLayout(bf)
-
-    def _selected_row(self) -> int:
-        rows = self.table.selectionModel().selectedRows()
-        return rows[0].row() if rows else -1
-
-    def _row_records(self) -> list[dict]:
-        records: list[dict] = []
-        for row in range(self.table.rowCount()):
-            cell = self.table.cellWidget(row, 0)
-            checked = bool(cell and hasattr(cell, "_chk") and cell._chk.isChecked())
-            name_item = self.table.item(row, 1)
-            payload_item = self.table.item(row, 2)
-            delay_item = self.table.item(row, 3)
-            records.append({
-                "id": name_item.data(Qt.UserRole) if name_item else "",
-                "checked": checked,
-                "name": name_item.text() if name_item else "",
-                "payload": payload_item.text() if payload_item else "",
-                "delay": delay_item.text() if delay_item else "1000",
-            })
-        return records
-
-    def _populate_records(self, records: list[dict]) -> None:
-        self.table.setRowCount(len(records))
-        for row, record in enumerate(records):
-            chk = CheckBox()
-            chk.setChecked(bool(record.get("checked")))
-            cell = QWidget()
-            lay = QHBoxLayout(cell)
-            lay.setContentsMargins(8, 0, 0, 0)
-            lay.addWidget(chk)
-            lay.addStretch()
-            cell._chk = chk  # type: ignore[attr-defined]
-            self.table.setCellWidget(row, 0, cell)
-
-            name_item = QTableWidgetItem(str(record.get("name") or ""))
-            name_item.setFont(self._cycle_font)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
-            name_item.setData(Qt.UserRole, record.get("id") or "")
-            self.table.setItem(row, 1, name_item)
-
-            payload_item = QTableWidgetItem(str(record.get("payload") or ""))
-            payload_item.setFont(self._cycle_font)
-            payload_item.setFlags(payload_item.flags() & ~Qt.ItemIsEditable)
-            self.table.setItem(row, 2, payload_item)
-            delay_item = QTableWidgetItem(str(record.get("delay") or "1000"))
-            delay_item.setFont(self._cycle_font)
-            self.table.setItem(row, 3, delay_item)
-            self.table.setRowHeight(row, getattr(self, "_cycle_row_height", 32))
-
-    def _move_row(self, source_row: int, target_row: int) -> None:
-        records = self._row_records()
-        if not (0 <= source_row < len(records) and 0 <= target_row < len(records)):
-            return
-        record = records.pop(source_row)
-        records.insert(target_row, record)
-        self._populate_records(records)
-        self.table.selectRow(target_row)
-
-    def _move(self, delta: int) -> None:
-        row = self._selected_row()
-        if row < 0:
-            return
-        target = row + delta
-        if 0 <= target < self.table.rowCount():
-            self._move_row(row, target)
-
-    def _move_edge(self, to_top: bool) -> None:
-        row = self._selected_row()
-        if row < 0:
-            return
-        target = 0 if to_top else self.table.rowCount() - 1
-        if row != target:
-            self._move_row(row, target)
-
-    def _toggle_all(self, on: bool) -> None:
-        for r in range(self.table.rowCount()):
-            w = self.table.cellWidget(r, 0)
-            if w and hasattr(w, "_chk"):
-                w._chk.setChecked(on)
-
-    def _on_save(self) -> None:
-        new_seq = []
-        for r in range(self.table.rowCount()):
-            w = self.table.cellWidget(r, 0)
-            if not (w and hasattr(w, "_chk") and w._chk.isChecked()):
-                continue
-            name_item = self.table.item(r, 1)
-            cid = name_item.data(Qt.UserRole) if name_item else None
-            if not cid:
-                continue
-            delay_item = self.table.item(r, 3)
-            try:
-                d = max(10, int((delay_item.text() if delay_item else "1000").strip()))
-            except Exception:
-                d = 1000
-            new_seq.append({"id": cid, "delay_ms": d})
-        self.result_seq = new_seq
-        self.accept()
-
-
-class AddSerialPortDialog(QDialog):
-    """与主界面一致的添加串口对话框。"""
-
-    def __init__(self, parent: QWidget | None, ports: list[dict]):
-        super().__init__(parent)
-        apply_fluent_dialog_style(self)
-        self.setWindowTitle("添加串口")
-        self._dialog_font = _make_crisp_ui_font(_UI_FONT_POINT_SIZE)
-        self.setFont(self._dialog_font)
-        self.setMinimumSize(_ADD_SERIAL_DIALOG_MIN_WIDTH, 260)
-        self.resize(660, 280)
-        self._ports = list(ports)
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(14, 14, 14, 14)
-        outer.setSpacing(0)
-
-        card = CardWidget(self)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(18, 16, 18, 16)
-        card_layout.setSpacing(14)
-
-        heading = StrongBodyLabel("添加串口", card)
-        heading_font = QFont(self._dialog_font)
-        heading_font.setWeight(QFont.Weight.DemiBold)
-        heading.setFont(heading_font)
-        card_layout.addWidget(heading)
-
-        form = QGridLayout()
-        form.setContentsMargins(0, 0, 0, 0)
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(12)
-
-        port_label = BodyLabel("串口：", card)
-        port_label.setFont(self._dialog_font)
-        form.addWidget(port_label, 0, 0)
-        self.port_combo = DpiAwareComboBox(card)
-        self.port_combo.setFont(self._dialog_font)
-        port_texts: list[str] = []
-        for port in self._ports:
-            device = str(port.get("device") or "")
-            description = str(port.get("description") or "")
-            text = f"{device} - {description}" if description and description != device else device
-            port_texts.append(text)
-            self.port_combo.addItem(text)
-        combo_metrics = QFontMetrics(self._dialog_font)
-        longest_port = max((combo_metrics.horizontalAdvance(t) for t in port_texts), default=0)
-        port_combo_width = max(_ADD_SERIAL_PORT_COMBO_MIN_WIDTH, min(560, longest_port + 56))
-        self.port_combo.setMinimumWidth(port_combo_width)
-        self.port_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        form.addWidget(self.port_combo, 0, 1)
-
-        baud_label = BodyLabel("波特率：", card)
-        baud_label.setFont(self._dialog_font)
-        form.addWidget(baud_label, 1, 0)
-        self.baud_combo = ToggleCloseEditableComboBox(card)
-        self.baud_combo.setFont(self._dialog_font)
-        self.baud_combo.addItems([
-            "9600", "115200", "460800", "921600", "1000000", "2000000"
-        ])
-        self.baud_combo.setCurrentText("9600")
-        form.addWidget(self.baud_combo, 1, 1)
-        form.setColumnStretch(1, 1)
-        card_layout.addLayout(form)
-
-        buttons = QHBoxLayout()
-        buttons.setContentsMargins(0, 4, 0, 0)
-        buttons.setSpacing(8)
-        buttons.addStretch(1)
-        cancel_button = PushButton("取消", card)
-        cancel_button.setFont(self._dialog_font)
-        _fit_button_to_text(cancel_button, horizontal_padding=28, vertical_padding=12, minimum_width=88)
-        cancel_button.clicked.connect(self.reject)
-        buttons.addWidget(cancel_button)
-        ok_button = PrimaryPushButton("确定", card)
-        ok_button.setFont(self._dialog_font)
-        _fit_button_to_text(ok_button, horizontal_padding=28, vertical_padding=12, minimum_width=88)
-        ok_button.clicked.connect(self.accept)
-        buttons.addWidget(ok_button)
-        card_layout.addLayout(buttons)
-
-        outer.addWidget(card)
-        apply_adaptive_geometry(self, _UI_FONT_POINT_SIZE)
-        fit_window_to_screen(
-            self,
-            preferred=(700, 320),
-            minimum=(520, 260),
-            margin=(36, 72),
-        )
-
-    def selected_port(self) -> str:
-        return self.port_combo.currentText().split(" - ")[0].strip()
-
-    def selected_baud(self) -> int:
-        text = self.baud_combo.currentText().strip()
-        try:
-            value = int(text)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("波特率必须是正整数") from exc
-        if value <= 0:
-            raise ValueError("波特率必须是正整数")
-        return value
-
-    def accept(self) -> None:  # type: ignore[override]
-        try:
-            self.selected_baud()
-        except ValueError as exc:
-            QMessageBox.warning(self, "提示", str(exc))
-            try:
-                self.baud_combo.setFocus()
-                # EditableComboBox 本身就是可编辑 LineEdit。
-                self.baud_combo.selectAll()
-            except Exception:
-                pass
-            return
-        super().accept()
-
-
 class ProtocolParserApp(FluentWindow):
     """主界面：FluentWindow + 业务逻辑原样保留。"""
 
@@ -1006,7 +523,7 @@ class ProtocolParserApp(FluentWindow):
             _COMPACT_TITLE_BAR_HEIGHT,
             QFontMetrics(QApplication.font()).height() + 10,
         )
-        self.setWindowTitle(f"{APP_NAME} v{VERSION}")
+        self.setWindowTitle(ui_text(f"{APP_NAME} v{VERSION}"))
         # 先按当前显示器的可用逻辑区域约束窗口。旧版固定最小
         # 1100x700，在 1366x768 + 125/150% 缩放时会大于桌面工作区，
         # 整个布局只能被系统裁切，表现为按钮和文字只显示一半。
@@ -1034,6 +551,7 @@ class ProtocolParserApp(FluentWindow):
         # 启动参数
         self._monitor_port = monitor_port
         self._monitor_baud = monitor_baud
+        self._session_restored = False
 
         # ---------- 业务状态（与原版完全一致） ----------
         self.cfg: dict | None = None
@@ -1114,7 +632,7 @@ class ProtocolParserApp(FluentWindow):
         self.tx_interval_ms = 1000
         self._tx_cycle_timer: QTimer | None = None
         self.tx_auto_crc8 = False
-        self.tx_append_crlf = False
+        self.tx_append_crlf = True
         self.tx_crc_algo = "ADD8"
         self._tx_input_validation_timer = QTimer(self)
         self._tx_input_validation_timer.setSingleShot(True)
@@ -1198,6 +716,17 @@ class ProtocolParserApp(FluentWindow):
 
         # 构建首屏。协议文件解析、串口扫描和产品数据延后到事件循环启动后。
         self._build_ui()
+        scroll_index = self.shared_layout.indexOf(self.shared_page_scroll)
+        self._log_find_bar = LogFindBar(self.shared_wrapper)
+        self._log_find_bar.hide()
+        self.shared_layout.insertWidget(scroll_index, self._log_find_bar)
+        self._log_find = LogFindController(
+            self,
+            self._log_find_bar,
+            self._active_log_text_edit,
+        )
+        self._apply_accessibility_labels()
+        self._install_shortcuts()
         QTimer.singleShot(0, self._align_title_bar_left)
         QTimer.singleShot(50, self._align_title_bar_left)
         QTimer.singleShot(0, self._adapt_navigation_for_width)
@@ -1278,10 +807,121 @@ class ProtocolParserApp(FluentWindow):
             self._refresh_ports(silent=True)
         finally:
             self._port_watch_timer.start(3000)
+            self._restore_session_preferences()
             if self._monitor_port:
                 QTimer.singleShot(1, self._apply_monitor_args)
             self._startup_ready = True
             self._set_status("就绪")
+
+    def _restore_session_preferences(self) -> None:
+        if self._session_restored:
+            return
+        self._session_restored = True
+        try:
+            snapshot = load_snapshot()
+            if snapshot is not None:
+                apply_snapshot_to_app(self, snapshot)
+        except Exception as exc:
+            _log_error_to_disk(exc)
+
+    def _save_session_preferences(self) -> None:
+        try:
+            save_snapshot(snapshot_from_app(self))
+        except Exception as exc:
+            _log_error_to_disk(exc)
+
+    def _install_shortcuts(self) -> None:
+        self._shortcuts: list[QShortcut] = []
+        bindings = (
+            ("F5", self._toggle_serial),
+            ("Shift+F5", self._shortcut_stop_monitor),
+            ("Ctrl+L", self._clear_active_log),
+            ("Ctrl+S", self._choose_log),
+            ("Ctrl+Shift+E", self._export_active_monitor_records),
+        )
+        for sequence, callback in bindings:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(self._safe(callback))
+            self._shortcuts.append(shortcut)
+
+    def _apply_accessibility_labels(self) -> None:
+        labels = {
+            "port_combo": ("串口端口", "选择要打开的串口端口"),
+            "baud_combo": ("串口波特率", "输入或选择通信波特率"),
+            "btn_refresh_ports": ("刷新串口列表", ""),
+            "btn_start": ("开始或停止串口监控", "快捷键 F5；Shift+F5 仅停止"),
+            "btn_more_config": ("展开串口高级设置", ""),
+            "bytesize_combo": ("串口数据位", ""),
+            "stopbits_combo": ("串口停止位", ""),
+            "btn_save_raw": ("开始或停止原始数据存储", ""),
+            "save_name_edit": ("原始数据文件名", ""),
+            "save_path_edit": ("原始数据保存路径", ""),
+            "btn_hex": ("切换 HEX 显示", ""),
+            "btn_view_mode": ("切换协议解析或原始数据模式", ""),
+            "sender_switch": ("协议方向", "选择模组发送或 MCU 发送"),
+            "product_combo": ("接收分析产品协议", ""),
+            "serial_text": ("串口实时数据", "按住 Ctrl 滚轮可调整字号"),
+            "fields_edit": ("协议字段 JSON", ""),
+            "raw_edit": ("HEX 或 ASCII 发送内容", ""),
+            "btn_send_once": ("发送一次", ""),
+            "btn_cycle": ("开启或停止循环发送", ""),
+            "btn_check_update": (ui_text("检查软件更新"), ""),
+        }
+        for name, (accessible_name, description) in labels.items():
+            widget = getattr(self, name, None)
+            if widget is None:
+                continue
+            widget.setAccessibleName(accessible_name)
+            if description:
+                widget.setAccessibleDescription(description)
+
+        if self.monitor_page is not None:
+            self.monitor_page.setAccessibleName("监听工具页面")
+            self.monitor_page.btn_settings.setAccessibleName("设置监听匹配规则")
+            self.monitor_page.serial_text.setAccessibleName("监听实时数据")
+            self.monitor_page.record_text.setAccessibleName("监听命中记录")
+        if self.mcu_page is not None:
+            self.mcu_page.setAccessibleName("模拟 MCU 工具页面")
+            self.mcu_page.product_combo.setAccessibleName("模拟 MCU 产品")
+            self.mcu_page.data_text.setAccessibleName("模拟 MCU 实时数据")
+
+    def _shortcut_stop_monitor(self) -> None:
+        if self.is_collecting or self._serial_stopping:
+            self._stop_serial()
+        else:
+            self._set_status("当前没有正在运行的串口监控")
+
+    def _clear_active_log(self) -> None:
+        current = self.stackedWidget.currentWidget()
+        if current is self.monitor_page:
+            self.monitor_page.clear_output()
+        elif current is self.mcu_page:
+            self.mcu_page.clear_output()
+        else:
+            self._clear_output()
+
+    def _export_active_monitor_records(self) -> None:
+        if self.stackedWidget.currentWidget() is not self.monitor_page:
+            self._set_status(ui_text("请先切换到监听工具页再导出监听记录"))
+            return
+        self.monitor_page.export_records()
+
+    def _active_log_text_edit(self):
+        """Return the log view for the current navigation page."""
+        focused = QApplication.focusWidget()
+        monitor = getattr(self, "monitor_page", None)
+        if monitor is not None:
+            for widget in (monitor.serial_text, monitor.record_text):
+                if focused is widget:
+                    return widget
+        current = self.stackedWidget.currentWidget()
+        if current is monitor:
+            return monitor.serial_text
+        mcu = getattr(self, "mcu_page", None)
+        if current is mcu and mcu is not None:
+            return mcu.data_text
+        return getattr(self, "serial_text", None)
 
     def _hide_navigation_back_button(self) -> None:
         """隐藏左侧导航展开后产生的返回箭头，仅调整界面显示。"""
@@ -1842,7 +1482,7 @@ class ProtocolParserApp(FluentWindow):
         except TypeError:
             self.hBoxLayout.addWidget(wrapper)
 
-        # ---- 两个完全隔离的功能页面 ----
+        # ---- 三个完全隔离的功能页面 ----
         self.receive_page = ReceiveAnalysisPage(self)
         self.realtime_card = self._build_realtime_card()
         self.cmdlib_card = self._build_cmdlib_card()
@@ -1854,11 +1494,17 @@ class ProtocolParserApp(FluentWindow):
         # 页签2依赖主窗口的协议显示开关，放在页签1控件创建完成后实例化。
         self.mcu_page = McuSimulatePage(self)
 
+        # 页签3：监听工具。
+        self.monitor_page = MonitorToolPage(self)
+
         self.addSubInterface(
             self.receive_page, FluentIcon.MESSAGE, "串口接收分析"
         )
         self.addSubInterface(
             self.mcu_page, FluentIcon.SEND, "模拟MCU工具"
+        )
+        self.addSubInterface(
+            self.monitor_page, FluentIcon.EDIT, "监听工具"
         )
         try:
             self.stackedWidget.setCurrentWidget(self.receive_page)
@@ -1869,9 +1515,10 @@ class ProtocolParserApp(FluentWindow):
             pass
         QTimer.singleShot(0, self._update_shared_page_scroll_policy)
 
-        # 双页签互斥：监控中禁止切换到另一个页签，防止 Word/JSON 协议冲突。
+        # 多页签互斥：监控中禁止切换到另一个页签，防止 Word/JSON 协议冲突。
         # 真正的拦截在重写的 switchTo() 中完成（切换发生前拦截，无动画）。
-        self._monitoring_page = None  # None=未监控, 0=串口接收分析, 1=模拟MCU工具
+        # None=未监控, 0=串口接收分析, 1=模拟MCU工具, 2=监听工具
+        self._monitoring_page = None
 
         # 左侧导航需要显示名称；不同 qfluentwidgets 版本接口可能不同。
         try:
@@ -2050,6 +1697,52 @@ class ProtocolParserApp(FluentWindow):
     def get_auto_reply(self):
         return self._auto_reply
 
+    # Stable page-host facade. Detached pages use these wrappers instead of
+    # reaching into ProtocolParserApp private implementation details.
+    def load_product_cfg(self, product_name: str) -> bool:
+        return self._load_product_cfg(product_name)
+
+    def reload_protocols(self) -> None:
+        self._load_protocols()
+
+    def report_error(self, title: str, exc: BaseException) -> None:
+        self._report_error(title, exc)
+
+    def set_status(self, message: str) -> None:
+        self._set_status(message)
+
+    def send_generated_frame(
+        self,
+        frame: bytes,
+        label: str = "预置命令",
+    ) -> bool:
+        return self._send_generated_frame(frame, label)
+
+    def sync_collector_cfg(self) -> None:
+        self._sync_collector_cfg()
+
+    def notify_ui_error(self, message: str) -> None:
+        self._on_ui_error(message)
+
+    def get_product_catalog(self) -> tuple[dict, dict]:
+        return (
+            dict(getattr(self, "_product_sources", {}) or {}),
+            dict(getattr(self, "_product_kinds", {}) or {}),
+        )
+
+    def get_monitoring_page_index(self) -> int | None:
+        return self._monitoring_page
+
+    def clear_mcu_product_state(self) -> None:
+        self.cfg = None
+        self._mcu_cfg = {}
+        self.product_var = ""
+        self._attr_center.load_product({})
+        self._sync_collector_cfg()
+
+    def relayout_receive_toolbars(self) -> None:
+        self._relayout_receive_toolbars()
+
     def _is_mcu_auto_reply_context_active(self) -> bool:
         """Only allow automatic replies for a monitor session started on MCU page.
 
@@ -2068,13 +1761,18 @@ class ProtocolParserApp(FluentWindow):
 
 
     def switchTo(self, interface):
-        """双页签互斥：监控中禁止切换页签。
+        """多页签互斥：监控中禁止切换页签。
 
         重写 qfluentwidgets 的 switchTo，在页面真正切换之前拦截，
         因此不会触发任何切换动画，只弹出提示。
         """
         if self.is_collecting and self._monitoring_page is not None:
-            locked = self.receive_page if self._monitoring_page == 0 else self.mcu_page
+            locked_map = {
+                0: self.receive_page,
+                1: self.mcu_page,
+                2: self.monitor_page,
+            }
+            locked = locked_map.get(self._monitoring_page, self.receive_page)
             if interface is not locked:
                 # 导航项点击时 qfluentwidgets 已先把高亮移到被点击项，
                 # 这里瞬时把高亮移回锁定页签（临时关闭指示条动画，避免抖动），
@@ -2090,14 +1788,32 @@ class ProtocolParserApp(FluentWindow):
                     nav.setIndicatorAnimationEnabled(was_ani)
                 except Exception:
                     pass
-                page_name = "串口接收分析" if self._monitoring_page == 0 else "模拟MCU工具"
+                page_names = {
+                    0: "串口接收分析",
+                    1: "模拟MCU工具",
+                    2: "监听工具",
+                }
+                page_name = page_names.get(self._monitoring_page, "当前页签")
                 QMessageBox.warning(
                     self, "页签已锁定",
                     f"正在监控中（{page_name} 页签），\n请先停止监控再切换到另一个页签。"
                 )
                 return
         super().switchTo(interface)
+        self._sync_send_panel_button_for_page(interface)
         QTimer.singleShot(0, self._update_shared_page_scroll_policy)
+
+    def _sync_send_panel_button_for_page(self, interface) -> None:
+        """监听工具页不显示发送面板按钮，并关闭已打开的发送面板。"""
+        button = getattr(self, "btn_send_panel", None)
+        if button is None:
+            return
+        if interface is getattr(self, "monitor_page", None):
+            button.hide()
+            self.set_send_panel_visible(False)
+        else:
+            button.show()
+        self._relayout_top_bar()
 
     def get_protocol_dir(self) -> Path:
         return get_protocol_dir()
@@ -2135,10 +1851,10 @@ class ProtocolParserApp(FluentWindow):
         self.top_bar_layout.setHorizontalSpacing(8)
         self.top_bar_layout.setVerticalSpacing(6)
 
-        self.btn_add_port = PushButton("添加串口")
+        self.btn_add_port = PushButton(ui_text("添加串口"))
         self.btn_add_port.clicked.connect(self._safe(self._add_serial_port))
 
-        self.btn_save_log = PushButton("保存日志")
+        self.btn_save_log = PushButton(ui_text("保存日志"))
         self.btn_save_log.clicked.connect(self._safe(self._choose_log))
 
         self.btn_send_panel = ToggleButton("发送面板")
@@ -2149,7 +1865,7 @@ class ProtocolParserApp(FluentWindow):
         self.btn_topmost = ToggleButton("置顶")
         self.btn_topmost.toggled.connect(self._safe(self._on_topmost_toggled))
 
-        self.btn_check_update = PushButton("检查更新")
+        self.btn_check_update = PushButton(ui_text("检查更新"))
         self.btn_check_update.clicked.connect(self._safe(self._on_check_update_clicked))
 
         self._top_bar_buttons = (
@@ -2245,7 +1961,7 @@ class ProtocolParserApp(FluentWindow):
         self.btn_more_config.setChecked(False)
         self.btn_more_config.toggled.connect(self._safe(self._on_more_config_toggled))
 
-        self.btn_start = PrimaryPushButton("● 开始监控")
+        self.btn_start = PrimaryPushButton(ui_text("● 开始监控"))
         self.btn_start.clicked.connect(self._safe(self._toggle_serial))
         apply_tooltip(self.btn_start, "开始/停止监控（F5 / Shift+F5）")
 
@@ -2275,7 +1991,7 @@ class ProtocolParserApp(FluentWindow):
             QFrame#serialDetailPanel {{
                 background-color: {PALETTE['surface']};
                 border: 1px solid {PALETTE['card_border']};
-                border-radius: 8px;
+                border-radius: {CORNER_RADIUS_PX}px;
             }}
             """
         )
@@ -2311,7 +2027,6 @@ class ProtocolParserApp(FluentWindow):
         self.save_name_edit.setMaximumWidth(16_777_215)
 
         self.btn_save_raw = PushButton("开始存储数据")
-        self._save_raw_default_qss = self.btn_save_raw.styleSheet()
         self.btn_save_raw.setMinimumWidth(132)
         self.btn_save_raw.clicked.connect(self._safe(self._toggle_save_raw))
 
@@ -3150,10 +2865,10 @@ class ProtocolParserApp(FluentWindow):
         saving = bool(self._save_raw_active)
         conn_color = "#22A447" if connected else "#F59E0B"
         save_color = "#22A447" if saving else "#F59E0B"
-        conn_text = "已连接" if connected else "未连接"
-        save_text = "存储中" if saving else "未存储"
+        conn_text = ui_text("已连接") if connected else ui_text("未连接")
+        save_text = ui_text("存储中") if saving else ui_text("未存储")
 
-        port = self.port_var.split(" - ")[0].strip() if self.port_var else "未选串口"
+        port = self.port_var.split(" - ")[0].strip() if self.port_var else ui_text("未选串口")
         baud = self.baudrate_var or "-"
 
         text_widget = getattr(self, "serial_text", None)
@@ -3719,9 +3434,13 @@ class ProtocolParserApp(FluentWindow):
         # Resolve and cache the monitored page before the worker thread starts.
         # The serial callback must not read Qt widgets from its background thread.
         try:
-            self._monitoring_page = (
-                1 if self.stackedWidget.currentWidget() is self.mcu_page else 0
-            )
+            current = self.stackedWidget.currentWidget()
+            if current is self.mcu_page:
+                self._monitoring_page = 1
+            elif current is self.monitor_page:
+                self._monitoring_page = 2
+            else:
+                self._monitoring_page = 0
         except Exception:
             self._monitoring_page = 0
         mcu_enabled = bool(
@@ -4068,6 +3787,11 @@ class ProtocolParserApp(FluentWindow):
     @Slot(bytes, float)
     def _on_ui_raw(self, data: bytes, ts: float) -> None:
         self._display_raw_data(data, ts)
+        if self.monitor_page is not None:
+            try:
+                self.monitor_page.display_raw_data(data, ts)
+            except Exception:
+                pass
 
     @Slot(int, str, str)
     def _on_collector_error(self, generation: int, msg: str, kind: str) -> None:
@@ -4099,6 +3823,11 @@ class ProtocolParserApp(FluentWindow):
     def _on_ui_tx(self, data_sent: bytes, ts: float, metadata=None) -> None:
         self.tx_frame_count += 1
         self._display_serial_tx(data_sent, ts, metadata)
+        if self.monitor_page is not None:
+            try:
+                self.monitor_page.display_tx(data_sent, ts)
+            except Exception:
+                pass
         self._update_stats_bar()
 
     @Slot(object, object, float, bool, bool)
@@ -4229,7 +3958,7 @@ class ProtocolParserApp(FluentWindow):
             if match.start() > pos:
                 self._enqueue_display_text(text[pos:match.start()], color=color)
             if match.group(1):
-                self._enqueue_display_text(match.group(1), color="#2E86FF")
+                self._enqueue_display_text(match.group(1), color="#2E86FF", bg_color="#FFF9C4")
             elif match.group(2):
                 level = match.group(2).strip("[] ").upper()
                 fg, bg = self._LEVEL_STYLES.get(level, ("#374151", "#E8E8E8"))
@@ -4304,40 +4033,54 @@ class ProtocolParserApp(FluentWindow):
             display_format = "HEX" if self.hex_format else "ASCII"
 
         if display_format == "ASCII":
-            # 仅当数据全部为可打印 ASCII(含 \t \r \n)时才按 ASCII 显示;
-            # 含二进制/HEX 字节时自动转 HEX 显示, 避免 decode 出乱码并被保存进日志。
-            if all(b in (9, 10, 13) or 32 <= b < 127 for b in data_sent):
-                text = bytes(data_sent).decode("utf-8", errors="replace")
-                # 将控制字符显式显示，避免 CR/LF 把一条 TX 记录拆成多行。
-                shown = (
-                    text.replace("\\", "\\\\")
-                    .replace("\r", "\\r")
-                    .replace("\n", "\\n")
-                    .replace("\t", "\\t")
-                )
-                line = f"[{ts_str}] [TX] Raw-ASCII  | {shown}\n"
-            else:
+            # 仅当数据为合法 UTF-8 文本(含中文、\t \r \n)时才按 ASCII 显示;
+            # 无法解码为 UTF-8 的二进制/HEX 字节才自动转 HEX 显示, 避免乱码入库。
+            try:
+                text = bytes(data_sent).decode("utf-8")
+            except UnicodeDecodeError:
                 shown = " ".join(f"{b:02X}" for b in data_sent)
-                line = f"[{ts_str}] [TX] Raw-HEX    | {shown}\n"
+                line = f"[{ts_str}] [TX] Raw-HEX {shown}\n"
+            else:
+                # 按真实换行拆成多行，只有第一行带时间戳前缀；
+                # 后续行顶格显示，不显示 \r\n 等转义符号。
+                lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+                parts = []
+                for i, raw_line in enumerate(lines):
+                    if not raw_line and i != 0:
+                        continue
+                    printable = "".join(ch if (32 <= ord(ch) < 127 or ch == "\t") else "." for ch in raw_line)
+                    if i == 0:
+                        parts.append(f"[{ts_str}] [TX] Raw-ASCII {printable}\n")
+                    else:
+                        parts.append(f"{printable}\n")
+                self._enqueue_ts_display_text("".join(parts), color="#008000")
+                return
         else:
             shown = " ".join(f"{b:02X}" for b in data_sent)
-            line = f"[{ts_str}] [TX] Raw-HEX    | {shown}\n"
+            line = f"[{ts_str}] [TX] Raw-HEX {shown}\n"
         self._enqueue_ts_display_text(line, color="#008000")
 
     def _display_raw_data(self, data: bytes, ts: float) -> None:
         ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
-        parts = []
         if self.hex_format:
-            for i in range(0, len(data), 16):
-                chunk = data[i:i + 16].hex(" ").upper()
-                parts.append(f"[{ts_str}] {chunk}\n")
-        else:
-            text = data.decode("utf-8", errors="replace")
-            for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-                if not line:
-                    continue
-                printable = "".join(ch if (32 <= ord(ch) < 127 or ch == "\t") else "." for ch in line)
-                parts.append(f"[{ts_str}] {printable}\n")
+            shown = " ".join(f"{b:02X}" for b in data)
+            line = f"[{ts_str}] [RX] Raw-HEX {shown}\n"
+            self._enqueue_ts_display_text(line, color="#0000CD")
+            return
+
+        text = data.decode("utf-8", errors="replace")
+        # 按真实换行拆成多行，只有第一行带时间戳前缀；
+        # 后续行顶格显示，不显示 \r\n 等转义符号，不出现大空格缩进。
+        lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        parts = []
+        for i, raw_line in enumerate(lines):
+            if not raw_line and i != 0:
+                continue
+            printable = "".join(ch if (32 <= ord(ch) < 127 or ch == "\t") else "." for ch in raw_line)
+            if i == 0:
+                parts.append(f"[{ts_str}] [RX] Raw-ASCII {printable}\n")
+            else:
+                parts.append(f"{printable}\n")
         if parts:
             self._enqueue_ts_display_text("".join(parts), color="#0000CD")
 
@@ -4378,10 +4121,27 @@ class ProtocolParserApp(FluentWindow):
                 f"命令字 CmdID 格式不正确：{cmd_s!r}，请输入十进制或 0x 开头的十六进制数"
             ) from exc
         fields_txt = self.fields_edit.toPlainText().strip()
+        if len(fields_txt) > _MAX_FIELDS_JSON_CHARS:
+            raise CommandValidationError(
+                f"协议字段 JSON 不能超过 {_MAX_FIELDS_JSON_CHARS} 个字符"
+            )
         fields = json.loads(fields_txt) if fields_txt else {}
+        if not isinstance(fields, dict):
+            raise CommandValidationError("协议字段 JSON 顶层必须是对象")
         direction = "response" if self.tx_direction == "MCU发送" else "request"
         from protocol_parser.parser import encode_frame
-        return encode_frame(cmd_code, self.cfg, direction=direction, fields=fields)
+        return self._validate_tx_payload_size(
+            encode_frame(cmd_code, self.cfg, direction=direction, fields=fields)
+        )
+
+    @staticmethod
+    def _validate_tx_payload_size(payload: bytes) -> bytes:
+        if len(payload) > _MAX_TX_PAYLOAD_BYTES:
+            raise CommandValidationError(
+                f"单次发送数据不能超过 {_MAX_TX_PAYLOAD_BYTES} 字节，"
+                f"当前为 {len(payload)} 字节"
+            )
+        return payload
 
     def _stop_tx_cycle(self, message: str | None = None) -> None:
         timer = getattr(self, "_tx_cycle_timer", None)
@@ -4475,14 +4235,20 @@ class ProtocolParserApp(FluentWindow):
                 text = self.raw_edit.toPlainText().strip()
                 if not text:
                     raise CommandValidationError("请输入 HEX 内容")
+                if len(text) > _MAX_TX_INPUT_CHARS:
+                    raise CommandValidationError(
+                        f"发送输入不能超过 {_MAX_TX_INPUT_CHARS} 个字符"
+                    )
 
                 # 复用协议模块的严格 HEX 解析器，兼容空格、换行及合法 0x 前缀。
-                payload = parse_hex_input(text)
+                payload = self._validate_tx_payload_size(parse_hex_input(text))
                 if self.tx_auto_crc8:
                     from protocol_parser.parser import calc_checksum
                     payload += calc_checksum(payload, self.tx_crc_algo)
+                    payload = self._validate_tx_payload_size(payload)
                 if self.tx_append_crlf:
                     payload += b"\r\n"
+                    payload = self._validate_tx_payload_size(payload)
                 self.collector.send(
                     payload,
                     metadata={"display_format": "HEX", "send_source": "send_panel"},
@@ -4493,8 +4259,13 @@ class ProtocolParserApp(FluentWindow):
                 text = self.raw_edit.toPlainText()
                 if not text:
                     raise CommandValidationError("请输入 ASCII 内容")
+                if len(text) > _MAX_TX_INPUT_CHARS:
+                    raise CommandValidationError(
+                        f"发送输入不能超过 {_MAX_TX_INPUT_CHARS} 个字符"
+                    )
                 if self.tx_append_crlf and not text.endswith(("\r\n", "\n")):
                     text += "\r\n"
+                self._validate_tx_payload_size(text.encode("utf-8"))
                 self.collector.send_raw(
                     text,
                     as_text=True,
@@ -4568,8 +4339,12 @@ class ProtocolParserApp(FluentWindow):
             self.btn_save_raw.setStyleSheet(_STORAGE_ACTIVE_QSS)
         else:
             self.btn_save_raw.setText("开始存储数据")
-            # 恢复 qfluentwidgets 原始样式，避免一次开关后退化为系统原生按钮。
-            self.btn_save_raw.setStyleSheet(getattr(self, "_save_raw_default_qss", ""))
+            # 恢复 Fluent 默认样式并重新套用统一圆角补丁。
+            from qfluentwidgets.common.style_sheet import FluentStyleSheet
+
+            self.btn_save_raw.setProperty("_smst_corner_radius_patched", False)
+            FluentStyleSheet.BUTTON.apply(self.btn_save_raw)
+            patch_widget_corners(self.btn_save_raw)
             self.btn_save_raw.style().unpolish(self.btn_save_raw)
             self.btn_save_raw.style().polish(self.btn_save_raw)
             self.btn_save_raw.update()
@@ -5225,6 +5000,7 @@ class ProtocolParserApp(FluentWindow):
 
     def _on_sender_changed(self, value: str) -> None:
         self.serial_sender = "MCU发送" if str(value) == "MCU发送" else "模组发送"
+        self.tx_direction = self.serial_sender
         if self.collector and self.hex_format:
             self.collector.direction = (
                 "request" if self.serial_sender == "模组发送" else "response"
@@ -5334,55 +5110,197 @@ class ProtocolParserApp(FluentWindow):
 
     # ================= 在线更新(整体删除时移除本区域) =================
     def _setup_update_feature(self) -> None:
+        self._update_ui_phase = "idle"
+        self._update_prompt = None
+        self._update_result_prompt = None
+        self._update_dialog = None
+        self._update_check_manual = False
+        self._update_feature_ready = False
         if not UPDATE_ENABLED:
             self.btn_check_update.setVisible(False)
             return
         from protocol_parser.updater import Updater
 
         self._updater = Updater(self)
+        if self._update_feature_ready:
+            return
+        self._update_feature_ready = True
         self._updater.check_finished.connect(self._on_update_check_finished)
         self._updater.download_progress.connect(self._on_update_download_progress)
         self._updater.download_finished.connect(self._on_update_download_finished)
-        # 启动 3 秒后静默检查一次，有新版才提示。
-        QTimer.singleShot(3000, self._updater.check_update)
+        # 启动 3 秒后静默检查一次，有新版才提示；失败时 updater 内部退避。
+        QTimer.singleShot(3000, lambda: self._start_update_check(manual=False))
 
     def _on_check_update_clicked(self) -> None:
-        self._set_status("正在检查更新…")
-        self._updater.check_update()
+        self._start_update_check(manual=True)
+
+    def _set_update_ui_phase(self, phase: str) -> None:
+        self._update_ui_phase = phase
+        button = getattr(self, "btn_check_update", None)
+        if button is not None:
+            button.setEnabled(phase == "idle")
+
+    def _start_update_check(self, *, manual: bool) -> bool:
+        if getattr(self, "_update_ui_phase", "idle") != "idle":
+            if manual:
+                self._set_status("更新检查或下载正在进行，请稍候…")
+            return False
+        updater = getattr(self, "_updater", None)
+        if updater is None:
+            return False
+        if not updater.can_check_now(manual=manual):
+            if manual:
+                remaining = int(updater.seconds_until_next_check())
+                if remaining > 0:
+                    self._set_status(f"更新检查过于频繁，请 {remaining} 秒后再试")
+                else:
+                    self._set_status("更新检查或下载正在进行，请稍候…")
+            return False
+        self._update_check_manual = manual
+        self._set_update_ui_phase("checking")
+        if manual:
+            self._set_status("正在检查更新…")
+        try:
+            started = bool(updater.check_update(manual=manual))
+        except Exception:
+            self._update_check_manual = False
+            self._set_update_ui_phase("idle")
+            raise
+        if not started:
+            self._update_check_manual = False
+            self._set_update_ui_phase("idle")
+            if manual:
+                remaining = int(updater.seconds_until_next_check())
+                if remaining > 0:
+                    self._set_status(f"更新检查过于频繁，请 {remaining} 秒后再试")
+                else:
+                    self._set_status("更新检查或下载正在进行，请稍候…")
+        return started
 
     def _on_update_check_finished(self, has_new: bool, info: dict) -> None:
+        manual = bool(getattr(self, "_update_check_manual", False))
+        self._update_check_manual = False
+        if getattr(self, "_update_ui_phase", "idle") != "checking":
+            _log.info("忽略过期或重复的更新检查结果")
+            return
+        error = info.get("__error")
+        if error:
+            self._set_update_ui_phase("idle")
+            if manual:
+                self._set_status(str(error))
+            else:
+                _log.info("静默更新检查失败: %s", error)
+            return
         if not has_new:
-            self._set_status("已是最新版本")
+            self._set_update_ui_phase("idle")
+            if manual:
+                self._set_status("已是最新版本")
+            return
+        if self._update_prompt is not None:
+            _log.info("更新提示框已显示，忽略重复结果")
             return
         version = info.get("tag_name", "")
         notes = str(info.get("body") or "").strip()
-        message = f"发现新版本 {version}\n\n{notes}\n\n是否立即下载并更新?"
-        answer = QMessageBox.question(
-            self, "发现新版本", message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+        from protocol_parser.updater import format_update_prompt_message
+
+        message = format_update_prompt_message(version, notes)
+        prompt = _QtMessageBox(self)
+        prompt.setWindowTitle(ui_text("发现新版本"))
+        prompt.setIcon(_QtMessageBox.Icon.Information)
+        prompt.setText(message)
+        prompt.setStandardButtons(
+            _QtMessageBox.StandardButton.Yes | _QtMessageBox.StandardButton.No,
         )
-        if answer == QMessageBox.StandardButton.Yes:
-            self._updater.download_and_install(info)
+        prompt.setDefaultButton(_QtMessageBox.StandardButton.Yes)
+        prompt.setWindowModality(Qt.WindowModality.WindowModal)
+        prompt.finished.connect(
+            lambda _result, release_info=dict(info): self._on_update_prompt_finished(
+                release_info
+            )
+        )
+        self._update_prompt = prompt
+        self._set_update_ui_phase("prompt")
+        # 非阻塞 open() 不创建嵌套事件循环，避免多个 queued signal 叠出模态框。
+        prompt.open()
+
+    def _on_update_prompt_finished(self, info: dict) -> None:
+        prompt = self._update_prompt
+        if prompt is None:
+            self._set_update_ui_phase("idle")
+            return
+        clicked = prompt.clickedButton()
+        answer = (
+            prompt.standardButton(clicked)
+            if clicked is not None
+            else _QtMessageBox.StandardButton.NoButton
+        )
+        self._update_prompt = None
+        prompt.deleteLater()
+        if answer != _QtMessageBox.StandardButton.Yes:
+            self._set_update_ui_phase("idle")
+            return
+        self._set_update_ui_phase("downloading")
+        self._ensure_update_progress_dialog()
+        if not self._updater.download_and_install(info):
+            if self._update_dialog is not None:
+                dialog = self._update_dialog
+                self._update_dialog = None
+                dialog.close()
+                dialog.deleteLater()
+            self._set_update_ui_phase("idle")
+
+    def _ensure_update_progress_dialog(self) -> QProgressDialog:
+        if self._update_dialog is None:
+            dialog = QProgressDialog("正在下载更新…", "取消", 0, 0, self)
+            dialog.setWindowTitle("下载更新")
+            dialog.setWindowModality(Qt.WindowModality.WindowModal)
+            dialog.setAutoClose(False)
+            dialog.setAutoReset(False)
+            dialog.setMinimumDuration(0)
+            dialog.canceled.connect(self._updater.cancel_download)
+            self._update_dialog = dialog
+            dialog.show()
+        return self._update_dialog
 
     def _on_update_download_progress(self, received: int, total: int) -> None:
-        if not hasattr(self, "_update_dialog"):
-            self._update_dialog = QProgressDialog(
-                "正在下载更新…", "取消", 0, 100, self
-            )
-            self._update_dialog.setWindowTitle("下载更新")
-            self._update_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-            self._update_dialog.setAutoClose(False)
-        self._update_dialog.setMaximum(max(1, total))
-        self._update_dialog.setValue(received)
-        if self._update_dialog.wasCanceled():
-            self._updater._reply.abort()
+        dialog = self._ensure_update_progress_dialog()
+        if total <= 0:
+            if dialog.minimum() != 0 or dialog.maximum() != 0:
+                dialog.setRange(0, 0)
+            return
+        if dialog.minimum() != 0 or dialog.maximum() != total:
+            dialog.setRange(0, total)
+        dialog.setValue(min(received, total))
 
     def _on_update_download_finished(self, ok: bool, message: str) -> None:
-        if hasattr(self, "_update_dialog"):
-            self._update_dialog.close()
-            del self._update_dialog
-        QMessageBox.information(self, "更新", message)
+        if self._update_dialog is not None:
+            dialog = self._update_dialog
+            self._update_dialog = None
+            dialog.close()
+            dialog.deleteLater()
+        self._set_status(message)
+        prompt = _QtMessageBox(self)
+        prompt.setWindowTitle("更新")
+        prompt.setIcon(
+            _QtMessageBox.Icon.Information
+            if ok
+            else _QtMessageBox.Icon.Warning
+        )
+        prompt.setText(message)
+        prompt.setStandardButtons(_QtMessageBox.StandardButton.Ok)
+        prompt.setDefaultButton(_QtMessageBox.StandardButton.Ok)
+        prompt.setWindowModality(Qt.WindowModality.WindowModal)
+        prompt.finished.connect(self._on_update_result_prompt_finished)
+        self._update_result_prompt = prompt
+        self._set_update_ui_phase("result")
+        prompt.open()
+
+    def _on_update_result_prompt_finished(self, _result: int = 0) -> None:
+        prompt = getattr(self, "_update_result_prompt", None)
+        self._update_result_prompt = None
+        if prompt is not None:
+            prompt.deleteLater()
+        self._set_update_ui_phase("idle")
     # ================= 在线更新区域结束 =================
 
     def closeEvent(self, event) -> None:
@@ -5390,6 +5308,22 @@ class ProtocolParserApp(FluentWindow):
             self._cmdlib_flush_pending_save()
         except Exception as exc:
             _log_error_to_disk(exc)
+        self._save_session_preferences()
+        updater = getattr(self, "_updater", None)
+        if updater is not None:
+            try:
+                updater.cancel_download()
+            except Exception as exc:
+                _log_error_to_disk(exc)
+        prompt = getattr(self, "_update_prompt", None)
+        if prompt is not None:
+            prompt.close()
+        result_prompt = getattr(self, "_update_result_prompt", None)
+        if result_prompt is not None:
+            result_prompt.close()
+        progress = getattr(self, "_update_dialog", None)
+        if progress is not None:
+            progress.close()
         try:
             self._serial_manual_stop = True
             self._cancel_serial_reconnect()
@@ -5429,42 +5363,6 @@ class ProtocolParserApp(FluentWindow):
 
 
 # ---------- 启动 ----------
-
-def _register_bundled_font() -> None:
-    """注册随程序分发的等宽日志字体; 失败时静默回退, 不影响启动。"""
-    try:
-        from protocol_parser import dpi_font
-
-        font_file = resource_path("resources/fonts/MapleMono-NF-CN-Regular.ttf")
-        if not font_file.is_file():
-            return
-        font_id = QFontDatabase.addApplicationFont(str(font_file))
-        if font_id < 0:
-            return
-        families = QFontDatabase.applicationFontFamilies(font_id)
-        if not families:
-            return
-        # 仅作为日志窗口等宽字体; 界面字体保持系统微软雅黑(更圆润细腻)。
-        dpi_font.LOG_FONT_FAMILY = str(families[0])
-    except Exception:
-        pass
-
-def ensure_log_font_family() -> str | None:
-    """返回日志等宽字体族名; 启动注册未成功时现场再注册一次, 保证生效。"""
-    from protocol_parser import dpi_font
-    if dpi_font.LOG_FONT_FAMILY:
-        return dpi_font.LOG_FONT_FAMILY
-    try:
-        font_file = resource_path("resources/fonts/MapleMono-NF-CN-Regular.ttf")
-        if font_file.is_file():
-            font_id = QFontDatabase.addApplicationFont(str(font_file))
-            if font_id >= 0:
-                families = QFontDatabase.applicationFontFamilies(font_id)
-                if families:
-                    dpi_font.LOG_FONT_FAMILY = str(families[0])
-    except Exception:
-        pass
-    return dpi_font.LOG_FONT_FAMILY
 
 def main():
     import argparse
@@ -5526,6 +5424,7 @@ def main():
         app.setApplicationDisplayName(APP_NAME)
 
         _register_bundled_font()
+        app._serialx_translator = install_translator(app)
 
         # The application font is applied after the Fluent theme is selected so
         # its DPI/resolution-aware point size is not overwritten by theme setup.
@@ -5541,6 +5440,9 @@ def main():
         setThemeColor(PALETTE["primary"])
         apply_application_font(screen=app.primaryScreen())
         install_adaptive_ui_controller(app)
+        from protocol_parser.ui_corners import install_corner_radius_controller
+
+        install_corner_radius_controller(app)
 
         # 3. 再创建主窗口
         window = ProtocolParserApp(monitor_port=monitor_port, monitor_baud=monitor_baud)

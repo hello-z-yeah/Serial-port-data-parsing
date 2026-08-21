@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal, QModelIndex, QObject, QEvent
 from PySide6.QtWidgets import (
     QLabel, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton,
-    QButtonGroup, QDialog, QSizePolicy, QTableWidget,
+    QButtonGroup, QDialog, QSizePolicy, QTableWidget, QMessageBox,
 )
 from qfluentwidgets import (
     ToolTipFilter, ToolTipPosition, CardWidget, StrongBodyLabel,
@@ -29,7 +29,12 @@ class FluentCellToolTipFilter(QObject):
             self._tooltip.hide()
 
     def eventFilter(self, obj, event) -> bool:
-        if obj is self._table.viewport() and event.type() == QEvent.Type.ToolTip:
+        try:
+            viewport = self._table.viewport()
+        except RuntimeError:
+            # 表格已被销毁，避免在应用退出时访问已删除的 C++ 对象。
+            return False
+        if obj is viewport and event.type() == QEvent.Type.ToolTip:
             item = self._table.itemAt(event.pos())
             if item is not None:
                 text = str(item.toolTip() or "").strip()
@@ -39,7 +44,7 @@ class FluentCellToolTipFilter(QObject):
                     else:
                         self._tooltip.setText(text)
                     self._tooltip.adjustSize()
-                    gp = self._table.viewport().mapToGlobal(event.pos())
+                    gp = viewport.mapToGlobal(event.pos())
                     x = gp.x() - self._tooltip.width() // 2
                     y = gp.y() - self._tooltip.height() - 8
                     if y < 0:
@@ -229,11 +234,13 @@ class _StyledMessageDialog(QDialog):
         "information": PALETTE["primary"],
         "warning": PALETTE["warn"],
         "critical": PALETTE["error"],
+        "question": PALETTE["primary"],
     }
     _KIND_MARK = {
         "information": "i",
         "warning": "!",
         "critical": "×",
+        "question": "?",
     }
 
     def __init__(
@@ -242,6 +249,8 @@ class _StyledMessageDialog(QDialog):
         title: str,
         text: str,
         kind: str,
+        buttons: "QMessageBox.StandardButton | None" = None,
+        default_button: "QMessageBox.StandardButton | None" = None,
     ) -> None:
         super().__init__(parent)
         self.setModal(True)
@@ -249,6 +258,7 @@ class _StyledMessageDialog(QDialog):
         self.setMinimumWidth(380)
         self.setMaximumWidth(16_777_215)
         self.setObjectName("StyledMessageDialog")
+        self._result_button: "QMessageBox.StandardButton | None" = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
@@ -292,10 +302,7 @@ class _StyledMessageDialog(QDialog):
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        ok_button = PrimaryPushButton("确定", card)
-        ok_button.setMinimumWidth(88)
-        ok_button.clicked.connect(self.accept)
-        button_row.addWidget(ok_button)
+        self._build_buttons(card, button_row, buttons, default_button)
         card_layout.addLayout(button_row)
 
         outer.addWidget(card)
@@ -317,14 +324,57 @@ class _StyledMessageDialog(QDialog):
             margin=(40, 80),
         )
 
+    def _build_buttons(
+        self,
+        parent: QWidget,
+        layout: QHBoxLayout,
+        buttons: "QMessageBox.StandardButton | None",
+        default_button: "QMessageBox.StandardButton | None",
+    ) -> None:
+        if buttons is None:
+            ok_button = PrimaryPushButton("确定", parent)
+            ok_button.setMinimumWidth(88)
+            ok_button.clicked.connect(self.accept)
+            layout.addWidget(ok_button)
+            return
+
+        configured: list[tuple[str, "QMessageBox.StandardButton"]] = []
+        if buttons & QMessageBox.StandardButton.Yes:
+            configured.append(("是", QMessageBox.StandardButton.Yes))
+        if buttons & QMessageBox.StandardButton.No:
+            configured.append(("否", QMessageBox.StandardButton.No))
+        if buttons & QMessageBox.StandardButton.Ok:
+            configured.append(("确定", QMessageBox.StandardButton.Ok))
+        if buttons & QMessageBox.StandardButton.Cancel:
+            configured.append(("取消", QMessageBox.StandardButton.Cancel))
+
+        for idx, (label, standard) in enumerate(configured):
+            is_default = default_button is not None and default_button == standard
+            btn = PrimaryPushButton(label, parent) if is_default else PushButton(label, parent)
+            btn.setMinimumWidth(88)
+            btn.clicked.connect(lambda checked=False, b=standard: self._on_button_clicked(b))
+            layout.addWidget(btn)
+
+    def _on_button_clicked(self, button: "QMessageBox.StandardButton") -> None:
+        self._result_button = button
+        self.accept()
+
 
 class StyledMessageBox:
-    """兼容 ``QMessageBox.warning/information/critical`` 的外观统一门面。"""
+    """兼容 ``QMessageBox.warning/information/critical/question`` 的外观统一门面。"""
 
     @staticmethod
-    def _show(parent: QWidget | None, title: str, text: str, kind: str) -> int:
-        dialog = _StyledMessageDialog(parent, title, text, kind)
-        return dialog.exec()
+    def _show(
+        parent: QWidget | None,
+        title: str,
+        text: str,
+        kind: str,
+        buttons: "QMessageBox.StandardButton | None" = None,
+        default_button: "QMessageBox.StandardButton | None" = None,
+    ) -> "QMessageBox.StandardButton":
+        dialog = _StyledMessageDialog(parent, title, text, kind, buttons, default_button)
+        dialog.exec()
+        return dialog._result_button or QMessageBox.StandardButton.NoButton
 
     @staticmethod
     def _reject_extra_arguments(args, kwargs) -> None:
@@ -348,3 +398,15 @@ class StyledMessageBox:
     def critical(parent: QWidget | None, title: str, text: str, *args, **kwargs) -> int:
         StyledMessageBox._reject_extra_arguments(args, kwargs)
         return StyledMessageBox._show(parent, title, text, "critical")
+
+    @staticmethod
+    def question(
+        parent: QWidget | None,
+        title: str,
+        text: str,
+        buttons: "QMessageBox.StandardButton" = None,
+        default_button: "QMessageBox.StandardButton" = None,
+    ) -> "QMessageBox.StandardButton":
+        if buttons is None:
+            buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        return StyledMessageBox._show(parent, title, text, "question", buttons, default_button)

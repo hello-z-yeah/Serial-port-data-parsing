@@ -23,7 +23,8 @@ from .parser import (
     parse_hex_input,
     to_hex,
 )
-from .serial_collector import FrameSynchronizer, SerialCollector
+from .serial_collector import FrameSynchronizer
+from .serial_collector_optimized import OptimizedSerialCollector as SerialCollector
 from .exceptions import EnvironmentStateError, ValidationError
 
 
