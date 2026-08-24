@@ -46,6 +46,11 @@ from protocol_parser.dpi_font import (
     apply_adaptive_geometry,
     fit_text_control,
 )
+from protocol_parser.log_text_style import (
+    apply_log_text_edit_style,
+    ensure_log_font_family,
+    reapply_log_text_font,
+)
 
 
 _TEXT_EDIT_QSS = f"""
@@ -330,12 +335,24 @@ class CtrlWheelZoomTextEdit(TextEdit):
             self.setUpdatesEnabled(False)
 
         try:
+            log_family = (
+                str(self.property("_smst_log_font_family") or "").strip()
+                or ensure_log_font_family()
+                or document.defaultFont().family()
+                or self.font().family()
+            )
             widget_font = QFont(self.font())
+            if log_family:
+                widget_font.setFamily(log_family)
             widget_font.setPointSize(size)
             self.setFont(widget_font)
+            if log_family:
+                self.setProperty("_smst_log_font_family", log_family)
 
             document_font = QFont(document.defaultFont())
-            if document_font.family() == "":
+            if log_family:
+                document_font.setFamily(log_family)
+            elif document_font.family() == "":
                 document_font.setFamily(widget_font.family())
             document_font.setPointSize(size)
             document.setDefaultFont(document_font)
@@ -594,27 +611,15 @@ class McuSimulatePage(QWidget):
         self.data_text = CtrlWheelZoomTextEdit(self.data_card)
         self.data_text.setObjectName("McuRealtimeDataText")
         self.data_text.setProperty("smstIndependentDataFont", True)
-        self.data_text.setStyleSheet(_TEXT_EDIT_QSS)
         self.data_text.setReadOnly(True)
         self.data_text.setAcceptRichText(False)
         self.data_text.setUndoRedoEnabled(False)
         max_lines = max(100, int(getattr(self._mw, "max_display_lines", 10000)))
         self.data_text.document().setMaximumBlockCount(max_lines)
-        self.data_text.setFont(QFont(self._mw.font()))
-        from protocol_parser.gui import ensure_log_font_family
-        family = ensure_log_font_family()
-        if family:
-            font = QFont(self.data_text.font())
-            font.setFamily(family)
-            self.data_text.setFont(font)
-            self.data_text.setStyleSheet(
-                self.data_text.styleSheet()
-                + f'\nQTextEdit#McuRealtimeDataText {{ font-family: "{family}"; }}'
-            )
-            doc_font = QFont(self.data_text.document().defaultFont())
-            doc_font.setFamily(family)
-            self.data_text.document().setDefaultFont(doc_font)
-        self.data_text.set_data_font_point_size(self.data_font_spin.value())
+        apply_log_text_edit_style(
+            self.data_text,
+            point_size=self.data_font_spin.value(),
+        )
         self.data_font_spin.valueChanged.connect(
             self.data_text.set_data_font_point_size
         )
@@ -721,7 +726,10 @@ class McuSimulatePage(QWidget):
 
             # Preserve the user's independent data-window setting after the
             # application font is refreshed.
-            self.data_text.set_data_font_point_size(self.data_font_spin.value())
+            reapply_log_text_font(
+                self.data_text,
+                point_size=self.data_font_spin.value(),
+            )
             self._schedule_lower_panel_rebalance()
         finally:
             self._applying_dpi_metrics = False

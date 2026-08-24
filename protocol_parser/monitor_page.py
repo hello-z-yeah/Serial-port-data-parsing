@@ -12,7 +12,7 @@ import threading
 from collections import deque
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QDialog,
@@ -43,7 +43,7 @@ from protocol_parser.display_format import (
     normalize_monitor_display_line,
 )
 from protocol_parser.dpi_font import UI_FONT_BASE_POINT_SIZE
-from protocol_parser.log_text_style import apply_log_text_edit_style
+from protocol_parser.log_text_style import apply_log_text_edit_style, reapply_log_text_font
 from protocol_parser.monitor_settings import (
     MAX_MONITOR_PATTERN_CHARS,
     load_monitor_settings,
@@ -99,6 +99,8 @@ class _MonitorSettingsDialog(QDialog):
 class MonitorToolPage(QWidget):
     """左侧导航页：监听工具。"""
 
+    _export_finished = Signal(str, object)  # path, error (Exception | None)
+
     def __init__(self, main_window: QWidget) -> None:
         super().__init__(main_window)
         self.setObjectName("monitorToolPage")
@@ -115,6 +117,8 @@ class MonitorToolPage(QWidget):
         self._root = QVBoxLayout(self)
         self._root.setContentsMargins(0, 2, 0, 0)
         self._root.setSpacing(6)
+        self._export_progress: QProgressDialog | None = None
+        self._export_finished.connect(self._on_export_finished)
 
         # 顶部标题栏
         switch_card = QWidget(self)
@@ -196,6 +200,7 @@ class MonitorToolPage(QWidget):
         layout.addWidget(toolbar)
 
         self.serial_text = CtrlWheelZoomTextEdit()
+        self.serial_text.setProperty("smstIndependentDataFont", True)
         self.serial_text.setObjectName("MonitorRealtimeDataText")
         self.serial_text.setReadOnly(True)
         self.serial_text.setUndoRedoEnabled(False)
@@ -238,6 +243,7 @@ class MonitorToolPage(QWidget):
         layout.addWidget(header)
 
         self.record_text = CtrlWheelZoomTextEdit()
+        self.record_text.setProperty("smstIndependentDataFont", True)
         self.record_text.setObjectName("MonitorRecordText")
         self.record_text.setReadOnly(True)
         self.record_text.setUndoRedoEnabled(False)
@@ -254,6 +260,13 @@ class MonitorToolPage(QWidget):
             text_edit,
             point_size=UI_FONT_BASE_POINT_SIZE,
         )
+
+    def reapply_log_fonts(self) -> None:
+        """Restore monospace fonts after a global UI font refresh."""
+        for name in ("serial_text", "record_text"):
+            text_edit = getattr(self, name, None)
+            if text_edit is not None:
+                reapply_log_text_font(text_edit)
 
     # ------------------------------------------------------------------
     # 事件处理
@@ -363,6 +376,7 @@ class MonitorToolPage(QWidget):
 
     def _export_records(self) -> None:
         """将监听记录导出为 Word 文档（后台线程写入，避免阻塞 UI）。"""
+        self.flush_pending_display()
         text = self.record_text.toPlainText()
         if not text.strip():
             QMessageBox.information(self, "无记录", "当前没有监听记录可导出。")
@@ -381,6 +395,7 @@ class MonitorToolPage(QWidget):
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
         progress.setCancelButton(None)
+        self._export_progress = progress
         progress.show()
 
         def worker() -> None:
@@ -395,10 +410,7 @@ class MonitorToolPage(QWidget):
                 doc.save(path)
             except Exception as exc:
                 error = exc
-            QTimer.singleShot(
-                0,
-                lambda: self._finish_export_records(path, error, progress),
-            )
+            self._export_finished.emit(path, error)
 
         threading.Thread(
             target=worker,
@@ -406,13 +418,15 @@ class MonitorToolPage(QWidget):
             name="smst-monitor-export",
         ).start()
 
-    def _finish_export_records(
+    def _on_export_finished(
         self,
         path: str,
-        error: Exception | None,
-        progress: QProgressDialog,
+        error: object,
     ) -> None:
-        progress.close()
+        progress = self._export_progress
+        self._export_progress = None
+        if progress is not None:
+            progress.close()
         if error is not None:
             QMessageBox.warning(self, "导出失败", f"导出 Word 失败：{error}")
             return

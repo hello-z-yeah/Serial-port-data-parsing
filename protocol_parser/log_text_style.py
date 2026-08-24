@@ -50,22 +50,43 @@ def ensure_log_font_family() -> str | None:
     return dpi_font.LOG_FONT_FAMILY
 
 
+def _resolve_log_text_point_size(text_edit, point_size: int | None) -> int:
+    if point_size is not None:
+        return max(1, int(point_size))
+    getter = getattr(text_edit, "data_font_point_size", None)
+    if callable(getter):
+        return max(1, int(getter()))
+    widget_font = text_edit.font()
+    if widget_font.pointSizeF() > 0:
+        return max(1, int(round(widget_font.pointSizeF())))
+    return UI_FONT_BASE_POINT_SIZE
+
+
+def reapply_log_text_font(text_edit, *, point_size: int | None = None) -> None:
+    """Restore bundled monospace family after global UI font refreshes."""
+    family = ensure_log_font_family()
+    resolved_size = _resolve_log_text_point_size(text_edit, point_size)
+    object_name = str(text_edit.objectName() or "").strip()
+    base_qss = text_edit.property("_smst_log_text_base_qss")
+    if base_qss is None:
+        base_qss = TEXT_EDIT_FRAME_QSS
+        text_edit.setProperty("_smst_log_text_base_qss", base_qss)
+    qss = str(base_qss)
+    if family and object_name:
+        qss += f'\nQTextEdit#{object_name} {{ font-family: "{family}"; }}'
+    text_edit.setStyleSheet(qss)
+
+    font = make_crisp_ui_font(resolved_size)
+    if family:
+        font.setFamily(family)
+        text_edit.setProperty("_smst_log_font_family", family)
+    text_edit.setFont(font)
+    text_edit.document().setDefaultFont(QFont(font))
+
+
 def apply_log_text_edit_style(text_edit, *, point_size: int) -> None:
     """Apply the common frame and monospace font to one log text widget."""
-    text_edit.setStyleSheet(TEXT_EDIT_FRAME_QSS)
-    text_edit.setFont(make_crisp_ui_font(point_size))
-    family = ensure_log_font_family()
-    if family:
-        font = QFont(text_edit.font())
-        font.setFamily(family)
-        text_edit.setFont(font)
-        text_edit.setStyleSheet(
-            text_edit.styleSheet()
-            + f'\nQTextEdit#{text_edit.objectName()} {{ font-family: "{family}"; }}'
-        )
-        document_font = QFont(text_edit.document().defaultFont())
-        document_font.setFamily(family)
-        text_edit.document().setDefaultFont(document_font)
+    reapply_log_text_font(text_edit, point_size=point_size)
     setter = getattr(text_edit, "set_data_font_point_size", None)
     if callable(setter):
         setter(point_size)

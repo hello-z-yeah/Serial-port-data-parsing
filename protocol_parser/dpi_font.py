@@ -13,7 +13,7 @@ import re
 import weakref
 
 from PySide6.QtCore import QSize, Qt, QRect, QObject, QEvent, QTimer
-from PySide6.QtGui import QFont, QFontMetrics, QScreen
+from PySide6.QtGui import QFont, QFontMetrics, QFontDatabase, QScreen
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
@@ -36,8 +36,11 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import ToolTipFilter, ToolTipPosition
 
-UI_FONT_FAMILY = "Microsoft YaHei UI"
-# 随程序分发的等宽日志字体族名; 启动注册成功后填充, 界面字体保持微软雅黑。
+UI_FONT_FAMILY_FALLBACK = "Microsoft YaHei UI"
+UI_FONT_FAMILY = UI_FONT_FAMILY_FALLBACK
+# 随程序分发的界面字体族名; 启动注册成功后填充。
+UI_FONT_FAMILY_REGISTERED: str | None = None
+# 随程序分发的等宽日志字体族名; 启动注册成功后填充, 仅用于实时数据窗口。
 LOG_FONT_FAMILY: str | None = None
 UI_FONT_BASE_POINT_SIZE = 10
 UI_FONT_MAX_POINT_SIZE = 14
@@ -45,6 +48,40 @@ _QT_MAX_SIZE = 16_777_215
 _ADAPT_DEBOUNCE_MS = 120
 _CONTROLLER = None
 _TRANSIENT_WINDOW_TYPES = (QMessageBox, QProgressDialog, QFileDialog)
+_UI_FONT_FILE = "resources/fonts/HarmonyOS_Sans_SC_Medium.ttf"
+
+
+def register_bundled_ui_font() -> None:
+    """Register the bundled UI font; failure keeps the system fallback."""
+    global UI_FONT_FAMILY, UI_FONT_FAMILY_REGISTERED
+    if UI_FONT_FAMILY_REGISTERED:
+        return
+    try:
+        from .paths import resource_path
+
+        font_file = resource_path(_UI_FONT_FILE)
+        if not font_file.is_file():
+            return
+        font_id = QFontDatabase.addApplicationFont(str(font_file))
+        if font_id < 0:
+            return
+        families = QFontDatabase.applicationFontFamilies(font_id)
+        if not families:
+            return
+        preferred = next(
+            (name for name in families if "medium" in str(name).lower()),
+            str(families[0]),
+        )
+        UI_FONT_FAMILY = str(preferred)
+        UI_FONT_FAMILY_REGISTERED = UI_FONT_FAMILY
+    except Exception:
+        pass
+
+
+def ensure_ui_font_family() -> str:
+    if not UI_FONT_FAMILY_REGISTERED:
+        register_bundled_ui_font()
+    return UI_FONT_FAMILY
 
 
 def _screen_for(widget: QWidget | None = None, screen: QScreen | None = None):
@@ -88,7 +125,7 @@ def responsive_point_size(
 
 
 def make_ui_font(point_size: int, *, weight: QFont.Weight | None = None) -> QFont:
-    font = QFont(UI_FONT_FAMILY)
+    font = QFont(ensure_ui_font_family())
     font.setPointSize(max(1, int(point_size)))
     if weight is not None:
         font.setWeight(weight)
@@ -117,7 +154,8 @@ def apply_application_font(
     if app is None:
         return point_size
 
-    signature = f"{UI_FONT_FAMILY}|{point_size}"
+    family = ensure_ui_font_family()
+    signature = f"{family}|{point_size}"
     if app.property("_smst_application_font_signature") == signature:
         return point_size
 
@@ -131,7 +169,7 @@ def apply_application_font(
     app.setStyleSheet(
         str(base_qss or "")
         + f'''\nQWidget {{
-            font-family: "{UI_FONT_FAMILY}";
+            font-family: "{family}";
             font-size: {point_size}pt;
         }}\n'''
     )
@@ -619,7 +657,7 @@ def scoped_font_stylesheet(object_name: str, point_size: int) -> str:
         "\n"
         + ",\n".join(selectors)
         + f''' {{
-            font-family: "{UI_FONT_FAMILY}";
+            font-family: "{ensure_ui_font_family()}";
             font-size: {int(point_size)}pt;
         }}\n'''
     )
@@ -628,7 +666,8 @@ def scoped_font_stylesheet(object_name: str, point_size: int) -> str:
 def apply_scoped_font(root: QWidget, point_size: int) -> None:
     """Apply one font tree plus a scoped QSS override without accumulation."""
     point_size = max(1, int(point_size))
-    signature = f"{UI_FONT_FAMILY}|{point_size}"
+    family = ensure_ui_font_family()
+    signature = f"{family}|{point_size}"
     if root.property("_smst_dpi_font_signature") != signature:
         root.setProperty("_smst_dpi_font_signature", signature)
         font = make_ui_font(point_size)

@@ -203,6 +203,16 @@ def test_serial_collector_rejects_oversized_payload_before_queueing():
     assert collector._tx_queue.empty()
 
 
+def test_monitor_export_uses_signal_for_thread_callback():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "protocol_parser" / "monitor_page.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_export_finished = Signal" in source
+    assert "self._export_finished.emit(path, error)" in source
+    assert "QTimer.singleShot" not in source[source.index("def _export_records") : source.index("def _on_export_finished")]
+
+
 def test_monitor_page_source_has_bounded_records_and_hex_highlight():
     root = Path(__file__).resolve().parents[1]
     source = (root / "protocol_parser" / "monitor_page.py").read_text(

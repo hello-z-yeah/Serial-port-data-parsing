@@ -7,6 +7,15 @@ MCU = ROOT / "protocol_parser" / "mcu_page.py"
 EDITOR = ROOT / "protocol_parser" / "attr_editor.py"
 
 
+def test_bundled_ui_font_is_registered_at_startup() -> None:
+    dpi = DPI.read_text(encoding="utf-8")
+    gui = GUI.read_text(encoding="utf-8")
+    assert "HarmonyOS_Sans_SC_Medium.ttf" in dpi
+    assert "def register_bundled_ui_font" in dpi
+    assert "register_bundled_ui_font()" in gui
+    assert "def ensure_ui_font_family" in dpi
+
+
 def test_application_font_uses_native_dpi_point_size_and_screen_safe_geometry() -> None:
     dpi = DPI.read_text(encoding="utf-8")
     gui = GUI.read_text(encoding="utf-8")

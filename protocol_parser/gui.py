@@ -94,8 +94,9 @@ from protocol_parser.paths import (  # noqa: E402
 from protocol_parser.theme import ThemeManager, PALETTE  # noqa: E402
 from protocol_parser.log_text_style import (  # noqa: E402
     TEXT_EDIT_FRAME_QSS as _TEXT_EDIT_FRAME_QSS,
-    ensure_log_font_family,
+    apply_log_text_edit_style,
     make_crisp_ui_font as _make_crisp_ui_font,
+    reapply_log_text_font,
     register_bundled_log_font as _register_bundled_font,
 )
 from protocol_parser.widgets import (  # noqa: E402
@@ -130,8 +131,9 @@ from protocol_parser.gui_combos import (  # noqa: E402
 from protocol_parser.cycle_config_dialog import CycleConfigDialog  # noqa: E402
 from protocol_parser.add_serial_port_dialog import AddSerialPortDialog  # noqa: E402
 from protocol_parser.dpi_font import (  # noqa: E402
-    UI_FONT_FAMILY,
     UI_FONT_BASE_POINT_SIZE,
+    ensure_ui_font_family,
+    register_bundled_ui_font,
     effective_resolution_scale,
     responsive_point_size,
     apply_application_font,
@@ -148,8 +150,7 @@ _log = logging.getLogger(__name__)
 
 
 # Windows 下使用明确的 UI 字体和整数点值，避免系统回退字体与分数缩放
-# 造成小字号文字发虚。数据窗口也继承同一字体。
-_UI_FONT_FAMILY = UI_FONT_FAMILY
+# 造成小字号文字发虚。实时数据窗口仍使用独立等宽字体。
 _UI_FONT_POINT_SIZE = UI_FONT_BASE_POINT_SIZE
 _MAX_FIELDS_JSON_CHARS = 1024 * 1024
 _MAX_TX_INPUT_CHARS = 2 * 1024 * 1024
@@ -242,19 +243,20 @@ def _apply_cmdlib_table_font_style(table: QWidget, font: QFont) -> None:
     double scaling on 2K/4K screens.
     """
     point_size = max(1, round(font.pointSizeF()))
+    ui_family = ensure_ui_font_family()
     qss = f"""
     QTableWidget#CommandLibraryTable {{
-        font-family: "{_UI_FONT_FAMILY}";
+        font-family: "{ui_family}";
         font-size: {point_size}pt;
     }}
     QTableWidget#CommandLibraryTable QHeaderView::section {{
-        font-family: "{_UI_FONT_FAMILY}";
+        font-family: "{ui_family}";
         font-size: {point_size}pt;
         font-weight: 600;
         padding: 3px 5px;
     }}
     QPushButton[commandTableButton="true"] {{
-        font-family: "{_UI_FONT_FAMILY}";
+        font-family: "{ui_family}";
         font-size: {point_size}pt;
         padding: 2px 10px;
     }}
@@ -1235,7 +1237,7 @@ class ProtocolParserApp(FluentWindow):
                 title_font.setWeight(QFont.Weight.Medium)
                 title_label.setFont(title_font)
                 title_label.setStyleSheet(
-                    f'font-family: "{_UI_FONT_FAMILY}"; '
+                    f'font-family: "{ensure_ui_font_family()}"; '
                     f'font-size: {title_point_size}pt; font-weight: 500;'
                 )
                 title_label.setMinimumHeight(title_bar_height)
@@ -1447,15 +1449,37 @@ class ProtocolParserApp(FluentWindow):
             except Exception:
                 pass
 
-        # The two real-time data QTextEdit widgets have an independent user
-        # selected size.  Reapply it after QApplication font changes.
+        # The real-time data QTextEdit widgets keep an independent user-selected
+        # size and bundled monospace family. Reapply both after global UI refresh.
         serial_text = getattr(self, "serial_text", None)
-        serial_spin = getattr(self, "data_font_spin", None)
-        if serial_text is not None and serial_spin is not None:
+        serial_spin = getattr(self, "realtime_font_spin", None)
+        if serial_text is not None:
             try:
-                serial_text.set_data_font_point_size(serial_spin.value())
+                reapply_log_text_font(
+                    serial_text,
+                    point_size=serial_spin.value() if serial_spin is not None else None,
+                )
             except Exception:
                 pass
+
+        monitor_page = getattr(self, "monitor_page", None)
+        if monitor_page is not None:
+            try:
+                monitor_page.reapply_log_fonts()
+            except Exception:
+                pass
+
+        if mcu_page is not None:
+            data_text = getattr(mcu_page, "data_text", None)
+            data_spin = getattr(mcu_page, "data_font_spin", None)
+            if data_text is not None:
+                try:
+                    reapply_log_text_font(
+                        data_text,
+                        point_size=data_spin.value() if data_spin is not None else None,
+                    )
+                except Exception:
+                    pass
 
         self._align_title_bar_left()
 
@@ -2527,25 +2551,14 @@ class ProtocolParserApp(FluentWindow):
         self.serial_text = CtrlWheelZoomTextEdit()
         self.serial_text.setProperty("smstIndependentDataFont", True)
         self.serial_text.setObjectName("RealtimeDataText")
-        self.serial_text.setStyleSheet(_TEXT_EDIT_FRAME_QSS)
         self.serial_text.setReadOnly(True)
         self.serial_text.setUndoRedoEnabled(False)
         self.serial_text.setAcceptRichText(False)
         self.serial_text.document().setMaximumBlockCount(self.max_display_lines)
-        self.serial_text.setFont(_make_crisp_ui_font(_UI_FONT_POINT_SIZE))
-        family = ensure_log_font_family()
-        if family:
-            font = QFont(self.serial_text.font())
-            font.setFamily(family)
-            self.serial_text.setFont(font)
-            self.serial_text.setStyleSheet(
-                self.serial_text.styleSheet()
-                + f'\nQTextEdit#RealtimeDataText {{ font-family: "{family}"; }}'
-            )
-            doc_font = QFont(self.serial_text.document().defaultFont())
-            doc_font.setFamily(family)
-            self.serial_text.document().setDefaultFont(doc_font)
-        self.serial_text.set_data_font_point_size(self.realtime_font_spin.value())
+        apply_log_text_edit_style(
+            self.serial_text,
+            point_size=self.realtime_font_spin.value(),
+        )
         self.realtime_font_spin.valueChanged.connect(
             self.serial_text.set_data_font_point_size
         )
@@ -5997,6 +6010,7 @@ def main():
         app.setApplicationDisplayName(APP_NAME)
 
         _register_bundled_font()
+        register_bundled_ui_font()
         app._serialx_translator = install_translator(app)
 
         # The application font is applied after the Fluent theme is selected so

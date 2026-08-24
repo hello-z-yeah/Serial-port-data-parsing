@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import ComboBox, EditableComboBox
+from protocol_parser.dpi_font import UI_FONT_FAMILY_FALLBACK, ensure_ui_font_family
 
 
 def _is_widget_alive(widget: QWidget | None) -> bool:
@@ -33,7 +34,7 @@ def _is_widget_alive(widget: QWidget | None) -> bool:
 
 
 def _font_qss(font: QFont) -> str:
-    family = str(font.family() or "Microsoft YaHei UI").replace('"', "")
+    family = str(font.family() or ensure_ui_font_family() or UI_FONT_FAMILY_FALLBACK).replace('"', "")
     if font.pointSizeF() > 0:
         size_rule = f"font-size: {font.pointSizeF():g}pt;"
     elif font.pixelSize() > 0:
