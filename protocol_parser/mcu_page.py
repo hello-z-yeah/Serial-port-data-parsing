@@ -2262,7 +2262,7 @@ QTableView#AttributeTable::item:selected {{
                 "接收、解析和自动回复配置保持不变。"
                 if active_product else "删除所选产品不会加载其他产品。"
             )
-        answer = QMessageBox.question(
+        answer = StyledMessageBox.question(
             self,
             "删除产品",
             f"确定删除产品“{product_name}”及其 JSON 文件吗？\n\n"

@@ -36,8 +36,10 @@ GITEE_RELEASES_URL = (
     f"https://gitee.com/api/v5/repos/{GITEE_OWNER}/{GITEE_REPO}/releases"
 )
 DEFAULT_GITEE_VERSION_URL = (
-    f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}/raw/master/version.json"
+    f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}/raw/v3.1.0/version.json"
 )
+DEFAULT_GITEE_VERSION_BRANCHES = ("v3.1.0", "master", "main")
+_PLACEHOLDER_SHA256 = "0" * 64
 
 GITHUB_OWNER = "hello-z-yeah"
 GITHUB_REPO = "Serial-port-data-parsing"
@@ -115,7 +117,7 @@ def format_update_prompt_message(
     else:
         body = "（无发布说明）"
     tag = str(version or "").strip() or "?"
-    return f"发现新版本 {tag}\n\n{body}\n\n是否立即下载并更新?"
+    return f"版本 {tag}\n\n{body}\n\n是否立即下载并更新?"
 
 
 def gitee_release_download_url(version: str, asset_name: str) -> str:
@@ -156,17 +158,33 @@ def _bundled_version_json_paths() -> list[Path]:
     return paths
 
 
-def _iter_remote_fallback_sources() -> list[str]:
+def _gitee_raw_version_urls(tag: str = "") -> list[str]:
+    """Candidate Gitee raw URLs for version.json (branch + release tag)."""
+    urls: list[str] = []
+    seen: set[str] = set()
+    tag_text = str(tag or "").strip().lstrip("vV")
+    branches: list[str] = []
+    if tag_text:
+        branches.extend([tag_text, f"v{tag_text}"])
+    branches.extend(DEFAULT_GITEE_VERSION_BRANCHES)
+    for branch in branches:
+        url = f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}/raw/{branch}/version.json"
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def _iter_remote_fallback_sources(tag: str = "") -> list[str]:
     """Remote-only metadata sources used to discover a newer release."""
     sources: list[str] = []
     env_url = os.environ.get("SERIALX_UPDATE_FALLBACK_URL", "").strip()
     if env_url:
         sources.append(env_url)
-    for url in (
-        DEFAULT_GITEE_VERSION_URL,
-        DEFAULT_FALLBACK_VERSION_URL,
-        DEFAULT_RAW_VERSION_URL,
-    ):
+    for url in _gitee_raw_version_urls(tag):
+        if url not in sources:
+            sources.append(url)
+    for url in (DEFAULT_FALLBACK_VERSION_URL, DEFAULT_RAW_VERSION_URL):
         if url not in sources:
             sources.append(url)
     return sources
@@ -340,6 +358,15 @@ class Updater(QObject):
         }
 
     @staticmethod
+    def _is_usable_sha256(value: str) -> bool:
+        text = str(value or "").strip().lower()
+        if text.startswith("sha256:"):
+            text = text.split(":", 1)[1].strip()
+        if not _SHA256_RE.fullmatch(text):
+            return False
+        return text != _PLACEHOLDER_SHA256
+
+    @staticmethod
     def _expected_sha256(info: dict, asset: dict) -> str:
         for candidate in (
             asset.get("sha256"),
@@ -349,35 +376,89 @@ class Updater(QObject):
             text = str(candidate or "").strip()
             if text.lower().startswith("sha256:"):
                 text = text.split(":", 1)[1].strip()
-            if _SHA256_RE.fullmatch(text):
+            if Updater._is_usable_sha256(text):
                 return text.lower()
         return ""
 
     @classmethod
+    def _metadata_from_release_assets(cls, info: dict) -> dict | None:
+        target = cls._parse_version(info.get("tag_name", ""))
+        if not target:
+            return None
+        for asset in info.get("assets") or []:
+            if not isinstance(asset, dict):
+                continue
+            name = str(asset.get("name") or "").strip().lower()
+            if name != "version.json":
+                continue
+            url = str(asset.get("browser_download_url") or "").strip()
+            if not url:
+                continue
+            try:
+                metadata = cls._fallback_release_info(cls._fetch_fallback(url))
+            except Exception as exc:
+                _log.warning("读取 Release 附带 version.json 失败: %s", exc)
+                continue
+            if cls._parse_version(metadata.get("tag_name", "")) != target:
+                continue
+            if cls._expected_sha256(metadata, cls._find_installer_asset(metadata) or {}):
+                return metadata
+        return None
+
+    @classmethod
+    def _fetch_metadata_for_tag(cls, tag: str, *, allow_bundled: bool = False) -> dict | None:
+        """Load version.json whose tag matches the requested release."""
+        target = cls._parse_version(tag)
+        if not target:
+            return None
+        sources = _iter_remote_fallback_sources(tag)
+        if allow_bundled:
+            for bundled in _bundled_version_json_paths():
+                text = str(bundled)
+                if text not in sources:
+                    sources.append(text)
+        errors: list[str] = []
+        for source in sources:
+            try:
+                metadata = cls._fallback_release_info(cls._fetch_fallback(source))
+            except Exception as exc:
+                errors.append(f"{source}: {exc}")
+                continue
+            if cls._parse_version(metadata.get("tag_name", "")) != target:
+                continue
+            if cls._expected_sha256(metadata, cls._find_installer_asset(metadata) or {}):
+                return metadata
+        if errors:
+            _log.warning("未找到匹配 %s 的有效 version.json: %s", tag, "; ".join(errors))
+        return None
+
+    @classmethod
+    def _apply_metadata_digest(cls, info: dict, metadata: dict) -> dict:
+        asset = cls._find_installer_asset(info)
+        if asset is None:
+            return info
+        expected = cls._expected_sha256(metadata, cls._find_installer_asset(metadata) or {})
+        if not expected:
+            return info
+        asset["sha256"] = expected
+        asset["digest"] = f"sha256:{expected}"
+        info["sha256"] = expected
+        return info
+
+    @classmethod
     def _enrich_release_integrity(cls, info: dict) -> dict:
-        """Fill a missing GitHub digest from matching HTTPS fallback metadata."""
+        """Fill a missing release digest from tag-matched remote version.json."""
         asset = cls._find_installer_asset(info)
         if asset is None or cls._expected_sha256(info, asset):
             return info
-        try:
-            fallback = cls._fallback_release_info(
-                cls._fetch_fallback_from_sources(_iter_fallback_sources())
-            )
-            if cls._parse_version(fallback.get("tag_name", "")) != cls._parse_version(
-                info.get("tag_name", "")
-            ):
-                return info
-            fallback_asset = cls._find_installer_asset(fallback)
-            if fallback_asset is None:
-                return info
-            expected = cls._expected_sha256(fallback, fallback_asset)
-            if expected:
-                asset["sha256"] = expected
-                asset["digest"] = f"sha256:{expected}"
-                info["sha256"] = expected
-        except Exception as exc:
-            _log.warning("无法从备用源补充安装包摘要: %s", exc)
-        return info
+        tag = str(info.get("tag_name") or "").strip()
+        metadata = cls._metadata_from_release_assets(info)
+        if metadata is None and tag:
+            metadata = cls._fetch_metadata_for_tag(tag, allow_bundled=False)
+        if metadata is None:
+            _log.warning("Release %s 缺少可用的远程 SHA-256 元数据", tag or "?")
+            return info
+        return cls._apply_metadata_digest(info, metadata)
 
     @classmethod
     def _evaluate_release_info(cls, info: dict, source: str) -> tuple[bool, dict]:
@@ -558,7 +639,12 @@ class Updater(QObject):
                 partial.unlink(missing_ok=True)
                 received = 0
                 hasher = hashlib.sha256()
-                with requests.get(url, stream=True, timeout=30) as resp:
+                with requests.get(
+                    url,
+                    stream=True,
+                    timeout=30,
+                    headers={"User-Agent": "SerialX-Updater"},
+                ) as resp:
                     resp.raise_for_status()
                     total = int(resp.headers.get("Content-Length", 0))
                     if total > MAX_INSTALLER_BYTES:
@@ -571,6 +657,15 @@ class Updater(QObject):
                                 raise _DownloadCancelled("下载已取消")
                             if not chunk:
                                 continue
+                            if received == 0:
+                                content_type = str(
+                                    resp.headers.get("Content-Type") or ""
+                                ).lower()
+                                if "text/html" in content_type:
+                                    raise RuntimeError(
+                                        "下载地址返回网页而不是安装包，"
+                                        "请检查 Gitee Release 是否上传了正确的 exe"
+                                    )
                             received += len(chunk)
                             if received > MAX_INSTALLER_BYTES:
                                 raise RuntimeError("安装包大小超过 1 GiB 安全上限")
@@ -586,8 +681,30 @@ class Updater(QObject):
                     )
                 self._set_phase(UpdatePhase.VERIFYING)
                 actual_sha256 = hasher.hexdigest()
-                if actual_sha256 != expected_sha256:
-                    raise RuntimeError("安装包 SHA-256 校验失败，文件可能损坏或被篡改")
+                verify_digest = expected_sha256
+                if actual_sha256 != verify_digest:
+                    tag = str(self._info.get("tag_name") or "").strip()
+                    refreshed = (
+                        self._fetch_metadata_for_tag(tag, allow_bundled=False)
+                        if tag
+                        else None
+                    )
+                    if refreshed is not None:
+                        retry_expected = self._expected_sha256(
+                            refreshed,
+                            self._find_installer_asset(refreshed) or {},
+                        )
+                        if retry_expected and actual_sha256 == retry_expected:
+                            verify_digest = retry_expected
+                            self._info = self._apply_metadata_digest(
+                                dict(self._info),
+                                refreshed,
+                            )
+                    if actual_sha256 != verify_digest:
+                        raise RuntimeError(
+                            "安装包 SHA-256 校验失败。"
+                            "请确认 Gitee 上 version.json 的 sha256 与 Release 中的 exe 一致。"
+                        )
                 cancel_event = self._cancel_event
                 if cancel_event is not None and cancel_event.is_set():
                     raise _DownloadCancelled("下载已取消")

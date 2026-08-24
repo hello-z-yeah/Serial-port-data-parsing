@@ -8,10 +8,11 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     ToolTipFilter, ToolTipPosition, CardWidget, StrongBodyLabel,
-    BodyLabel, PrimaryPushButton, TableWidget, ToolTip,
+    BodyLabel, PrimaryPushButton, PushButton, TableWidget, ToolTip,
 )
 
 from .theme import PALETTE
+from .ui_corners import CORNER_RADIUS_PX
 from .dpi_font import fit_text_control, apply_adaptive_geometry, fit_window_to_screen
 
 
@@ -61,23 +62,17 @@ def ask_yes_no(
     *,
     default_no: bool = True,
 ) -> "QMessageBox.StandardButton":
-    """Yes/No prompt that cannot bounce when the message wraps."""
-    box = QMessageBox(parent)
-    stabilize_native_message_box(box)
-    box.setWindowTitle(str(title))
-    box.setIcon(QMessageBox.Icon.Question)
-    box.setText(str(text))
-    box.setStandardButtons(
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    """Yes/No prompt using the same Fluent card style as other message boxes."""
+    return StyledMessageBox.question(
+        parent,
+        title,
+        text,
+        default_button=(
+            QMessageBox.StandardButton.No
+            if default_no
+            else QMessageBox.StandardButton.Yes
+        ),
     )
-    box.setDefaultButton(
-        QMessageBox.StandardButton.No if default_no else QMessageBox.StandardButton.Yes
-    )
-    result = box.exec()
-    try:
-        return QMessageBox.StandardButton(result)
-    except (TypeError, ValueError):
-        return QMessageBox.StandardButton.NoButton
 
 
 class FluentCellToolTipFilter(QObject):
@@ -183,6 +178,47 @@ def apply_fluent_dialog_style(dialog: QDialog) -> None:
         }}
         QLabel {{
             color: {PALETTE['text']};
+        }}
+        QLineEdit, QPlainTextEdit, QTextEdit {{
+            background: {PALETTE['card_bg']};
+            border: 1px solid {PALETTE['card_border']};
+            border-radius: {CORNER_RADIUS_PX}px;
+            color: {PALETTE['text']};
+        }}
+    """)
+
+
+def apply_fluent_progress_dialog_style(dialog: QWidget) -> None:
+    """统一进度弹窗与主界面 Card / 按钮风格。"""
+    stabilize_transient_dialog(dialog, min_width=360, max_width=480)
+    dialog.setStyleSheet(f"""
+        QProgressDialog {{
+            background: {PALETTE['surface']};
+            color: {PALETTE['text']};
+        }}
+        QProgressDialog QLabel {{
+            color: {PALETTE['text']};
+        }}
+        QProgressBar {{
+            border: 1px solid {PALETTE['card_border']};
+            border-radius: 6px;
+            background: {PALETTE['card_bg']};
+            min-height: 10px;
+        }}
+        QProgressBar::chunk {{
+            background: {PALETTE['primary']};
+            border-radius: 5px;
+        }}
+        QProgressDialog QPushButton {{
+            background: {PALETTE['card_bg']};
+            border: 1px solid {PALETTE['card_border']};
+            border-radius: {CORNER_RADIUS_PX}px;
+            color: {PALETTE['text']};
+            padding: 6px 18px;
+            min-width: 72px;
+        }}
+        QProgressDialog QPushButton:hover {{
+            background: {PALETTE['surface']};
         }}
     """)
 
@@ -325,6 +361,7 @@ class _StyledMessageDialog(QDialog):
         self.setMaximumWidth(16_777_215)
         self.setObjectName("StyledMessageDialog")
         self._result_button: "QMessageBox.StandardButton | None" = None
+        self._dismiss_button = self._resolve_dismiss_button(buttons, kind)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
@@ -332,6 +369,8 @@ class _StyledMessageDialog(QDialog):
 
         card = CardWidget(self)
         card.setObjectName("StyledMessageCard")
+        if hasattr(card, "setBorderRadius"):
+            card.setBorderRadius(CORNER_RADIUS_PX)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(18, 16, 18, 16)
         card_layout.setSpacing(14)
@@ -368,6 +407,7 @@ class _StyledMessageDialog(QDialog):
         card_layout.addLayout(title_row)
 
         button_row = QHBoxLayout()
+        button_row.setSpacing(8)
         button_row.addStretch(1)
         self._build_buttons(card, button_row, buttons, default_button)
         card_layout.addLayout(button_row)
@@ -380,21 +420,47 @@ class _StyledMessageDialog(QDialog):
             CardWidget#StyledMessageCard {{
                 background: {PALETTE['card_bg']};
                 border: 1px solid {PALETTE['card_border']};
-                border-radius: 10px;
+                border-radius: {CORNER_RADIUS_PX}px;
             }}
         """)
         self.setProperty("smstSkipGlobalAdaptiveUi", True)
-        apply_adaptive_geometry(self)
         fit_window_to_screen(
             self,
             preferred=(
-                min(480, max(420, self.sizeHint().width())),
+                min(520, max(420, self.sizeHint().width())),
                 max(220, self.sizeHint().height()),
             ),
             minimum=(380, 180),
             margin=(40, 80),
         )
         self.setMaximumWidth(520)
+
+    @staticmethod
+    def _resolve_dismiss_button(
+        buttons: "QMessageBox.StandardButton | None",
+        kind: str,
+    ) -> "QMessageBox.StandardButton":
+        if buttons is None:
+            return QMessageBox.StandardButton.Ok
+        if buttons & QMessageBox.StandardButton.No:
+            return QMessageBox.StandardButton.No
+        if buttons & QMessageBox.StandardButton.Cancel:
+            return QMessageBox.StandardButton.Cancel
+        if buttons & QMessageBox.StandardButton.Ok:
+            return QMessageBox.StandardButton.Ok
+        if kind == "question":
+            return QMessageBox.StandardButton.No
+        return QMessageBox.StandardButton.NoButton
+
+    def reject(self) -> None:  # type: ignore[override]
+        if self._result_button is None:
+            self._result_button = self._dismiss_button
+        super().reject()
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        if self._result_button is None:
+            self._result_button = self._dismiss_button
+        super().closeEvent(event)
 
     def _build_buttons(
         self,
@@ -424,12 +490,22 @@ class _StyledMessageDialog(QDialog):
             is_default = default_button is not None and default_button == standard
             btn = PrimaryPushButton(label, parent) if is_default else PushButton(label, parent)
             btn.setMinimumWidth(88)
-            btn.clicked.connect(lambda checked=False, b=standard: self._on_button_clicked(b))
+            btn.clicked.connect(
+                lambda checked=False, b=standard: self._on_button_clicked(b)
+            )
+            if idx:
+                layout.addSpacing(8)
             layout.addWidget(btn)
 
     def _on_button_clicked(self, button: "QMessageBox.StandardButton") -> None:
         self._result_button = button
-        self.accept()
+        if button in (
+            QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Cancel,
+        ):
+            self.reject()
+        else:
+            self.accept()
 
 
 class StyledMessageBox:
@@ -444,9 +520,75 @@ class StyledMessageBox:
         buttons: "QMessageBox.StandardButton | None" = None,
         default_button: "QMessageBox.StandardButton | None" = None,
     ) -> "QMessageBox.StandardButton":
-        dialog = _StyledMessageDialog(parent, title, text, kind, buttons, default_button)
+        dialog = StyledMessageBox.build(
+            parent,
+            title,
+            text,
+            kind,
+            buttons=buttons,
+            default_button=default_button,
+        )
         dialog.exec()
         return dialog._result_button or QMessageBox.StandardButton.NoButton
+
+    @staticmethod
+    def build(
+        parent: QWidget | None,
+        title: str,
+        text: str,
+        kind: str,
+        *,
+        buttons: "QMessageBox.StandardButton | None" = None,
+        default_button: "QMessageBox.StandardButton | None" = None,
+    ) -> _StyledMessageDialog:
+        """Create a styled dialog; call ``open()`` for non-blocking prompts."""
+        return _StyledMessageDialog(
+            parent,
+            title,
+            text,
+            kind,
+            buttons,
+            default_button,
+        )
+
+    @staticmethod
+    def build_question(
+        parent: QWidget | None,
+        title: str,
+        text: str,
+        *,
+        default_yes: bool = True,
+    ) -> _StyledMessageDialog:
+        default = (
+            QMessageBox.StandardButton.Yes
+            if default_yes
+            else QMessageBox.StandardButton.No
+        )
+        return StyledMessageBox.build(
+            parent,
+            title,
+            text,
+            "question",
+            buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            default_button=default,
+        )
+
+    @staticmethod
+    def build_notice(
+        parent: QWidget | None,
+        title: str,
+        text: str,
+        *,
+        kind: str = "information",
+    ) -> _StyledMessageDialog:
+        return StyledMessageBox.build(
+            parent,
+            title,
+            text,
+            kind,
+            buttons=QMessageBox.StandardButton.Ok,
+            default_button=QMessageBox.StandardButton.Ok,
+        )
 
     @staticmethod
     def _reject_extra_arguments(args, kwargs) -> None:

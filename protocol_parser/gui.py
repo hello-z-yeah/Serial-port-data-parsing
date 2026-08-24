@@ -100,7 +100,7 @@ from protocol_parser.log_text_style import (  # noqa: E402
 )
 from protocol_parser.widgets import (  # noqa: E402
     apply_tooltip, TwoOptionSegmentSwitch, StyledMessageBox, apply_fluent_dialog_style,
-    stabilize_native_message_box, stabilize_transient_dialog, ask_yes_no,
+    ask_yes_no, apply_fluent_progress_dialog_style,
     CellWidgetAlignedTable,
 )
 
@@ -5783,15 +5783,12 @@ class ProtocolParserApp(FluentWindow):
         from protocol_parser.updater import format_update_prompt_message
 
         message = format_update_prompt_message(version, notes)
-        prompt = _QtMessageBox(self)
-        stabilize_native_message_box(prompt)
-        prompt.setWindowTitle(ui_text("发现新版本"))
-        prompt.setIcon(_QtMessageBox.Icon.Information)
-        prompt.setText(message)
-        prompt.setStandardButtons(
-            _QtMessageBox.StandardButton.Yes | _QtMessageBox.StandardButton.No,
+        prompt = StyledMessageBox.build_question(
+            self,
+            ui_text("发现新版本"),
+            message,
+            default_yes=True,
         )
-        prompt.setDefaultButton(_QtMessageBox.StandardButton.Yes)
         prompt.setWindowModality(Qt.WindowModality.WindowModal)
         prompt.finished.connect(
             lambda _result, release_info=dict(info): self._on_update_prompt_finished(
@@ -5800,7 +5797,6 @@ class ProtocolParserApp(FluentWindow):
         )
         self._update_prompt = prompt
         self._set_update_ui_phase("prompt")
-        # 非阻塞 open() 不创建嵌套事件循环，避免多个 queued signal 叠出模态框。
         prompt.open()
 
     def _on_update_prompt_finished(self, info: dict) -> None:
@@ -5808,11 +5804,9 @@ class ProtocolParserApp(FluentWindow):
         if prompt is None:
             self._set_update_ui_phase("idle")
             return
-        clicked = prompt.clickedButton()
         answer = (
-            prompt.standardButton(clicked)
-            if clicked is not None
-            else _QtMessageBox.StandardButton.NoButton
+            getattr(prompt, "_result_button", None)
+            or _QtMessageBox.StandardButton.NoButton
         )
         self._update_prompt = None
         prompt.deleteLater()
@@ -5832,7 +5826,7 @@ class ProtocolParserApp(FluentWindow):
     def _ensure_update_progress_dialog(self) -> QProgressDialog:
         if self._update_dialog is None:
             dialog = QProgressDialog("正在下载更新…", "取消", 0, 0, self)
-            stabilize_transient_dialog(dialog, min_width=360, max_width=480)
+            apply_fluent_progress_dialog_style(dialog)
             dialog.setWindowTitle("下载更新")
             dialog.setWindowModality(Qt.WindowModality.WindowModal)
             dialog.setAutoClose(False)
@@ -5860,17 +5854,8 @@ class ProtocolParserApp(FluentWindow):
             dialog.close()
             dialog.deleteLater()
         self._set_status(message)
-        prompt = _QtMessageBox(self)
-        stabilize_native_message_box(prompt)
-        prompt.setWindowTitle("更新")
-        prompt.setIcon(
-            _QtMessageBox.Icon.Information
-            if ok
-            else _QtMessageBox.Icon.Warning
-        )
-        prompt.setText(message)
-        prompt.setStandardButtons(_QtMessageBox.StandardButton.Ok)
-        prompt.setDefaultButton(_QtMessageBox.StandardButton.Ok)
+        kind = "information" if ok else "warning"
+        prompt = StyledMessageBox.build_notice(self, "更新", message, kind=kind)
         prompt.setWindowModality(Qt.WindowModality.WindowModal)
         prompt.finished.connect(self._on_update_result_prompt_finished)
         self._update_result_prompt = prompt

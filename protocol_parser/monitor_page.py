@@ -54,6 +54,7 @@ from protocol_parser.widgets import (
     apply_tooltip,
     apply_fluent_dialog_style,
     stabilize_transient_dialog,
+    apply_fluent_progress_dialog_style,
     StyledMessageBox,
 )
 
@@ -375,7 +376,7 @@ class MonitorToolPage(QWidget):
 
         lines = [line for line in text.splitlines() if line.strip()]
         progress = QProgressDialog("正在导出 Word 文档…", None, 0, 0, self)
-        stabilize_transient_dialog(progress, min_width=360, max_width=480)
+        apply_fluent_progress_dialog_style(progress)
         progress.setWindowTitle("导出监听记录")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)

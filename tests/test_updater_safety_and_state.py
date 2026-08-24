@@ -67,10 +67,63 @@ def _release_info(payload: bytes) -> dict:
 def test_fallback_defaults_to_gitee_version_json(monkeypatch):
     monkeypatch.delenv("SERIALX_UPDATE_FALLBACK_URL", raising=False)
     assert updater_module._resolve_fallback_url() == updater_module.DEFAULT_GITEE_VERSION_URL
-    assert updater_module._resolve_fallback_url().startswith("https://gitee.com/")
+    assert "gitee.com" in updater_module._resolve_fallback_url()
+    assert "v3.1.0" in updater_module.DEFAULT_GITEE_VERSION_URL
 
     monkeypatch.setenv("SERIALX_UPDATE_FALLBACK_URL", "D:/dev/version.json")
     assert updater_module._resolve_fallback_url() == "D:/dev/version.json"
+
+
+def test_enrich_release_ignores_mismatched_version_json(monkeypatch):
+    release = {
+        "tag_name": "3.4.1",
+        "assets": [{
+            "name": "SerialXSetup3.4.1_x64.exe",
+            "browser_download_url": "https://example.invalid/setup.exe",
+        }],
+    }
+
+    def fake_fetch(tag, *, allow_bundled=False):
+        assert tag == "3.4.1"
+        return None
+
+    monkeypatch.setattr(Updater, "_metadata_from_release_assets", lambda info: None)
+    monkeypatch.setattr(Updater, "_fetch_metadata_for_tag", fake_fetch)
+    enriched = Updater._enrich_release_integrity(dict(release))
+    assert Updater._expected_sha256(enriched, Updater._find_installer_asset(enriched)) == ""
+
+
+def test_enrich_release_applies_matching_version_json(monkeypatch):
+    release = {
+        "tag_name": "3.4.1",
+        "assets": [{
+            "name": "SerialXSetup3.4.1_x64.exe",
+            "browser_download_url": "https://example.invalid/setup.exe",
+        }],
+    }
+    digest = "a" * 64
+    metadata = {
+        "tag_name": "3.4.1",
+        "sha256": digest,
+        "assets": [{
+            "name": "SerialXSetup3.4.1_x64.exe",
+            "browser_download_url": "https://example.invalid/setup.exe",
+            "sha256": digest,
+        }],
+    }
+    monkeypatch.setattr(Updater, "_metadata_from_release_assets", lambda info: None)
+    monkeypatch.setattr(
+        Updater,
+        "_fetch_metadata_for_tag",
+        lambda tag, *, allow_bundled=False: metadata if tag == "3.4.1" else None,
+    )
+    enriched = Updater._enrich_release_integrity(dict(release))
+    assert Updater._expected_sha256(enriched, Updater._find_installer_asset(enriched)) == digest
+
+
+def test_placeholder_sha256_is_rejected():
+    assert not Updater._is_usable_sha256("0" * 64)
+    assert Updater._is_usable_sha256("f" * 64)
 
 
 def test_plain_http_update_urls_are_rejected(monkeypatch):
@@ -297,7 +350,10 @@ def test_gui_update_prompt_is_non_reentrant_and_single_instance():
     assert "_update_ui_phase" in update_region
     assert "if self._update_prompt is not None:" in update_region
     assert "prompt.open()" in update_region
-    assert "stabilize_native_message_box" in update_region
+    assert "StyledMessageBox.build_question" in update_region
+    assert "_StyledMessageDialog" in (root / "protocol_parser" / "widgets.py").read_text(
+        encoding="utf-8"
+    )
     assert "_update_result_prompt" in update_region
     assert "_on_update_result_prompt_finished" in update_region
     assert '_set_update_ui_phase("result")' in update_region
@@ -350,6 +406,7 @@ def test_update_prompt_notes_are_truncated():
     assert "line-0" in message
     assert "line-29" not in message
     assert message.endswith("是否立即下载并更新?")
+    assert "版本 99.0.0" in message
     assert "…" in message
 
     single_long = "3.3.6 更新 " + ("优化性能 " * 20)
