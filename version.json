@@ -3,6 +3,6 @@
   "tag_name": "3.4.2",
   "asset_name": "SerialXSetup3.4.2_x64.exe",
   "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.4.2/SerialXSetup3.4.2_x64.exe",
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "49b116ccb8788b17d8db6d2230788f171990dffe3eca9961e553afd30c426179",
   "notes": "Fix monitor Word export hang; restore realtime monospace font; HarmonyOS UI font"
 }

@@ -14,7 +14,8 @@ def test_mcu_font_controls_are_hidden_but_logic_is_retained():
     assert "self.data_font_label.hide()" in source
     assert "self.data_font_spin.hide()" in source
     assert "self.data_font_spin.valueChanged.connect(" in source
-    assert "self.data_text.set_data_font_point_size(self.data_font_spin.value())" in source
+    assert "point_size=self.data_font_spin.value()" in source
+    assert "self.data_text.set_data_font_point_size" in source
     data_widgets = source.split("self._data_bar_widgets = (", 1)[1].split(")", 1)[0]
     assert "data_font_label" not in data_widgets
     assert "data_font_spin" not in data_widgets
