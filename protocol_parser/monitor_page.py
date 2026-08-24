@@ -483,6 +483,18 @@ class MonitorToolPage(QWidget):
             pass
         return True
 
+    def flush_pending_display(self) -> None:
+        """Write any batched monitor lines before exporting QTextEdit contents."""
+        if self._log_flush_timer.isActive():
+            self._log_flush_timer.stop()
+        while self._realtime_pending:
+            line = self._realtime_pending.popleft()
+            self._pending_realtime_chars -= len(line)
+            self._append_to_text(self.serial_text, line)
+        while self._record_pending:
+            line, terms = self._record_pending.popleft()
+            self._append_to_text(self.record_text, line, highlight_terms=terms)
+
     def _flush_log_batch(self) -> None:
         main_window = getattr(self, "_mw", None)
         frozen = (

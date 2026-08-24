@@ -210,3 +210,12 @@ def test_monitor_page_source_has_bounded_records_and_hex_highlight():
     )
     assert "self.record_text.document().setMaximumBlockCount" in source
     assert 'highlighted = " ".join(f"{byte:02X}" for byte in pattern)' in source
+    assert "def flush_pending_display(self)" in source
+
+
+def test_choose_log_routes_through_active_page_widget():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "protocol_parser" / "gui.py").read_text(encoding="utf-8")
+    region = source[source.index("def _choose_log") : source.index("def _setup_update_feature")]
+    assert "_status_display_text_widget()" in region
+    assert "flush_pending_display()" in region

@@ -5655,18 +5655,19 @@ class ProtocolParserApp(FluentWindow):
         self.setWindowTitle(f"{APP_NAME} v{VERSION} - {self._monitor_port} @ {self._monitor_baud}")
 
     def _choose_log(self) -> None:
-        # 按当前活动页保存: 串口接收分析=serial_text, 模拟MCU工具=data_text。
-        if (
-            getattr(self, "stackedWidget", None) is not None
-            and getattr(self, "mcu_page", None) is not None
-            and self.stackedWidget.currentWidget() is self.mcu_page
-        ):
-            text_widget = self.mcu_page.data_text
-        else:
-            text_widget = self.serial_text
+        monitor_page = getattr(self, "monitor_page", None)
+        text_widget = self._status_display_text_widget()
+        if text_widget is None:
+            QMessageBox.information(self, "保存日志", "当前页没有可保存的实时日志")
+            return
+        if monitor_page is not None and text_widget is monitor_page.serial_text:
+            monitor_page.flush_pending_display()
+        elif text_widget is getattr(self, "serial_text", None):
+            while self._disp_buf:
+                self._flush_display_buf()
         content = text_widget.toPlainText()
         if not content.strip():
-            QMessageBox.information(self, "保存日志", "当前实时数据为空")
+            QMessageBox.information(self, "保存日志", "当前实时日志为空")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "保存日志",

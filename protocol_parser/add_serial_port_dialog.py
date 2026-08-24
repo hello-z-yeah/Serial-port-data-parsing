@@ -110,7 +110,7 @@ class AddSerialPortDialog(QDialog):
         card_layout.addLayout(buttons)
 
         outer.addWidget(card)
-        apply_adaptive_geometry(self, _UI_FONT_POINT_SIZE)
+        apply_adaptive_geometry(self, UI_FONT_BASE_POINT_SIZE)
         fit_window_to_screen(
             self,
             preferred=(700, 320),

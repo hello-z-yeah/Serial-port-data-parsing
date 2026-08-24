@@ -1,8 +1,8 @@
 {
-  "version": "3.4.0",
-  "tag_name": "3.4.0",
-  "asset_name": "SerialXSetup3.4.0_x64.exe",
-  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.4.0/SerialXSetup3.4.0_x64.exe",
-  "sha256": "0f72f91a282c2d02bad5678e6800799f1fc0c2204284339fa9e037edb739a403",
-  "notes": "v3.4.0 update"
+  "version": "3.4.1",
+  "tag_name": "3.4.1",
+  "asset_name": "SerialXSetup3.4.1_x64.exe",
+  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.4.1/SerialXSetup3.4.1_x64.exe",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "notes": "v3.4.1 update"
 }
