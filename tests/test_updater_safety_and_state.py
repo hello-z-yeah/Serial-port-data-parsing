@@ -7,6 +7,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 import protocol_parser.updater as updater_module
 from protocol_parser.app_info import APP_VERSION
 from protocol_parser.updater import UpdatePhase, Updater
@@ -18,7 +20,13 @@ class _CheckResponse:
 
     @staticmethod
     def json() -> dict:
-        return {"tag_name": APP_VERSION, "assets": []}
+        return {
+            "tag_name": APP_VERSION,
+            "assets": [{
+                "name": f"SerialXSetup{APP_VERSION}_x64.exe",
+                "browser_download_url": "https://example.invalid/setup.exe",
+            }],
+        }
 
 
 class _DownloadResponse:
@@ -56,9 +64,10 @@ def _release_info(payload: bytes) -> dict:
     }
 
 
-def test_fallback_defaults_to_https_and_requires_explicit_override(monkeypatch):
+def test_fallback_defaults_to_gitee_version_json(monkeypatch):
     monkeypatch.delenv("SERIALX_UPDATE_FALLBACK_URL", raising=False)
-    assert updater_module._resolve_fallback_url().startswith("https://")
+    assert updater_module._resolve_fallback_url() == updater_module.DEFAULT_GITEE_VERSION_URL
+    assert updater_module._resolve_fallback_url().startswith("https://gitee.com/")
 
     monkeypatch.setenv("SERIALX_UPDATE_FALLBACK_URL", "D:/dev/version.json")
     assert updater_module._resolve_fallback_url() == "D:/dev/version.json"
@@ -101,7 +110,76 @@ def test_concurrent_update_checks_are_single_flight(monkeypatch):
     assert calls == 1
 
 
-def test_bundled_version_json_is_used_when_remote_sources_fail(monkeypatch, tmp_path):
+def test_github_release_without_installer_is_skipped():
+    empty = {"tag_name": "3.3.6", "draft": False, "prerelease": False, "assets": []}
+    ready = {
+        "tag_name": "3.3.5",
+        "draft": False,
+        "prerelease": False,
+        "assets": [{"name": "SerialXSetup3.3.5_x64.exe", "browser_download_url": "https://example/x.exe"}],
+    }
+    picked = Updater._pick_usable_release([empty, ready])
+    assert picked is ready
+
+
+def test_gitee_api_is_tried_before_github(monkeypatch):
+    calls: list[str] = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fake_get(url, *args, **kwargs):
+        calls.append(str(url))
+        entered.set()
+        assert release.wait(2)
+        if "gitee.com" in str(url):
+            return _CheckResponse()
+        raise AssertionError(f"GitHub should not be queried when Gitee succeeds: {url}")
+
+    monkeypatch.setattr(updater_module.requests, "get", fake_get)
+    updater = Updater()
+    assert updater.check_update(manual=True) is True
+    assert entered.wait(2)
+    assert calls
+    assert "gitee.com" in calls[0]
+    release.set()
+    thread = updater._check_thread
+    if thread is not None:
+        thread.join(2)
+    deadline = time.time() + 2
+    while updater.phase is not UpdatePhase.IDLE and time.time() < deadline:
+        time.sleep(0.02)
+    assert updater.phase is UpdatePhase.IDLE
+    assert not any("api.github.com" in item for item in calls)
+
+
+def test_github_is_used_when_gitee_fails(monkeypatch):
+    calls: list[str] = []
+
+    class _GithubResponse(_CheckResponse):
+        pass
+
+    def fake_get(url, *args, **kwargs):
+        calls.append(str(url))
+        if "gitee.com" in str(url):
+            raise RuntimeError("gitee blocked")
+        if "api.github.com" in str(url):
+            return _GithubResponse()
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(updater_module.requests, "get", fake_get)
+    updater = Updater()
+    assert updater.check_update(manual=True) is True
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        if updater.phase is UpdatePhase.IDLE and any("api.github.com" in item for item in calls):
+            break
+        time.sleep(0.02)
+    assert updater.phase is UpdatePhase.IDLE
+    assert any("gitee.com" in item for item in calls)
+    assert any("api.github.com" in item for item in calls)
+
+
+def test_bundled_version_json_is_not_treated_as_remote_latest(monkeypatch, tmp_path):
     root = Path(__file__).resolve().parents[1]
     bundled = root / "resources" / "version.json"
     assert bundled.is_file()
@@ -111,10 +189,12 @@ def test_bundled_version_json_is_used_when_remote_sources_fail(monkeypatch, tmp_
 
     monkeypatch.setattr(updater_module.requests, "get", fail_remote)
     updater = Updater()
-    has_new, info = updater._check_via_fallback_sources()
-    assert "__error" not in info
-    assert info.get("tag_name") == APP_VERSION
-    assert has_new is False
+    try:
+        updater._check_via_fallback_sources()
+    except RuntimeError as exc:
+        assert "network blocked" in str(exc)
+    else:
+        raise AssertionError("bundled version.json must not hide a failed remote check")
 
 
 def test_failed_checks_enter_backoff_for_silent_requests(monkeypatch):
@@ -200,8 +280,11 @@ def test_version_json_has_matching_version_and_installer_digest():
     installer = root / "release" / metadata["asset_name"]
     assert metadata["version"] == APP_VERSION
     assert metadata["tag_name"] == APP_VERSION
-    assert metadata["download_url"].startswith("https://")
-    assert installer.is_file()
+    assert metadata["download_url"].startswith("https://gitee.com/")
+    # 构建流程先跑测试、后生成安装包；安装包尚不存在时仅校验元数据一致性，
+    # 构建完成后（write_release_version_json 重写 version.json）digest 校验自然生效。
+    if not installer.is_file():
+        pytest.skip("安装包尚未构建，跳过 digest 校验")
     assert hashlib.sha256(installer.read_bytes()).hexdigest() == metadata["sha256"]
 
 
@@ -214,6 +297,7 @@ def test_gui_update_prompt_is_non_reentrant_and_single_instance():
     assert "_update_ui_phase" in update_region
     assert "if self._update_prompt is not None:" in update_region
     assert "prompt.open()" in update_region
+    assert "stabilize_native_message_box" in update_region
     assert "_update_result_prompt" in update_region
     assert "_on_update_result_prompt_finished" in update_region
     assert '_set_update_ui_phase("result")' in update_region
@@ -267,6 +351,10 @@ def test_update_prompt_notes_are_truncated():
     assert "line-29" not in message
     assert message.endswith("是否立即下载并更新?")
     assert "…" in message
+
+    single_long = "3.3.6 更新 " + ("优化性能 " * 20)
+    wrapped = format_update_prompt_message("3.3.6", single_long, max_lines=10, max_chars=400)
+    assert wrapped.count("\n") >= 2
 
 
 def test_gui_download_without_sha256_closes_progress_dialog(monkeypatch, tmp_path):

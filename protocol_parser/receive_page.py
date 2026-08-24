@@ -28,6 +28,10 @@ class ReceiveAnalysisPage(QWidget):
         self._realtime_card: QWidget | None = None
         self._cmdlib_card: QWidget | None = None
         self.main_splitter: QSplitter | None = None
+        self._splitter_rebalance_timer = QTimer(self)
+        self._splitter_rebalance_timer.setSingleShot(True)
+        self._splitter_rebalance_timer.setInterval(300)
+        self._splitter_rebalance_timer.timeout.connect(self._rebalance_splitter)
 
         self._root = QVBoxLayout(self)
         self._root.setContentsMargins(0, 2, 0, 0)
@@ -137,6 +141,10 @@ class ReceiveAnalysisPage(QWidget):
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
+        main_window = getattr(self, "_mw", None)
+        if main_window is not None and main_window.is_data_display_frozen():
+            self._splitter_rebalance_timer.start()
+            return
         QTimer.singleShot(0, self._rebalance_splitter)
 
     def showEvent(self, event) -> None:  # type: ignore[override]

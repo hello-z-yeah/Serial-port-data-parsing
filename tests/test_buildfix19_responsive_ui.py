@@ -14,6 +14,8 @@ def test_application_wide_adaptive_controller_is_installed():
     assert "class _AdaptiveUiController" in dpi
     assert "QEvent.Type.LayoutRequest" in dpi
     assert "QEvent.Type.ScreenChangeInternal" in dpi
+    assert "def _is_transient_window" in dpi
+    assert "isinstance(top, QDialog)" in dpi
     assert "def install_adaptive_ui_controller" in dpi
     assert "install_adaptive_ui_controller(app)" in gui
 

@@ -30,6 +30,9 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QLayout,
     QScrollArea,
+    QMessageBox,
+    QProgressDialog,
+    QFileDialog,
 )
 from qfluentwidgets import ToolTipFilter, ToolTipPosition
 
@@ -41,6 +44,7 @@ UI_FONT_MAX_POINT_SIZE = 14
 _QT_MAX_SIZE = 16_777_215
 _ADAPT_DEBOUNCE_MS = 120
 _CONTROLLER = None
+_TRANSIENT_WINDOW_TYPES = (QMessageBox, QProgressDialog, QFileDialog)
 
 
 def _screen_for(widget: QWidget | None = None, screen: QScreen | None = None):
@@ -667,12 +671,20 @@ class _AdaptiveUiController(QObject):
         super().__init__(app)
         self._pending: dict[int, weakref.ReferenceType[QWidget]] = {}
 
+    @staticmethod
+    def _is_transient_window(widget: QWidget | None) -> bool:
+        if widget is None:
+            return True
+        if bool(widget.property("smstSkipGlobalAdaptiveUi")):
+            return True
+        return isinstance(widget, _TRANSIENT_WINDOW_TYPES)
+
     def _schedule(self, widget: QWidget) -> None:
         try:
             top = widget.window()
         except Exception:
             top = widget
-        if top is None or bool(top.property("smstSkipGlobalAdaptiveUi")):
+        if self._is_transient_window(top):
             return
         key = id(top)
         if key in self._pending:
@@ -696,8 +708,20 @@ class _AdaptiveUiController(QObject):
         if isinstance(watched, QWidget):
             event_type = event.type()
             if event_type in self._TRIGGER_EVENTS:
+                # Wrapping labels in modal dialogs emit LayoutRequest while
+                # their width is still settling. Re-fitting them here causes
+                # the horizontal bounce seen on update / confirm prompts.
+                if event_type == QEvent.Type.LayoutRequest:
+                    try:
+                        top = watched.window()
+                    except Exception:
+                        top = watched
+                    if isinstance(top, QDialog) or self._is_transient_window(top):
+                        return False
                 self._schedule(watched)
             elif event_type == QEvent.Type.Resize and watched.isWindow():
+                if isinstance(watched, QDialog) or self._is_transient_window(watched):
+                    return False
                 self._schedule(watched)
         return False
 

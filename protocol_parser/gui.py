@@ -26,7 +26,7 @@ from types import SimpleNamespace
 from typing import Callable
 
 from PySide6.QtCore import (
-    Qt, QTimer, Signal, Slot, QSize, QUrl
+    Qt, QTimer, Signal, Slot, QSize, QUrl, QPropertyAnimation
 )
 from PySide6.QtGui import (
     QFont, QFontMetrics, QTextCursor, QTextCharFormat, QColor, QDesktopServices, QIcon, QPen, QGuiApplication, QTextFormat, QKeySequence, QShortcut
@@ -100,6 +100,7 @@ from protocol_parser.log_text_style import (  # noqa: E402
 )
 from protocol_parser.widgets import (  # noqa: E402
     apply_tooltip, TwoOptionSegmentSwitch, StyledMessageBox, apply_fluent_dialog_style,
+    stabilize_native_message_box, stabilize_transient_dialog, ask_yes_no,
     CellWidgetAlignedTable,
 )
 
@@ -112,8 +113,16 @@ from protocol_parser.attr_center import AttrStateCenter  # noqa: E402
 from protocol_parser.auto_cmd import AutoCmdEngine  # noqa: E402
 from protocol_parser.auto_reply import AutoReplyEngine  # noqa: E402
 from protocol_parser.receive_page import ReceiveAnalysisPage  # noqa: E402
-from protocol_parser.mcu_page import McuSimulatePage, CtrlWheelZoomTextEdit  # noqa: E402
+from protocol_parser.mcu_page import McuSimulatePage, CtrlWheelZoomTextEdit, build_display_segments  # noqa: E402
 from protocol_parser.monitor_page import MonitorToolPage  # noqa: E402
+from protocol_parser.display_format import (  # noqa: E402
+    build_receive_color_segments,
+    format_monitor_raw_line,
+    format_receive_frame_item,
+    format_receive_frame_line,
+    format_receive_raw_items,
+)
+from protocol_parser.display_batch import DisplayBatcher, SegmentBatchAccumulator  # noqa: E402
 from protocol_parser.gui_combos import (  # noqa: E402
     DpiAwareComboBox,
     ToggleCloseEditableComboBox,
@@ -144,6 +153,11 @@ _UI_FONT_FAMILY = UI_FONT_FAMILY
 _UI_FONT_POINT_SIZE = UI_FONT_BASE_POINT_SIZE
 _MAX_FIELDS_JSON_CHARS = 1024 * 1024
 _MAX_TX_INPUT_CHARS = 2 * 1024 * 1024
+_CLICK_GUARD_MS = 200
+_DISPLAY_FLUSH_MAX_SEGMENTS = 120
+_DISPLAY_FLUSH_MAX_SEGMENTS_FROZEN = 24
+_DISPLAY_FLUSH_MAX_CHARS = 32_000
+_DISPLAY_HEAVY_BLOCK_THRESHOLD = 500
 _MAX_TX_PAYLOAD_BYTES = 1024 * 1024
 # 标题栏使用标准逻辑尺寸。Qt 会按系统 DPI 自动把 pt 字体和逻辑像素
 # 映射到实际像素，因此这里不再叠加 1.5/1.8 倍缩放，避免高分辨率下过大。
@@ -354,7 +368,7 @@ def _sync_combo_popup_font(combo: QWidget) -> None:
 # 存储开启时使用与“停止监控”一致的主色按钮视觉；关闭后恢复普通按钮。
 _STORAGE_ACTIVE_QSS = f"""
 QPushButton {{
-    color: white;
+    color: {PALETTE["text_on_primary"]};
     background-color: {PALETTE["primary"]};
     border: 1px solid {PALETTE["primary"]};
     border-radius: {CORNER_RADIUS_PX}px;
@@ -365,13 +379,13 @@ QPushButton:hover {{
     border-color: {PALETTE["primary_hover"]};
 }}
 QPushButton:pressed {{
-    background-color: #005A9E;
-    border-color: #005A9E;
+    background-color: {PALETTE["primary_pressed"]};
+    border-color: {PALETTE["primary_pressed"]};
 }}
 QPushButton:disabled {{
-    color: #FFFFFF;
-    background-color: #8ABDE3;
-    border-color: #8ABDE3;
+    color: {PALETTE["text_on_primary"]};
+    background-color: {PALETTE["primary_disabled"]};
+    border-color: {PALETTE["primary_disabled"]};
 }}
 """
 
@@ -578,6 +592,11 @@ class ProtocolParserApp(FluentWindow):
         self._serial_reconnect_reason = ""
         self._serial_stopping = False
         self._stopping_collector: SerialCollector | None = None
+        self._click_guard: dict[str, float] = {}
+        self._last_rx_overflow_reported = 0
+        self._port_disappear_handled = False
+        self._protocol_load_inflight = False
+        self._port_poll_inflight = False
         self._serial_reconnect_timer = QTimer(self)
         self._serial_reconnect_timer.setSingleShot(True)
         self._serial_reconnect_timer.timeout.connect(self._attempt_serial_reconnect)
@@ -687,24 +706,36 @@ class ProtocolParserApp(FluentWindow):
 
         # 信号桥
         self.bridge = UiBridge()
-        self.bridge.frame_signal.connect(self._on_ui_frame)
-        self.bridge.raw_signal.connect(self._on_ui_raw)
+        self.bridge.receive_display_batch_signal.connect(self._on_receive_display_batch)
+        self.bridge.mcu_display_batch_signal.connect(self._on_mcu_display_batch)
         self.bridge.error_signal.connect(self._on_ui_error)
         self.bridge.collector_error_signal.connect(self._on_collector_error)
         self.bridge.tx_signal.connect(self._on_ui_tx)
-        self.bridge.attr_updated_signal.connect(self._on_attr_updated)
-        self.bridge.mcu_data_signal.connect(self._on_mcu_data)
+        self.bridge.attr_updated_signal.connect(self._schedule_attr_refresh)
+        self.bridge.mcu_frame_signal.connect(self._on_mcu_frame_business)
         self.bridge.storage_error_signal.connect(self._on_storage_error)
         self.bridge.storage_drop_signal.connect(self._on_storage_drop)
         self.bridge.collector_stopped_signal.connect(self._on_collector_stopped)
+        self.bridge.protocols_catalog_signal.connect(self._on_protocols_catalog_loaded)
+        self.bridge.ports_enumerated_signal.connect(self._on_ports_enumerated)
 
         # 显示缓冲在 UI 构建前准备好。每个元素为 (文本, 颜色)。
-        self._disp_buf: list[tuple[str, str | None]] = []
+        self._disp_buf: deque[tuple[str, str | None, str | None, str | None]] = deque()
         self._disp_buf_chars = 0
+        self._data_display_frozen = 0
         self._disp_flush_timer = QTimer(self)
         self._disp_flush_timer.setSingleShot(True)
         self._disp_flush_timer.setInterval(50)
         self._disp_flush_timer.timeout.connect(self._flush_display_buf)
+
+        self._display_prefs = {"hex_format": False}
+        self._receive_display_batcher: DisplayBatcher | None = None
+        self._mcu_display_batcher: SegmentBatchAccumulator | None = None
+        self._pending_attr_ids: set[int] = set()
+        self._attr_refresh_timer = QTimer(self)
+        self._attr_refresh_timer.setSingleShot(True)
+        self._attr_refresh_timer.setInterval(100)
+        self._attr_refresh_timer.timeout.connect(self._flush_pending_attr_refresh)
 
         # 定时器：端口热插拔。首次串口扫描结束后才启动，避免首屏前阻塞。
         self._port_watch_timer = QTimer(self)
@@ -739,6 +770,76 @@ class ProtocolParserApp(FluentWindow):
     # ================================================================
     # UI 布局辅助
     # ================================================================
+
+    def _set_data_display_frozen(self, frozen: bool) -> None:
+        """Pause realtime QTextEdit inserts while layout/width is settling."""
+        count = int(getattr(self, "_data_display_frozen", 0))
+        if frozen:
+            self._data_display_frozen = min(count + 1, 8)
+            return
+        self._data_display_frozen = max(0, count - 1)
+        disp_buf = getattr(self, "_disp_buf", None)
+        flush_timer = getattr(self, "_disp_flush_timer", None)
+        if self._data_display_frozen == 0 and disp_buf and flush_timer is not None:
+            if not flush_timer.isActive():
+                flush_timer.start(0)
+
+    def is_data_display_frozen(self) -> bool:
+        return int(getattr(self, "_data_display_frozen", 0)) > 0
+
+    def _install_navigation_toggle_without_animation(self) -> None:
+        """Manual nav expand/collapse otherwise animates width over ~150 ms."""
+        navigation = getattr(self, "navigationInterface", None)
+        panel = getattr(navigation, "panel", None) if navigation is not None else None
+        if panel is None:
+            return
+        self._navigation_panel = panel
+        try:
+            panel.menuButton.clicked.disconnect(panel.toggle)
+        except (TypeError, RuntimeError):
+            pass
+        panel.menuButton.clicked.connect(self._toggle_navigation_without_animation)
+
+    def _toggle_navigation_without_animation(self) -> None:
+        panel = getattr(self, "_navigation_panel", None)
+        if panel is None:
+            return
+        try:
+            from qfluentwidgets.components.navigation.navigation_panel import NavigationDisplayMode
+            from qfluentwidgets.components.navigation.navigation_widget import NavigationTreeWidgetBase
+        except Exception:
+            try:
+                panel.toggle()
+            except Exception:
+                pass
+            return
+
+        self._set_data_display_frozen(True)
+        try:
+            if panel.displayMode in (
+                NavigationDisplayMode.COMPACT,
+                NavigationDisplayMode.MINIMAL,
+            ):
+                panel.expand(useAni=False)
+            else:
+                if panel.expandAni.state() == QPropertyAnimation.State.Running:
+                    panel.expandAni.stop()
+                for item in panel.items.values():
+                    widget = item.widget
+                    if isinstance(widget, NavigationTreeWidgetBase) and widget.isRoot():
+                        widget.saveExpandState()
+                        widget.setExpanded(False)
+                panel.expandAni.setProperty("expand", False)
+                panel.resize(48, panel.height())
+                panel._onExpandAniFinished()
+                panel.menuButton.setToolTip(panel.tr("Open Navigation"))
+        except Exception:
+            try:
+                panel.toggle()
+            except Exception:
+                pass
+        finally:
+            QTimer.singleShot(350, lambda: self._set_data_display_frozen(False))
 
     def _adjust_navigation_menu_position(self) -> None:
         """把左侧三条杠移动到标题栏下方，避免与程序名称重叠。"""
@@ -795,23 +896,82 @@ class ProtocolParserApp(FluentWindow):
             timer.start()
 
     def _deferred_startup_stage_protocols(self) -> None:
-        """首屏绘制后再读取协议文件，让窗口尽快出现。"""
+        """首屏绘制后在后台线程扫描协议文件，避免阻塞事件循环。"""
+        self._load_protocols_async()
+
+    def _deferred_startup_stage_ports(self) -> None:
+        """协议列表就绪后在后台扫描系统串口。"""
+        self._poll_ports(initial_startup=True)
+
+    @staticmethod
+    def _scan_protocol_catalog() -> list[tuple[str, str, str]]:
+        """Scan protocol JSON files off the UI thread."""
+        all_products: list[tuple[str, str, str]] = []
+        get_builtin_v3(refresh=False)
+        all_products.append(("串口3.0协议", "__builtin_v3__", "word"))
+
+        directory = get_protocol_dir()
+        if directory.exists():
+            for file_path in sorted(directory.glob("*.json")):
+                if file_path.name.lower() in ("v3_serial.json", "_template.json"):
+                    continue
+                try:
+                    cfg = load_protocol(file_path)
+                except Exception:
+                    continue
+                name = str(cfg.get("product") or file_path.stem)
+                source_kind = str(cfg.get("import_source") or "word").strip().lower()
+                if source_kind != "json":
+                    source_kind = "word"
+                all_products.append((name, str(file_path), source_kind))
+        return all_products
+
+    def _load_protocols_async(self) -> None:
+        if self._protocol_load_inflight:
+            return
+        self._protocol_load_inflight = True
+
+        def worker() -> None:
+            try:
+                catalog = self._scan_protocol_catalog()
+            except Exception as exc:
+                catalog = exc
+            try:
+                self.bridge.protocols_catalog_signal.emit(catalog)
+            except RuntimeError:
+                pass
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="smst-protocol-scan",
+        ).start()
+
+    @Slot(object)
+    def _on_protocols_catalog_loaded(self, catalog) -> None:
+        self._protocol_load_inflight = False
+        if isinstance(catalog, Exception):
+            _log_error_to_disk(catalog)
+            QTimer.singleShot(1, self._deferred_startup_stage_ports)
+            return
         try:
-            self._load_protocols()
+            self._apply_protocol_catalog(catalog)
+        except Exception as exc:
+            _log_error_to_disk(exc)
         finally:
             QTimer.singleShot(1, self._deferred_startup_stage_ports)
 
-    def _deferred_startup_stage_ports(self) -> None:
-        """协议列表就绪后再扫描系统串口。"""
-        try:
-            self._refresh_ports(silent=True)
-        finally:
-            self._port_watch_timer.start(3000)
-            self._restore_session_preferences()
-            if self._monitor_port:
-                QTimer.singleShot(1, self._apply_monitor_args)
-            self._startup_ready = True
-            self._set_status("就绪")
+    def _port_watch_interval_ms(self) -> int:
+        return 5000 if self.is_collecting else 3000
+
+    def _restart_port_watch_timer(self) -> None:
+        timer = getattr(self, "_port_watch_timer", None)
+        if timer is None:
+            return
+        interval = self._port_watch_interval_ms()
+        if timer.isActive():
+            timer.stop()
+        timer.start(interval)
 
     def _restore_session_preferences(self) -> None:
         if self._session_restored:
@@ -1395,12 +1555,13 @@ class ProtocolParserApp(FluentWindow):
     def _apply_debounced_resize_layout(self) -> None:
         self._adjust_navigation_menu_position()
         self._adapt_navigation_for_width()
-        self._apply_resolution_adaptive_metrics()
-        self._relayout_serial_main_row()
-        self._relayout_serial_detail_rows()
-        self._relayout_receive_toolbars()
-        self._relayout_send_panel()
-        self._update_shared_toolbar_placement()
+        if not getattr(self, "is_collecting", False):
+            self._apply_resolution_adaptive_metrics()
+            self._relayout_serial_main_row()
+            self._relayout_serial_detail_rows()
+            self._relayout_receive_toolbars()
+            self._relayout_send_panel()
+            self._update_shared_toolbar_placement()
         self._update_shared_page_scroll_policy()
         self._schedule_splitter_rebalance()
 
@@ -1421,6 +1582,7 @@ class ProtocolParserApp(FluentWindow):
         wrapper.setObjectName("sharedContentWrapper")
         wrapper.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.shared_wrapper = wrapper
+        wrapper.setStyleSheet("QWidget#sharedContentWrapper{background:transparent;}")  # 右侧外层容器透明，让 Mica/亚克力背景透出
         shared_layout = QVBoxLayout(wrapper)
         self.shared_layout = shared_layout
         # FluentWindow 的自定义标题栏位于窗口最上层。共享工具栏如果从 y=0
@@ -1441,6 +1603,7 @@ class ProtocolParserApp(FluentWindow):
         # 模拟 MCU 页继续使用自身的横/纵向 splitter 自适应，不启用外层滚动。
         self.shared_page_scroll = QScrollArea(wrapper)
         self.shared_page_scroll.setObjectName("sharedReceivePageScroll")
+        self.shared_page_scroll.setStyleSheet("QScrollArea#sharedReceivePageScroll{background:transparent;border:none;} QScrollArea#sharedReceivePageScroll>QWidget>QWidget{background:transparent;}")  # 滚动区域及 viewport 透明，透出窗口背景
         self.shared_page_scroll.setWidgetResizable(True)
         self.shared_page_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.shared_page_scroll.setHorizontalScrollBarPolicy(
@@ -1449,7 +1612,15 @@ class ProtocolParserApp(FluentWindow):
         self.shared_page_scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
+        # viewport 默认不透明灰底，透明化以透出 Mica。
+        # 必须用 id 选择器：无选择器的 background 会级联到 viewport 内所有
+        # 子孙控件（页面里的弹框等），曾导致弹框整体透明变黑。
+        self.shared_page_scroll.viewport().setObjectName("sharedReceivePageViewport")
+        self.shared_page_scroll.viewport().setStyleSheet(
+            "QWidget#sharedReceivePageViewport{background:transparent;}"
+        )
         self.shared_page_scroll_content = QWidget(self.shared_page_scroll)
+        self.shared_page_scroll_content.setStyleSheet("QWidget#sharedReceivePageScrollContent{background:transparent;}")  # 内容容器透明
         self.shared_page_scroll_content.setObjectName("sharedReceivePageScrollContent")
         self.shared_page_scroll_content.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
@@ -1498,13 +1669,13 @@ class ProtocolParserApp(FluentWindow):
         self.monitor_page = MonitorToolPage(self)
 
         self.addSubInterface(
-            self.receive_page, FluentIcon.MESSAGE, "串口接收分析"
+            self.receive_page, FluentIcon.MESSAGE, "串口接收分析", isTransparent=True
         )
         self.addSubInterface(
-            self.mcu_page, FluentIcon.SEND, "模拟MCU工具"
+            self.mcu_page, FluentIcon.SEND, "模拟MCU工具", isTransparent=True
         )
         self.addSubInterface(
-            self.monitor_page, FluentIcon.EDIT, "监听工具"
+            self.monitor_page, FluentIcon.EDIT, "监听工具", isTransparent=True
         )
         try:
             self.stackedWidget.setCurrentWidget(self.receive_page)
@@ -1528,6 +1699,7 @@ class ProtocolParserApp(FluentWindow):
             QTimer.singleShot(0, self._adjust_navigation_menu_position)
             QTimer.singleShot(80, self._adjust_navigation_menu_position)
             QTimer.singleShot(0, self._adapt_navigation_for_width)
+            self._install_navigation_toggle_without_animation()
         except Exception:
             pass
         # 展开左侧导航后，某些 qfluentwidgets 版本会自动显示返回箭头。
@@ -1802,6 +1974,7 @@ class ProtocolParserApp(FluentWindow):
         super().switchTo(interface)
         self._sync_send_panel_button_for_page(interface)
         QTimer.singleShot(0, self._update_shared_page_scroll_policy)
+        QTimer.singleShot(0, self._schedule_status_refresh)
 
     def _sync_send_panel_button_for_page(self, interface) -> None:
         """监听工具页不显示发送面板按钮，并关闭已打开的发送面板。"""
@@ -2012,6 +2185,9 @@ class ProtocolParserApp(FluentWindow):
         self.bytesize_combo.setCurrentText("8")
         self.bytesize_combo.setMinimumWidth(72)
         self.bytesize_combo.setMaximumWidth(96)
+        self.bytesize_combo.currentTextChanged.connect(
+            self._safe(self._on_serial_param_changed)
+        )
 
         self.stopbits_label = BodyLabel("停止位：")
         self.stopbits_combo = DpiAwareComboBox()
@@ -2019,6 +2195,9 @@ class ProtocolParserApp(FluentWindow):
         self.stopbits_combo.setCurrentText("1")
         self.stopbits_combo.setMinimumWidth(72)
         self.stopbits_combo.setMaximumWidth(96)
+        self.stopbits_combo.currentTextChanged.connect(
+            self._safe(self._on_serial_param_changed)
+        )
 
         self.filename_label = BodyLabel("文件名：")
         self.save_name_edit = LineEdit()
@@ -2370,8 +2549,6 @@ class ProtocolParserApp(FluentWindow):
         self.realtime_font_spin.valueChanged.connect(
             self.serial_text.set_data_font_point_size
         )
-        self.serial_text.setLineWrapMode(TextEdit.WidgetWidth)
-        self.serial_text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         layout.addWidget(self.serial_text, stretch=1)
 
         return card
@@ -2402,6 +2579,8 @@ class ProtocolParserApp(FluentWindow):
         self.btn_cmdlib_cycle = PushButton("循环发送")
         self.btn_cmdlib_cycle.clicked.connect(self._safe(self._cmdlib_toggle_cycle))
         bar.addWidget(self.btn_cmdlib_cycle)
+        # 初始时默认样式。循环进行中时通过 _update_cycle_button_style 切蓝色。
+        self._update_cycle_button_style()
 
         self.btn_cmdlib_cycle_config = PushButton("循环配置")
         self.btn_cmdlib_cycle_config.clicked.connect(
@@ -2767,7 +2946,10 @@ class ProtocolParserApp(FluentWindow):
         layout.setContentsMargins(4, 2, 4, 2)
 
         # 左右状态合并为一行，并始终在整个窗口底部水平居中。
+        # 禁止为底部状态栏自动生成 Fluent 悬浮 tooltip（内容会变，tooltip 会过期）。
         self.status_label = BodyLabel("")
+        self.status_label.setProperty("smstNoAutoToolTip", True)
+        self.status_label.setToolTip("")
         self.status_label.setTextFormat(Qt.RichText)
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setSizePolicy(
@@ -2821,6 +3003,73 @@ class ProtocolParserApp(FluentWindow):
                 return None
         return wrapper
 
+    def _guard_click(self, key: str) -> bool:
+        """200ms 防抖：连击时忽略重复触发。"""
+        now = time.monotonic()
+        last = self._click_guard.get(key, 0.0)
+        if (now - last) * 1000 < _CLICK_GUARD_MS:
+            return False
+        self._click_guard[key] = now
+        return True
+
+    def guard_click(self, key: str) -> bool:
+        """Public debounce helper for child pages (e.g. MCU attribute send)."""
+        return self._guard_click(key)
+
+    def _serial_ready_for_tx(self) -> bool:
+        collector = self.collector
+        if collector is None or not collector.running:
+            return False
+        if hasattr(collector, "is_connected"):
+            try:
+                return bool(collector.is_connected())
+            except Exception:
+                pass
+        return bool(getattr(collector, "_connected", False))
+
+    def _set_tx_controls_enabled(self, enabled: bool) -> None:
+        for name in ("btn_send_once", "btn_cycle", "btn_cmdlib_cycle"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.setEnabled(bool(enabled))
+
+    def _check_rx_parse_overflows(self) -> None:
+        collector = self.collector
+        if collector is None:
+            return
+        overflows = int(getattr(collector, "rx_parse_overflows", 0) or 0)
+        if overflows <= 0:
+            return
+        last = int(getattr(self, "_last_rx_overflow_reported", 0) or 0)
+        if overflows > last:
+            if last == 0 or overflows - last >= 10:
+                self._last_rx_overflow_reported = overflows
+                self._enqueue_display_text(
+                    f"[警告] 接收解析队列溢出 {overflows} 次，部分数据已丢弃。\n",
+                    color=PALETTE["error"],
+                )
+            self._schedule_status_refresh()
+
+    def _stop_all_timers(self) -> None:
+        for name in (
+            "_serial_reconnect_timer",
+            "_tx_input_validation_timer",
+            "_cmdlib_save_timer",
+            "_splitter_rebalance_timer",
+            "_layout_resize_timer",
+            "_status_refresh_timer",
+            "_disp_flush_timer",
+            "_port_watch_timer",
+            "_tx_cycle_timer",
+            "_cmdlib_cycle_timer",
+        ):
+            timer = getattr(self, name, None)
+            if timer is not None:
+                try:
+                    timer.stop()
+                except Exception:
+                    pass
+
     def _report_error(self, title: str, exc: Exception) -> None:
         """Show user-correctable conditions as prompts; log only real faults."""
         presentation = build_user_error_presentation(title, exc)
@@ -2856,6 +3105,25 @@ class ProtocolParserApp(FluentWindow):
         if not timer.isActive():
             timer.start(120)
 
+    def _status_display_text_widget(self):
+        """Return the realtime log widget that should drive cache/line stats."""
+        page = getattr(self, "_monitoring_page", None)
+        mcu_page = getattr(self, "mcu_page", None)
+        monitor_page = getattr(self, "monitor_page", None)
+        if getattr(self, "is_collecting", False) and page is not None:
+            if page == 1 and mcu_page is not None:
+                return mcu_page.data_text
+            if page == 2 and monitor_page is not None:
+                return monitor_page.serial_text
+            return getattr(self, "serial_text", None)
+        stacked = getattr(self, "stackedWidget", None)
+        current = stacked.currentWidget() if stacked is not None else None
+        if current is monitor_page and monitor_page is not None:
+            return monitor_page.serial_text
+        if current is mcu_page and mcu_page is not None:
+            return mcu_page.data_text
+        return getattr(self, "serial_text", None)
+
     def _refresh_status_bar(self) -> None:
         label = getattr(self, "status_label", None)
         if label is None:
@@ -2871,12 +3139,11 @@ class ProtocolParserApp(FluentWindow):
         port = self.port_var.split(" - ")[0].strip() if self.port_var else ui_text("未选串口")
         baud = self.baudrate_var or "-"
 
-        text_widget = getattr(self, "serial_text", None)
+        text_widget = self._status_display_text_widget()
         if text_widget is not None:
-            # blockCount() 为常数时间；缓存字节数在写入时增量维护，
-            # 不再每 120ms 把整个文本框复制、编码和 splitlines。
-            line_count = max(0, text_widget.document().blockCount() - 1)
-            cache_size = max(0, int(self._display_utf8_bytes))
+            doc = text_widget.document()
+            line_count = max(0, doc.blockCount() - 1)
+            cache_size = max(0, int(doc.characterCount()))
         else:
             cache_size = 0
             line_count = 0
@@ -2884,6 +3151,9 @@ class ProtocolParserApp(FluentWindow):
         err = 0
         if self.collector and getattr(self.collector, "sync", None):
             err = getattr(self.collector.sync, "error_count", 0) or 0
+        parse_overflows = 0
+        if self.collector is not None:
+            parse_overflows = int(getattr(self.collector, "rx_parse_overflows", 0) or 0)
 
         parts = [
             f'<span style="color:{conn_color};">●</span> {conn_text}',
@@ -2896,12 +3166,15 @@ class ProtocolParserApp(FluentWindow):
             f"TX {self.tx_frame_count}",
             f"错误 {err}",
         ]
+        if parse_overflows > 0:
+            parts.append(f"解析丢弃 {parse_overflows}")
         if self._last_status_message:
             message = self._last_status_message
             if len(message) > 48:
                 message = message[:45] + "..."
             parts.append(html.escape(message))
         label.setText(" &nbsp;|&nbsp; ".join(parts))
+        label.setToolTip("")
 
     def _set_status(self, msg: str) -> None:
         self._last_status_message = str(msg or "").strip()
@@ -2916,25 +3189,15 @@ class ProtocolParserApp(FluentWindow):
 
     def _load_protocols(self) -> None:
         """扫描全部协议，并分别维护 Word 产品与 JSON 产品列表。"""
-        all_products: list[tuple[str, str, str]] = []
-        get_builtin_v3(refresh=False)
-        all_products.append(("串口3.0协议", "__builtin_v3__", "word"))
+        try:
+            catalog = self._scan_protocol_catalog()
+        except Exception as exc:
+            _log_error_to_disk(exc)
+            return
+        self._apply_protocol_catalog(catalog)
 
-        directory = get_protocol_dir()
-        if directory.exists():
-            for file_path in sorted(directory.glob("*.json")):
-                if file_path.name.lower() in ("v3_serial.json", "_template.json"):
-                    continue
-                try:
-                    cfg = load_protocol(file_path)
-                except Exception:
-                    continue
-                name = str(cfg.get("product") or file_path.stem)
-                source_kind = str(cfg.get("import_source") or "word").strip().lower()
-                if source_kind != "json":
-                    source_kind = "word"
-                all_products.append((name, str(file_path), source_kind))
-
+    def _apply_protocol_catalog(self, all_products: list[tuple[str, str, str]]) -> None:
+        """Apply a pre-scanned protocol catalog on the GUI thread."""
         self._product_sources = {name: source for name, source, _ in all_products}
         self._product_kinds = {name: kind for name, _, kind in all_products}
         word_products = [item for item in all_products if item[2] == "word"]
@@ -3142,12 +3405,10 @@ class ProtocolParserApp(FluentWindow):
 
     def _delete_word_protocol(self, protocol_name: str, source_path: Path) -> None:
         """确认后把 Word 协议文件移入回收站并刷新列表。"""
-        answer = _QtMessageBox.question(
+        answer = ask_yes_no(
             self,
             "删除协议",
             f"确定删除协议“{protocol_name}”吗？\n\n{source_path.name}\n删除后将移入回收站，可恢复。",
-            _QtMessageBox.StandardButton.Yes | _QtMessageBox.StandardButton.No,
-            _QtMessageBox.StandardButton.No,
         )
         if answer != _QtMessageBox.StandardButton.Yes:
             return
@@ -3155,12 +3416,10 @@ class ProtocolParserApp(FluentWindow):
         if _move_to_recycle_bin(source_path):
             removed = True
         else:
-            confirm = _QtMessageBox.question(
+            confirm = ask_yes_no(
                 self,
                 "无法移入回收站",
                 f"无法把文件移入回收站，是否永久删除“{protocol_name}”？",
-                _QtMessageBox.StandardButton.Yes | _QtMessageBox.StandardButton.No,
-                _QtMessageBox.StandardButton.No,
             )
             if confirm != _QtMessageBox.StandardButton.Yes:
                 return
@@ -3216,8 +3475,9 @@ class ProtocolParserApp(FluentWindow):
     # 串口控制（业务逻辑原样，仅替换 UI 调用）
     # ================================================================
 
-    def _refresh_ports(self, *, silent: bool = False) -> bool:
-        ports = SerialCollector.list_ports()
+    def _refresh_ports(self, *, silent: bool = False, ports: list[dict] | None = None) -> bool:
+        if ports is None:
+            ports = SerialCollector.list_ports()
         display_list = []
         for p in ports:
             dev = p.get("device", "")
@@ -3237,6 +3497,8 @@ class ProtocolParserApp(FluentWindow):
         devices = [d.split(" - ")[0].strip() for d in display_list]
         changed = devices != getattr(self, "_last_port_devices", None)
         self._last_port_devices = devices
+        if not changed:
+            return False
 
         cur = self.port_combo.currentText()
         current_device = cur.split(" - ")[0].strip() if cur else ""
@@ -3267,16 +3529,63 @@ class ProtocolParserApp(FluentWindow):
             message = f"监控中的串口 {current_device} 已从系统端口列表消失，可能已拔出"
             self._enqueue_display_text(f"[警告] {message}\n", color=PALETTE["error"])
             self._set_status(message)
+            if (
+                self.is_collecting
+                and not self._serial_stopping
+                and not self._port_disappear_handled
+            ):
+                self._port_disappear_handled = True
+                self._serial_manual_stop = False
+                self._stop_serial(
+                    after_stop=lambda: self._schedule_serial_reconnect("设备已拔出")
+                )
 
         if changed and not silent:
             self._set_status(f"找到 {len(ports)} 个串口")
         return changed
 
-    def _poll_ports(self) -> None:
+    def _poll_ports(self, *, initial_startup: bool = False) -> None:
+        if self._port_poll_inflight:
+            return
+        self._port_poll_inflight = True
+
+        def worker() -> None:
+            try:
+                ports = SerialCollector.list_ports()
+            except Exception:
+                ports = []
+            try:
+                self.bridge.ports_enumerated_signal.emit((ports, initial_startup))
+            except RuntimeError:
+                pass
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="smst-port-scan",
+        ).start()
+
+    @Slot(object)
+    def _on_ports_enumerated(self, payload) -> None:
+        self._port_poll_inflight = False
         try:
-            self._refresh_ports(silent=True)
-        except Exception:
-            pass
+            ports, initial_startup = payload
+        except (TypeError, ValueError):
+            ports, initial_startup = payload if isinstance(payload, list) else [], False
+        try:
+            self._refresh_ports(silent=True, ports=list(ports or []))
+        except Exception as exc:
+            _log_error_to_disk(exc)
+        if initial_startup:
+            try:
+                self._port_watch_timer.start(self._port_watch_interval_ms())
+                self._restore_session_preferences()
+                if self._monitor_port:
+                    QTimer.singleShot(1, self._apply_monitor_args)
+                self._startup_ready = True
+                self._set_status("就绪")
+            except Exception as exc:
+                _log_error_to_disk(exc)
 
     def _cancel_serial_reconnect(self, *, reset_attempts: bool = True) -> None:
         timer = getattr(self, "_serial_reconnect_timer", None)
@@ -3292,6 +3601,16 @@ class ProtocolParserApp(FluentWindow):
 
     def _on_port_changed(self, text: str) -> None:
         self.port_var = text
+        self._cancel_serial_reconnect()
+        if self.is_collecting:
+            self._serial_manual_stop = True
+            self._stop_serial(after_stop=self._restart_serial_after_setting_change)
+        else:
+            self._serial_reconnect_params = None
+            self._refresh_status_bar()
+
+    def _on_serial_param_changed(self, _text: str) -> None:
+        """数据位/停止位变更时与波特率一样重启串口会话。"""
         self._cancel_serial_reconnect()
         if self.is_collecting:
             self._serial_manual_stop = True
@@ -3341,6 +3660,8 @@ class ProtocolParserApp(FluentWindow):
             self._refresh_status_bar()
 
     def _toggle_serial(self) -> None:
+        if not self._guard_click("toggle_serial"):
+            return
         if self._serial_stopping:
             self._set_status("串口正在停止，请稍候…")
             return
@@ -3443,89 +3764,55 @@ class ProtocolParserApp(FluentWindow):
                 self._monitoring_page = 0
         except Exception:
             self._monitoring_page = 0
+        self._reset_inactive_display_buffers()
         mcu_enabled = bool(
             self._monitoring_page == 1
             and self._is_mcu_auto_reply_context_active()
         )
         self._set_status(f"正在{'重新' if is_reconnect else ''}连接 {port} @ {baudrate}...")
 
+        self._display_prefs["hex_format"] = bool(self.hex_format)
+        self._receive_display_batcher = DisplayBatcher(
+            self.bridge.receive_display_batch_signal.emit,
+            batch_ms=40.0,
+            max_items=200,
+        )
+        self._mcu_display_batcher = SegmentBatchAccumulator(
+            self.bridge.mcu_display_batch_signal.emit,
+            batch_ms=40.0,
+            max_batches=48,
+        )
+
         def on_frame(result, frame, ts):
             if generation != self._collector_generation:
                 return
             try:
-                self.bridge.frame_signal.emit(result, ts)
+                item = format_receive_frame_item(
+                    result,
+                    ts,
+                    hex_format=bool(self._display_prefs["hex_format"]),
+                )
+                self._receive_display_batcher.add(item, frame=True)
                 self._write_raw_data(frame.raw, ts)
             except Exception as e:
                 _log_error_to_disk(e)
 
         def on_mcu_frame(result, frame, ts):
-            """MCU-only RX channel; never active on the receive-analysis page.
-
-            A 0x01 write command is transactional: the automatic-reply engine
-            validates the complete command, updates the attribute center, then
-            queues ACK/report frames.  It must run before any generic display
-            update, otherwise an invalid multi-attribute command could partly
-            change state and still be rejected afterwards.
-            """
             if generation != self._collector_generation or not mcu_enabled:
                 return
             try:
-                changed: list[int] = []
-                cmd_int = -1
-
-                # If a legacy/custom product command definition fails to parse
-                # the 0x01 data section, recover a minimal result from the
-                # already synchronized and checksum-checked frame.  The reply
-                # engine will decode the raw attr list with the shared parser.
-                if (
-                    result is None
-                    and int(getattr(frame, "cmd_code", -1)) == 0x01
-                    and getattr(frame, "checksum_ok", None) is not False
-                    and bytes(getattr(frame, "data", b"") or b"")
-                ):
-                    raw_data = bytes(frame.data)
-                    result = SimpleNamespace(
-                        cmd_code="0x01",
-                        direction="模组→MCU",
-                        fields=[{
-                            "name": "消息id",
-                            "type": "uint8",
-                            "value": raw_data[0],
-                            "text": str(raw_data[0]),
-                        }],
-                    )
-
-                if result is not None:
-                    raw_cmd = getattr(result, "cmd_code", -1)
-                    try:
-                        cmd_int = (
-                            int(str(raw_cmd), 16)
-                            if str(raw_cmd).lower().startswith("0x")
-                            else int(raw_cmd)
-                        ) & 0xFF
-                    except (TypeError, ValueError):
-                        cmd_int = -1
-
-                    if cmd_int == 0x01:
-                        sent_count = 0
-                        if self._auto_reply.enabled:
-                            sent_count = self._auto_reply.on_frame(result, frame, ts)
-                        else:
-                            # 自动回复关闭时仍应把合法的模组写命令同步到属性中心；
-                            # 旧逻辑完全跳过，导致实时属性永远不更新。
-                            changed = self._attr_center.update_from_frame(result)
-                        if sent_count:
-                            changed = self._auto_reply.last_applied_attrids
-                    else:
-                        changed = self._attr_center.update_from_frame(result)
-                        if self._auto_reply.enabled:
-                            self._auto_reply.on_frame(result, frame, ts)
-
-                    if changed:
-                        self.bridge.attr_updated_signal.emit(changed)
-
-                self.bridge.mcu_data_signal.emit(result, frame.raw, ts, False, False)
-                self._write_raw_data(frame.raw, ts)
+                self.bridge.mcu_frame_signal.emit(generation, result, frame, ts)
+                segments = build_display_segments(
+                    result,
+                    frame.raw,
+                    ts,
+                    is_tx=False,
+                    auto_reply=False,
+                    attr_center=None,
+                    pending_data_chars=0,
+                )
+                if segments:
+                    self._mcu_display_batcher.add(segments)
             except Exception as e:
                 _log_error_to_disk(e)
 
@@ -3557,7 +3844,12 @@ class ProtocolParserApp(FluentWindow):
             if generation != self._collector_generation:
                 return
             try:
-                self.bridge.raw_signal.emit(data, ts)
+                items = format_receive_raw_items(
+                    data,
+                    ts,
+                    hex_format=bool(self._display_prefs["hex_format"]),
+                )
+                self._receive_display_batcher.extend(items)
                 self._write_raw_data(data, ts)
             except Exception as e:
                 try:
@@ -3585,9 +3877,16 @@ class ProtocolParserApp(FluentWindow):
                             result = parse_frame(data_sent, self._mcu_cfg, direction="response")
                         except Exception:
                             result = None
-                    self.bridge.mcu_data_signal.emit(
-                        result, data_sent, ts, True, is_auto_reply_tx
+                    segments = build_display_segments(
+                        result,
+                        data_sent,
+                        ts,
+                        is_tx=True,
+                        auto_reply=is_auto_reply_tx,
+                        attr_center=None,
+                        pending_data_chars=0,
                     )
+                    self._mcu_display_batcher.add(segments)
                 self.bridge.tx_signal.emit(data_sent, ts, meta)
             except Exception as e:
                 _log_error_to_disk(e)
@@ -3618,6 +3917,8 @@ class ProtocolParserApp(FluentWindow):
                 primary_enabled=not mcu_enabled,
                 raw_mode=(is_ascii or self.view_mode == "raw"),
                 on_tx_sent=on_tx_sent,
+                max_reconnect_attempts=0,
+                parse_queue_size=512,
             )
             self._auto_reply.set_collector(self.collector if mcu_enabled else None)
             self._attr_center.reset_heartbeat_counter()
@@ -3654,7 +3955,11 @@ class ProtocolParserApp(FluentWindow):
 
         self.is_collecting = True
         self._serial_reconnect_attempt = 0
+        self._port_disappear_handled = False
+        self._last_rx_overflow_reported = 0
         self.btn_start.setText("✓ 停止监控")
+        self._set_tx_controls_enabled(True)
+        self._restart_port_watch_timer()
         mode_label = "ASCII" if is_ascii else "HEX"
         proto_tag = " (无协议·通用模式)" if no_protocol else ""
         reconnect_tag = "（自动重连成功）" if is_reconnect else ""
@@ -3681,6 +3986,7 @@ class ProtocolParserApp(FluentWindow):
         self._auto_reply.set_collector(None)
         self.is_collecting = False
         self._monitoring_page = None
+        self._flush_display_batchers()
 
         try:
             self._cmdlib_stop_cycle()
@@ -3690,6 +3996,8 @@ class ProtocolParserApp(FluentWindow):
             self._tx_cycle_timer.stop()
             self._tx_cycle_timer = None
         self.tx_cycle = False
+        self._set_tx_controls_enabled(False)
+        self._restart_port_watch_timer()
 
         if collector is None:
             self.bridge.collector_stopped_signal.emit(generation, after_stop, None)
@@ -3736,6 +4044,9 @@ class ProtocolParserApp(FluentWindow):
         self.save_raw_count = 0
         self.btn_start.setEnabled(True)
         self.btn_start.setText("● 开始监控")
+        # 自动重连/参数重启路径会在 after_stop 中调度；此期间保持发送控件禁用。
+        if not callable(after_stop):
+            self._set_tx_controls_enabled(True)
         self._set_status("已停止")
         if callable(after_stop):
             try:
@@ -3778,26 +4089,140 @@ class ProtocolParserApp(FluentWindow):
     # UI 回调（主线程）
     # ================================================================
 
-    @Slot(object, float)
-    def _on_ui_frame(self, result: ParseResult, ts: float) -> None:
-        self.rx_frame_count += 1
-        self._display_serial_frame(result, ts)
-        self._update_stats_bar()
+    def _active_monitoring_page_index(self) -> int:
+        page = getattr(self, "_monitoring_page", None)
+        if page is None:
+            return 0
+        try:
+            return int(page)
+        except (TypeError, ValueError):
+            return 0
 
-    @Slot(bytes, float)
-    def _on_ui_raw(self, data: bytes, ts: float) -> None:
-        self._display_raw_data(data, ts)
-        if self.monitor_page is not None:
-            try:
-                self.monitor_page.display_raw_data(data, ts)
-            except Exception:
-                pass
+    def _enqueue_receive_display_item(self, item: dict) -> None:
+        segments = item.get("segments")
+        if segments:
+            for segment in segments:
+                if not segment:
+                    continue
+                if len(segment) == 4:
+                    text, color, bg_color, pill_bg = segment
+                elif len(segment) == 3:
+                    text, color, bg_color = segment
+                    pill_bg = None
+                else:
+                    text, color = segment[0], segment[1]
+                    bg_color = None
+                    pill_bg = None
+                if text:
+                    self._enqueue_display_text(
+                        str(text),
+                        color=color,
+                        bg_color=bg_color,
+                        pill_bg=pill_bg,
+                    )
+            return
+        text = str(item.get("text") or "")
+        if not text:
+            return
+        color = item.get("color")
+        if item.get("ts_colorize"):
+            self._enqueue_ts_display_text(text, color=color)
+        else:
+            self._enqueue_display_text(text, color=color)
+
+    @Slot(object)
+    def _on_receive_display_batch(self, payload) -> None:
+        """Append preformatted receive-page lines produced on the parse thread."""
+        if not isinstance(payload, dict):
+            return
+        page = self._active_monitoring_page_index()
+        lines = payload.get("lines") or []
+        for item in lines:
+            if not isinstance(item, dict):
+                continue
+            if page == 2:
+                if (
+                    item.get("kind") == "raw"
+                    and self.monitor_page is not None
+                ):
+                    raw_bytes = item.get("raw_bytes")
+                    raw_ts = item.get("ts")
+                    if isinstance(raw_bytes, (bytes, bytearray)) and raw_ts is not None:
+                        try:
+                            monitor_line = item.get("monitor_line")
+                            if not monitor_line:
+                                monitor_line = format_monitor_raw_line(
+                                    bytes(raw_bytes),
+                                    float(raw_ts),
+                                    hex_format=bool(getattr(self, "hex_format", False)),
+                                )
+                            monitor_line = str(monitor_line or "")
+                            if monitor_line:
+                                self.monitor_page.display_raw_line(
+                                    monitor_line,
+                                    bytes(raw_bytes),
+                                    float(raw_ts),
+                                )
+                        except Exception:
+                            pass
+                continue
+            if page == 1:
+                continue
+            self._enqueue_receive_display_item(item)
+        frame_count = int(payload.get("frame_count") or 0)
+        if frame_count:
+            self.rx_frame_count += frame_count
+            self._update_stats_bar()
+        self._check_rx_parse_overflows()
+
+    @Slot(object)
+    def _on_mcu_display_batch(self, batches) -> None:
+        if self.mcu_page is None or not batches:
+            return
+        try:
+            self.mcu_page.enqueue_segments_batch(list(batches))
+        except Exception as exc:
+            _log_error_to_disk(exc)
+
+    def _flush_display_batchers(self) -> None:
+        batcher = getattr(self, "_receive_display_batcher", None)
+        if batcher is not None:
+            batcher.flush(force=True)
+        mcu_batcher = getattr(self, "_mcu_display_batcher", None)
+        if mcu_batcher is not None:
+            mcu_batcher.flush(force=True)
+
+    @Slot(object)
+    def _schedule_attr_refresh(self, changed_ids) -> None:
+        if not changed_ids:
+            return
+        try:
+            self._pending_attr_ids.update(int(value) for value in changed_ids)
+        except (TypeError, ValueError):
+            return
+        if not self._attr_refresh_timer.isActive():
+            self._attr_refresh_timer.start()
+
+    def _flush_pending_attr_refresh(self) -> None:
+        if not self._pending_attr_ids:
+            return
+        ids = list(self._pending_attr_ids)
+        self._pending_attr_ids.clear()
+        self._on_attr_updated(ids)
+
+    @Slot(bytes, float, object)
+    def _on_ui_tx(self, data_sent: bytes, ts: float, metadata=None) -> None:
+        self.tx_frame_count += 1
+        if self._active_monitoring_page_index() == 0:
+            self._display_serial_tx(data_sent, ts, metadata)
+        self._update_stats_bar()
 
     @Slot(int, str, str)
     def _on_collector_error(self, generation: int, msg: str, kind: str) -> None:
         """处理当前串口句柄的连接级故障，并自动尝试恢复。"""
         if generation != self._collector_generation or self._serial_manual_stop:
             return
+        self._set_tx_controls_enabled(False)
         kind = str(kind or "io")
         if kind == "busy":
             self._enqueue_display_text(
@@ -3819,33 +4244,59 @@ class ProtocolParserApp(FluentWindow):
         # 普通协议解析或业务回调异常只提示，不再无条件断开串口。
         self._enqueue_display_text(f"[错误] {msg}\n", color=PALETTE["error"])
 
-    @Slot(bytes, float, object)
-    def _on_ui_tx(self, data_sent: bytes, ts: float, metadata=None) -> None:
-        self.tx_frame_count += 1
-        self._display_serial_tx(data_sent, ts, metadata)
-        if self.monitor_page is not None:
-            try:
-                self.monitor_page.display_tx(data_sent, ts)
-            except Exception:
-                pass
-        self._update_stats_bar()
-
-    @Slot(object, object, float, bool, bool)
-    def _on_mcu_data(
-        self,
-        result,
-        raw,
-        ts: float,
-        is_tx: bool,
-        auto_reply: bool,
-    ) -> None:
-        """把串口数据转发给页签2（GUI线程）。"""
-        if self.mcu_page is None:
+    @Slot(int, object, object, float)
+    def _on_mcu_frame_business(self, generation: int, result, frame, ts: float) -> None:
+        """MCU 自动回复与属性同步：必须在主线程执行。"""
+        if generation != self._collector_generation:
             return
         try:
-            self.mcu_page.on_data(
-                result, raw, ts, is_tx=is_tx, auto_reply=auto_reply
-            )
+            changed: list[int] = []
+            if (
+                result is None
+                and int(getattr(frame, "cmd_code", -1)) == 0x01
+                and getattr(frame, "checksum_ok", None) is not False
+                and bytes(getattr(frame, "data", b"") or b"")
+            ):
+                raw_data = bytes(frame.data)
+                result = SimpleNamespace(
+                    cmd_code="0x01",
+                    direction="模组→MCU",
+                    fields=[{
+                        "name": "消息id",
+                        "type": "uint8",
+                        "value": raw_data[0],
+                        "text": str(raw_data[0]),
+                    }],
+                )
+
+            if result is not None:
+                raw_cmd = getattr(result, "cmd_code", -1)
+                try:
+                    cmd_int = (
+                        int(str(raw_cmd), 16)
+                        if str(raw_cmd).lower().startswith("0x")
+                        else int(raw_cmd)
+                    ) & 0xFF
+                except (TypeError, ValueError):
+                    cmd_int = -1
+
+                if cmd_int == 0x01:
+                    sent_count = 0
+                    if self._auto_reply.enabled:
+                        sent_count = self._auto_reply.on_frame(result, frame, ts)
+                    else:
+                        changed = self._attr_center.update_from_frame(result)
+                    if sent_count:
+                        changed = self._auto_reply.last_applied_attrids
+                else:
+                    changed = self._attr_center.update_from_frame(result)
+                    if self._auto_reply.enabled:
+                        self._auto_reply.on_frame(result, frame, ts)
+
+                if changed:
+                    self._schedule_attr_refresh(changed)
+
+            self._write_raw_data(frame.raw, ts)
         except Exception as exc:
             _log_error_to_disk(exc)
 
@@ -3873,38 +4324,50 @@ class ProtocolParserApp(FluentWindow):
         current_bg: str | None = None
         current_pill: str | None = None
         total_bytes = 0
-        for segment in segments:
-            if len(segment) == 4:
-                text, color, bg_color, pill_bg = segment
-            elif len(segment) == 3:
-                text, color, bg_color = segment
-                pill_bg = None
-            else:
-                text, color = segment
-                bg_color = None
-                pill_bg = None
-            if not text:
-                continue
-            if color != current_color or bg_color != current_bg or pill_bg != current_pill:
-                fmt = QTextCharFormat()
-                if color:
-                    fmt.setForeground(QColor(color))
-                if pill_bg:
-                    fmt.setBackground(QColor(pill_bg))
-                elif bg_color:
-                    fmt.setBackground(QColor(bg_color))
-                cursor.setCharFormat(fmt)
-                current_color = color
-                current_bg = bg_color
-                current_pill = pill_bg
-            cursor.insertText(text)
-            total_bytes += len(text.encode("utf-8", errors="replace"))
+        heavy_doc = self.serial_text.document().blockCount() > _DISPLAY_HEAVY_BLOCK_THRESHOLD
+        if heavy_doc:
+            self.serial_text.setUpdatesEnabled(False)
+        try:
+            for segment in segments:
+                if len(segment) == 4:
+                    text, color, bg_color, pill_bg = segment
+                elif len(segment) == 3:
+                    text, color, bg_color = segment
+                    pill_bg = None
+                else:
+                    text, color = segment
+                    bg_color = None
+                    pill_bg = None
+                if not text:
+                    continue
+                if color != current_color or bg_color != current_bg or pill_bg != current_pill:
+                    fmt = QTextCharFormat()
+                    if color:
+                        fmt.setForeground(QColor(color))
+                    if pill_bg:
+                        fmt.setBackground(QColor(pill_bg))
+                    elif bg_color:
+                        fmt.setBackground(QColor(bg_color))
+                    cursor.setCharFormat(fmt)
+                    current_color = color
+                    current_bg = bg_color
+                    current_pill = pill_bg
+                cursor.insertText(text)
+                # 状态栏仅显示"约"值，用字符数近似字节数，避免热路径上
+                # 对每段文本做整段 utf-8 编码。
+                total_bytes += len(text)
+        finally:
+            if heavy_doc:
+                self.serial_text.setUpdatesEnabled(True)
 
         self._display_utf8_bytes += total_bytes
         self._display_utf8_bytes = min(self._display_utf8_bytes, 32 * 1024 * 1024)
         if self.autoscroll:
-            self.serial_text.setTextCursor(cursor)
-            self.serial_text.ensureCursorVisible()
+            if heavy_doc and scroll_bar is not None:
+                scroll_bar.setValue(scroll_bar.maximum())
+            else:
+                self.serial_text.setTextCursor(cursor)
+                self.serial_text.ensureCursorVisible()
         else:
             scroll_bar.setValue(saved_scroll_value)
         self._schedule_status_refresh()
@@ -3921,102 +4384,73 @@ class ProtocolParserApp(FluentWindow):
         self._disp_buf_chars += len(text)
         # 防止主线程暂时繁忙时缓冲无限增大；保留最近的数据。
         if self._disp_buf_chars > 512_000:
-            kept: list[tuple[str, str | None, str | None, str | None]] = []
+            kept: deque[tuple[str, str | None, str | None, str | None]] = deque()
             chars = 0
             for item in reversed(self._disp_buf):
-                kept.append(item)
+                kept.appendleft(item)
                 chars += len(item[0])
                 if chars >= 256_000:
                     break
-            kept.reverse()
             self._disp_buf = kept
             self._disp_buf_chars = chars
         if not self._disp_flush_timer.isActive():
             self._disp_flush_timer.start()
 
-    _TS_OR_LEVEL_RE = re.compile(
-        r"(\[\d{1,2}:\d{2}:\d{2}(?:\.\d{1,3})?[ ]*\])|"
-        r"(\[\s*(?:EMERG|ERROR|WARN|NOTICE|INFO|DEBUG|TRACE)\s*\])|"
-        r"(\[(?:TX|RX)\])|"
-        r"(Raw-(?:ASCII|HEX))",
-        re.IGNORECASE,
-    )
-    _LEVEL_STYLES = {
-        "EMERG":  ("#C42B1C", "#FDE9E7"),
-        "ERROR":  ("#C42B1C", "#FDE9E7"),
-        "WARN":   ("#E65100", "#FFF3E0"),
-        "NOTICE": ("#0066CC", "#E3F2FD"),
-        "INFO":   ("#374151", "#E8E8E8"),
-        "DEBUG":  ("#607D8B", "#ECEFF1"),
-        "TRACE":  ("#607D8B", "#ECEFF1"),
-    }
-
     def _enqueue_ts_display_text(self, text: str, color: str | None = None) -> None:
-        """时间戳染天蓝; 级别标签彩色字+浅色背景; TX/RX 绿/蓝字+浅色背景; Raw 跟随 TX 配色。"""
-        pos = 0
-        for match in self._TS_OR_LEVEL_RE.finditer(text):
-            if match.start() > pos:
-                self._enqueue_display_text(text[pos:match.start()], color=color)
-            if match.group(1):
-                self._enqueue_display_text(match.group(1), color="#2E86FF", bg_color="#FFF9C4")
-            elif match.group(2):
-                level = match.group(2).strip("[] ").upper()
-                fg, bg = self._LEVEL_STYLES.get(level, ("#374151", "#E8E8E8"))
-                self._enqueue_display_text(match.group(2), color=fg, bg_color=bg)
-            elif match.group(3):
-                tag = match.group(3).strip("[]").upper()
-                if tag == "TX":
-                    self._enqueue_display_text(match.group(3), color="#008000", bg_color="#E8F5E9")
-                else:
-                    self._enqueue_display_text(match.group(3), color="#0000CD", bg_color="#E3F2FD")
+        """时间戳染天蓝; 级别标签彩色字+浅色背景; TX/RX 绿/蓝字+浅色背景。"""
+        for segment in build_receive_color_segments(text, color):
+            if len(segment) == 4:
+                seg_text, seg_color, bg_color, pill_bg = segment
             else:
-                self._enqueue_display_text(match.group(4), color="#008000", bg_color="#E8F5E9")
-            pos = match.end()
-        if pos < len(text):
-            self._enqueue_display_text(text[pos:], color=color)
+                seg_text, seg_color = segment[0], segment[1]
+                bg_color = None
+                pill_bg = None
+            if seg_text:
+                self._enqueue_display_text(
+                    seg_text,
+                    color=seg_color,
+                    bg_color=bg_color,
+                    pill_bg=pill_bg,
+                )
 
     def _flush_display_buf(self) -> None:
+        frozen = self.is_data_display_frozen()
+        max_segments = (
+            _DISPLAY_FLUSH_MAX_SEGMENTS_FROZEN
+            if frozen
+            else _DISPLAY_FLUSH_MAX_SEGMENTS
+        )
+        if frozen and not self._disp_buf:
+            if not self._disp_flush_timer.isActive():
+                self._disp_flush_timer.start(50)
+            return
         if not self._disp_buf:
             return
-        segments = self._disp_buf
-        self._disp_buf = []
-        self._disp_buf_chars = 0
-        self._append_text_segments(segments)
+        batch: list[tuple[str, str | None, str | None, str | None]] = []
+        batch_chars = 0
+        while (
+            self._disp_buf
+            and len(batch) < max_segments
+            and batch_chars < _DISPLAY_FLUSH_MAX_CHARS
+        ):
+            text, color, bg_color, pill_bg = self._disp_buf.popleft()
+            batch.append((text, color, bg_color, pill_bg))
+            batch_chars += len(text)
+        self._disp_buf_chars = max(0, self._disp_buf_chars - batch_chars)
+        if batch:
+            self._append_text_segments(batch)
+        if self._disp_buf:
+            interval = 50 if frozen else 0
+            self._disp_flush_timer.start(interval)
+        else:
+            self._schedule_status_refresh()
 
     def _display_serial_frame(self, result: ParseResult, ts: float) -> None:
-        ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
-        ok = result.error is None and result.checksum_ok is not False
-        cs = "✓" if result.checksum_ok else ("✗" if result.checksum_ok is False else " ")
-        status = "OK" if result.error is None else "ERR"
-        raw_display = result.raw_hex
-        if not self.hex_format:
-            try:
-                raw_bytes = bytes.fromhex(raw_display.replace(" ", ""))
-                raw_display = "".join(chr(b) if 32 <= b < 127 else "." for b in raw_bytes)
-            except Exception:
-                pass
-
-        line = f"[{ts_str}] {status} {cs} {result.cmd_code:<6} {result.cmd_name}"
-        if result.direction:
-            line += f" [{result.direction}]"
-        data_fields = []
-        in_data = False
-        for f in result.fields:
-            ftype = f.get("type", "")
-            fname = f.get("name", "")
-            ftext = f.get("text", "")
-            if ftype == "separator":
-                in_data = True
-                continue
-            if in_data and ftype not in ("header", "version", "cmd", "length", "checksum"):
-                if isinstance(fname, str) and fname.startswith("attrid_"):
-                    continue
-                if ftext:
-                    data_fields.append(f"{fname}={ftext}")
-        if data_fields:
-            line += f"  {{ {', '.join(data_fields)} }}"
-        line += f"  | {raw_display}\n"
-        color = "#0000CD" if ok else PALETTE["error"]
+        line, color = format_receive_frame_line(
+            result,
+            ts,
+            hex_format=bool(self.hex_format),
+        )
         self._enqueue_ts_display_text(line, color=color)
 
     def _display_serial_tx(self, data_sent: bytes, ts: float, metadata=None) -> None:
@@ -4061,34 +4495,39 @@ class ProtocolParserApp(FluentWindow):
         self._enqueue_ts_display_text(line, color="#008000")
 
     def _display_raw_data(self, data: bytes, ts: float) -> None:
-        ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
-        if self.hex_format:
-            shown = " ".join(f"{b:02X}" for b in data)
-            line = f"[{ts_str}] [RX] Raw-HEX {shown}\n"
-            self._enqueue_ts_display_text(line, color="#0000CD")
-            return
+        items = format_receive_raw_items(
+            data,
+            ts,
+            hex_format=bool(self.hex_format),
+        )
+        for item in items:
+            self._enqueue_receive_display_item(item)
 
-        text = data.decode("utf-8", errors="replace")
-        # 按真实换行拆成多行，只有第一行带时间戳前缀；
-        # 后续行顶格显示，不显示 \r\n 等转义符号，不出现大空格缩进。
-        lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        parts = []
-        for i, raw_line in enumerate(lines):
-            if not raw_line and i != 0:
-                continue
-            printable = "".join(ch if (32 <= ord(ch) < 127 or ch == "\t") else "." for ch in raw_line)
-            if i == 0:
-                parts.append(f"[{ts_str}] [RX] Raw-ASCII {printable}\n")
-            else:
-                parts.append(f"{printable}\n")
-        if parts:
-            self._enqueue_ts_display_text("".join(parts), color="#0000CD")
-
-    def _clear_output(self) -> None:
+    def _clear_receive_display_buffer(self) -> None:
+        """Clear receive-page text and pending segments without resetting session counters."""
         self.serial_text.clear()
         self._disp_buf.clear()
         self._disp_buf_chars = 0
         self._display_utf8_bytes = 0
+
+    def _reset_inactive_display_buffers(self) -> None:
+        """Drop hidden page buffers when a single monitoring tab owns the session."""
+        page = int(self._monitoring_page or 0)
+        if page != 0:
+            self._clear_receive_display_buffer()
+        if page != 2 and self.monitor_page is not None:
+            try:
+                self.monitor_page.clear_output()
+            except Exception:
+                pass
+        if page != 1 and self.mcu_page is not None:
+            try:
+                self.mcu_page.clear_output()
+            except Exception:
+                pass
+
+    def _clear_output(self) -> None:
+        self._clear_receive_display_buffer()
         self.rx_frame_count = 0
         self.tx_frame_count = 0
         self._refresh_status_bar()
@@ -4210,10 +4649,12 @@ class ProtocolParserApp(FluentWindow):
         用户输入错误（例如 HEX 中输入了非 0-9/A-F 字符）只给出明确提示，
         不再按“未知错误”写 error.log；真正的程序异常仍交给统一错误记录。
         """
+        if not self._guard_click("send_once"):
+            return False
         in_cycle = bool(self.tx_cycle or (
             self._tx_cycle_timer is not None and self._tx_cycle_timer.isActive()
         ))
-        if not (self.collector and self.collector.running):
+        if not self._serial_ready_for_tx():
             message = "请先打开串口（开始监控）后再发送"
             if in_cycle:
                 self._stop_tx_cycle(message)
@@ -4315,7 +4756,10 @@ class ProtocolParserApp(FluentWindow):
             self._stop_tx_cycle()
             self._set_status("已停止循环发送")
             return
-        if not (self.collector and self.collector.running):
+        if not self._guard_click("toggle_cycle_send"):
+            self.btn_cycle.setChecked(False)
+            return
+        if not self._serial_ready_for_tx():
             QMessageBox.warning(self, "提示", "请先打开串口后再发送")
             self.btn_cycle.setChecked(False)
             return
@@ -4726,7 +5170,10 @@ class ProtocolParserApp(FluentWindow):
         self._cmdlib_send_one(items[idx])
 
     def _cmdlib_send_one(self, item: dict, *, suppress_modal: bool = False) -> bool:
-        if not (self.collector and self.collector.running):
+        item_key = str(item.get("id") or item.get("name") or id(item))
+        if not self._guard_click(f"cmdlib_send_{item_key}"):
+            return False
+        if not self._serial_ready_for_tx():
             message = "请先开始监控"
             if suppress_modal:
                 self._set_status(message)
@@ -4854,27 +5301,155 @@ class ProtocolParserApp(FluentWindow):
                 self._cmdlib_save_list("cycle_ascii", dlg.result_seq)
             self._set_status(f"循环配置已保存（{len(dlg.result_seq)} 条）")
 
+    def _update_cycle_button_style(self) -> None:
+        """根据 _cmdlib_cycle_on 同步循环发送按钮的文字和颜色。
+
+        激活状态（True）：文字"停止循环"+ Primary 蓝色
+        非激活（False）：文字"循环发送"+ 默认白色
+        """
+        from qfluentwidgets.common.style_sheet import setCustomStyleSheet, FluentStyleSheet
+
+        btn = getattr(self, "btn_cmdlib_cycle", None)
+        if btn is None:
+            return
+
+        if self._cmdlib_cycle_on:
+            btn.setText("停止循环")
+            # 使用 PrimaryPushButton 同款视觉（基于当前 PALETTE["primary"]）
+            primary = PALETTE["primary"]  # e.g. "#009faa"
+            # 比主色稍暗的底部描边色（模拟 Win11 微物理厚度）
+            try:
+                primary_rgb = primary.lstrip("#")
+                pr = max(0, int(primary_rgb[0:2], 16) - 60)
+                pg = max(0, int(primary_rgb[2:4], 16) - 60)
+                pb = max(0, int(primary_rgb[4:6], 16) - 60)
+                bottom = f"#{pr:02X}{pg:02X}{pb:02X}"
+                # 悬停：稍亮 (+6)
+                hr = min(255, int(primary_rgb[0:2], 16) + 12)
+                hg = min(255, int(primary_rgb[2:4], 16) + 12)
+                hb = min(255, int(primary_rgb[4:6], 16) + 12)
+                hover = f"#{hr:02X}{hg:02X}{hb:02X}"
+                # 按下：稍暗
+                pr2 = min(255, int(primary_rgb[0:2], 16) + 80)
+                pg2 = min(255, int(primary_rgb[2:4], 16) + 80)
+                pb2 = min(255, int(primary_rgb[4:6], 16) + 80)
+                pressed = f"#{pr2:02X}{pg2:02X}{pb2:02X}"
+            except Exception:
+                bottom = primary
+                hover = primary
+                pressed = primary
+
+            light_qss = f"""
+            PushButton#smstCycleSendBtn {{
+                color: white;
+                background-color: {primary};
+                border: 1px solid {primary};
+                border-bottom: 1px solid {bottom};
+                border-radius: {CORNER_RADIUS_PX}px;
+                padding: 5px 12px 6px 12px;
+            }}
+            PushButton#smstCycleSendBtn:hover {{
+                background-color: {hover};
+                border: 1px solid {hover};
+                border-bottom: 1px solid {bottom};
+            }}
+            PushButton#smstCycleSendBtn:pressed {{
+                color: rgba(255, 255, 255, 0.63);
+                background-color: {pressed};
+                border: 1px solid {pressed};
+                border-bottom: 1px solid {bottom};
+            }}
+            PushButton#smstCycleSendBtn:disabled {{
+                color: rgba(255, 255, 255, 0.9);
+                background-color: rgb(205, 205, 205);
+                border: 1px solid rgb(205, 205, 205);
+            }}
+            """
+            dark_qss = light_qss
+            if not btn.objectName():
+                btn.setObjectName("smstCycleSendBtn")
+            try:
+                setCustomStyleSheet(btn, light_qss, dark_qss)
+            except Exception:
+                pass
+            btn.setStyleSheet(light_qss)
+            # 通过 property 标记为 primary 样式，供测试判断
+            btn.setProperty("buttonType", "Primary")
+            # 强制刷新样式缓存
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.update()
+
+        else:
+            btn.setText("循环发送")
+            # 恢复默认（light theme）样式：透明白底 + 微描边
+            default_light = f"""
+            PushButton#smstCycleSendBtn {{
+                color: black;
+                background: rgba(255, 255, 255, 0.6);
+                border: 1px solid rgba(0, 0, 0, 0.073);
+                border-bottom: 1px solid rgba(0, 0, 0, 0.183);
+                border-radius: {CORNER_RADIUS_PX}px;
+                padding: 5px 12px 6px 12px;
+            }}
+            PushButton#smstCycleSendBtn:hover {{
+                background: rgba(249, 249, 249, 0.7);
+            }}
+            PushButton#smstCycleSendBtn:pressed {{
+                color: rgba(0, 0, 0, 0.63);
+                background: rgba(249, 249, 249, 0.5);
+                border-bottom: 1px solid rgba(0, 0, 0, 0.073);
+            }}
+            PushButton#smstCycleSendBtn:disabled {{
+                color: rgba(0, 0, 0, 0.36);
+                background: rgba(249, 249, 249, 0.3);
+                border: 1px solid rgba(0, 0, 0, 0.06);
+                border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+            }}
+            """
+            default_dark = """
+            PushButton#smstCycleSendBtn {
+                color: white;
+                background: rgba(255, 255, 255, 0.0619);
+                border: 1px solid rgba(255, 255, 255, 0.0862);
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1176);
+            }
+            """
+            if not btn.objectName():
+                btn.setObjectName("smstCycleSendBtn")
+            try:
+                setCustomStyleSheet(btn, default_light, default_dark)
+            except Exception:
+                pass
+            btn.setStyleSheet(default_light)
+            btn.setProperty("buttonType", "Default")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.update()
+
     def _cmdlib_toggle_cycle(self) -> None:
         if self._cmdlib_cycle_on:
             self._cmdlib_stop_cycle()
+            return
+        if not self._guard_click("cmdlib_cycle_toggle"):
             return
         seq = self._cmdlib_cycle_hex if self._cmdlib_mode == "hex" else self._cmdlib_cycle_ascii
         if not seq:
             QMessageBox.information(self, "提示", "请先配置循环指令")
             return
-        if not (self.collector and self.collector.running):
-            QMessageBox.warning(self, "提示", "请先开始监控")
+        if not self._serial_ready_for_tx():
+            QMessageBox.warning(self, "提示", "串口连接尚未就绪，请稍候")
             return
         self._cmdlib_cycle_on = True
         self._cmdlib_cycle_idx = 0
-        self.btn_cmdlib_cycle.setText("停止循环")
+        self._update_cycle_button_style()
         self._cmdlib_cycle_tick()
 
     def _cmdlib_stop_cycle(self) -> None:
         self._cmdlib_cycle_on = False
         if self._cmdlib_cycle_timer:
             self._cmdlib_cycle_timer.stop()
-        self.btn_cmdlib_cycle.setText("循环发送")
+        self._update_cycle_button_style()
 
     def _cmdlib_cycle_tick(self) -> None:
         if not self._cmdlib_cycle_on:
@@ -4919,7 +5494,7 @@ class ProtocolParserApp(FluentWindow):
         return self._message_id
 
     def _require_open_collector(self) -> SerialCollector | None:
-        if not (self.collector and self.collector.running):
+        if not self._serial_ready_for_tx():
             QMessageBox.warning(self, "提示", "请先开始监控")
             return None
         if not self.cfg:
@@ -4928,6 +5503,8 @@ class ProtocolParserApp(FluentWindow):
         return self.collector
 
     def _send_generated_frame(self, frame: bytes, label: str = "预置命令") -> bool:
+        if not self._guard_click(f"generated_frame_{label}"):
+            return False
         collector = self._require_open_collector()
         if collector is None:
             return False
@@ -4968,6 +5545,7 @@ class ProtocolParserApp(FluentWindow):
 
     def _on_hex_toggled(self, checked: bool) -> None:
         self.hex_format = checked
+        self._display_prefs["hex_format"] = bool(checked)
         # 按钮文字固定为 HEX格式：蓝色选中表示 HEX，未选中表示 ASCII。
         self.btn_hex.setText("HEX格式")
         if not checked:
@@ -5205,6 +5783,7 @@ class ProtocolParserApp(FluentWindow):
 
         message = format_update_prompt_message(version, notes)
         prompt = _QtMessageBox(self)
+        stabilize_native_message_box(prompt)
         prompt.setWindowTitle(ui_text("发现新版本"))
         prompt.setIcon(_QtMessageBox.Icon.Information)
         prompt.setText(message)
@@ -5252,6 +5831,7 @@ class ProtocolParserApp(FluentWindow):
     def _ensure_update_progress_dialog(self) -> QProgressDialog:
         if self._update_dialog is None:
             dialog = QProgressDialog("正在下载更新…", "取消", 0, 0, self)
+            stabilize_transient_dialog(dialog, min_width=360, max_width=480)
             dialog.setWindowTitle("下载更新")
             dialog.setWindowModality(Qt.WindowModality.WindowModal)
             dialog.setAutoClose(False)
@@ -5280,6 +5860,7 @@ class ProtocolParserApp(FluentWindow):
             dialog.deleteLater()
         self._set_status(message)
         prompt = _QtMessageBox(self)
+        stabilize_native_message_box(prompt)
         prompt.setWindowTitle("更新")
         prompt.setIcon(
             _QtMessageBox.Icon.Information
@@ -5304,6 +5885,7 @@ class ProtocolParserApp(FluentWindow):
     # ================= 在线更新区域结束 =================
 
     def closeEvent(self, event) -> None:
+        self._stop_all_timers()
         try:
             self._cmdlib_flush_pending_save()
         except Exception as exc:
@@ -5340,7 +5922,12 @@ class ProtocolParserApp(FluentWindow):
             self._auto_reply.set_collector(None)
             for collector in collectors:
                 try:
-                    collector.stop(timeout=3.0)
+                    collector.request_stop()
+                except Exception as exc:
+                    _log_error_to_disk(exc)
+            for collector in collectors:
+                try:
+                    collector.stop(timeout=1.0)
                 except Exception as exc:
                     _log_error_to_disk(exc)
             try:

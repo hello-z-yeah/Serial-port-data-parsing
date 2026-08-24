@@ -12,6 +12,9 @@ def test_ctrl_wheel_zoom_filters_textedit_viewport():
     assert "event.type() == QEvent.Type.Wheel" in source
     assert "self._handle_ctrl_wheel(event)" in source
     assert "self.set_data_font_point_size(" in source
+    assert "immediate=False" in source
+    assert "_font_zoom_timer" in source
+    assert "_apply_pending_font_size" in source
 
 
 def test_both_realtime_data_windows_use_data_font_textedit():
@@ -39,7 +42,7 @@ def test_both_realtime_data_windows_keep_hidden_font_size_state_controls():
 def test_data_font_size_is_scoped_to_realtime_text_documents():
     source = MCU_PAGE.read_text(encoding="utf-8")
     assert "def set_data_font_point_size" in source
-    assert "self.document().setDefaultFont(document_font)" in source
+    assert "setDefaultFont(document_font)" in source
     assert "self.setFont(widget_font)" in source
     assert "_FONT_MIN_PT = 8" in source
     assert "_FONT_MAX_PT = 24" in source
@@ -59,4 +62,32 @@ def test_font_size_spinboxes_reserve_visible_value_area():
     assert "self.realtime_font_spin.setMinimumWidth(132)" in gui_source
     assert "self.realtime_font_spin.setMaximumWidth(148)" in gui_source
     assert "self.realtime_font_spin.lineEdit().setMinimumWidth(48)" in gui_source
+
+
+def test_realtime_textedit_defers_wrap_relayout_during_layout_freeze():
+    source = MCU_PAGE.read_text(encoding="utf-8")
+    assert "_WRAP_DEBOUNCE_BLOCK_THRESHOLD = 500" in source
+    assert "def _should_defer_wrap_relayout" in source
+    assert "setLineWrapMode(TextEdit.LineWrapMode.NoWrap)" in source
+    assert "def _restore_line_wrap" in source
+
+
+def test_main_window_pauses_display_flush_while_layout_is_frozen():
+    source = GUI.read_text(encoding="utf-8")
+    assert "def _set_data_display_frozen" in source
+    assert "def is_data_display_frozen" in source
+    assert "def _install_navigation_toggle_without_animation" in source
+    assert "_DISPLAY_FLUSH_MAX_SEGMENTS_FROZEN" in source
+    assert "frozen = self.is_data_display_frozen()" in source
+    assert "panel.expand(useAni=False)" in source
+    assert "_DISPLAY_FLUSH_MAX_SEGMENTS" in source
+    assert "_DISPLAY_FLUSH_MAX_CHARS" in source
+
+
+def test_mcu_and_monitor_use_capped_display_flushes():
+    mcu_source = MCU_PAGE.read_text(encoding="utf-8")
+    monitor_source = (ROOT / "protocol_parser" / "monitor_page.py").read_text(encoding="utf-8")
+    assert "_FLUSH_MAX_SEGMENTS" in mcu_source
+    assert "_FLUSH_MAX_CHARS" in mcu_source
+    assert "def _colorization_enabled" in monitor_source
 

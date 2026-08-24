@@ -56,6 +56,7 @@ class OptimizedSerialCollector:
     raw_mode: bool = False
     on_tx_sent: Callable[..., None] | None = None
     tx_queue_size: int = 1000
+    parse_queue_size: int = 512
     max_tx_payload_bytes: int = 1024 * 1024
     max_reconnect_attempts: int = 5
     reconnect_delay: float = 1.0
@@ -139,7 +140,9 @@ class OptimizedSerialCollector:
             self._serial = self._open_serial()
             self._write_lock = self._write_lock or threading.Lock()
             self._tx_queue = queue.Queue(maxsize=max(1, int(self.tx_queue_size)))
-            self._parse_queue = queue.Queue(maxsize=256)
+            self._parse_queue = queue.Queue(
+                maxsize=max(1, int(self.parse_queue_size))
+            )
             self._stop_event.clear()
             self.tx_dropped_on_stop = 0
             self.rx_parse_overflows = 0
@@ -500,13 +503,6 @@ class OptimizedSerialCollector:
         label: str,
         metadata: dict[str, Any] | None,
     ) -> int:
-        serial_obj = self._serial
-        if (
-            not self.running
-            or serial_obj is None
-            or not getattr(serial_obj, "is_open", False)
-        ):
-            raise SerialStateError("串口未打开，请先开始监控再发送")
         if not payload:
             return 0
         max_payload = max(1, int(self.max_tx_payload_bytes))
@@ -514,7 +510,14 @@ class OptimizedSerialCollector:
             raise SerialOperationError(
                 f"单次发送数据不能超过 {max_payload} 字节，当前为 {len(payload)} 字节"
             )
-        tx_queue = self._tx_queue
+        with self._state_lock:
+            if (
+                not self.running
+                or self._serial is None
+                or not getattr(self._serial, "is_open", False)
+            ):
+                raise SerialStateError("串口未打开，请先开始监控再发送")
+            tx_queue = self._tx_queue
         if tx_queue is None:
             raise SerialStateError("串口发送线程尚未启动")
         request = TxRequest(bytes(payload), str(label), dict(metadata or {}))
@@ -980,14 +983,30 @@ class OptimizedSerialCollector:
 
                 self._notify_error("串口重连成功")
 
-                # --- Phase 5: spawn new worker threads (under lock) ---
+                # --- Phase 5: wait for old workers, then spawn replacements ---
                 with self._state_lock:
                     if self._stopping:
                         self._close_serial_safe(new_serial)
                         return
+                    old_workers = (
+                        self._thread,
+                        self._parse_thread,
+                        self._tx_thread,
+                    )
                     self._stop_event.clear()
                     self.running = True
-                    self._parse_queue = queue.Queue(maxsize=256)
+                    self._parse_queue = queue.Queue(
+                maxsize=max(1, int(self.parse_queue_size))
+            )
+
+                for worker in old_workers:
+                    if worker is not None and worker.is_alive():
+                        worker.join(timeout=0.5)
+
+                with self._state_lock:
+                    if self._stopping:
+                        self._close_serial_safe(new_serial)
+                        return
                     self._parse_thread = threading.Thread(
                         target=self._parse_loop,
                         args=(new_gen,),
