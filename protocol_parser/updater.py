@@ -406,30 +406,54 @@ class Updater(QObject):
         return None
 
     @classmethod
-    def _fetch_metadata_for_tag(cls, tag: str, *, allow_bundled: bool = False) -> dict | None:
-        """Load version.json whose tag matches the requested release."""
+    def _iter_metadata_candidates_for_tag(
+        cls, tag: str, *, allow_bundled: bool = False
+    ) -> list[dict]:
+        """Collect tag-matched version.json metadata from every fallback source."""
         target = cls._parse_version(tag)
         if not target:
-            return None
+            return []
         sources = _iter_remote_fallback_sources(tag)
         if allow_bundled:
             for bundled in _bundled_version_json_paths():
                 text = str(bundled)
                 if text not in sources:
                     sources.append(text)
-        errors: list[str] = []
+        candidates: list[dict] = []
         for source in sources:
             try:
                 metadata = cls._fallback_release_info(cls._fetch_fallback(source))
             except Exception as exc:
-                errors.append(f"{source}: {exc}")
+                _log.debug("读取更新元数据失败(%s): %s", source, exc)
                 continue
             if cls._parse_version(metadata.get("tag_name", "")) != target:
                 continue
             if cls._expected_sha256(metadata, cls._find_installer_asset(metadata) or {}):
+                candidates.append(metadata)
+        return candidates
+
+    @classmethod
+    def _fetch_metadata_for_tag(cls, tag: str, *, allow_bundled: bool = False) -> dict | None:
+        """Load version.json whose tag matches the requested release."""
+        candidates = cls._iter_metadata_candidates_for_tag(tag, allow_bundled=allow_bundled)
+        if candidates:
+            return candidates[0]
+        _log.warning("未找到匹配 %s 的有效 version.json", tag)
+        return None
+
+    @classmethod
+    def _find_metadata_for_tag_and_digest(cls, tag: str, digest: str) -> dict | None:
+        """Find tag-matched metadata whose SHA-256 matches a downloaded installer."""
+        want = str(digest or "").strip().lower()
+        if not want:
+            return None
+        for metadata in cls._iter_metadata_candidates_for_tag(tag, allow_bundled=False):
+            expected = cls._expected_sha256(
+                metadata,
+                cls._find_installer_asset(metadata) or {},
+            )
+            if expected == want:
                 return metadata
-        if errors:
-            _log.warning("未找到匹配 %s 的有效 version.json: %s", tag, "; ".join(errors))
         return None
 
     @classmethod
@@ -685,21 +709,23 @@ class Updater(QObject):
                 if actual_sha256 != verify_digest:
                     tag = str(self._info.get("tag_name") or "").strip()
                     refreshed = (
-                        self._fetch_metadata_for_tag(tag, allow_bundled=False)
+                        self._find_metadata_for_tag_and_digest(tag, actual_sha256)
                         if tag
                         else None
                     )
                     if refreshed is not None:
-                        retry_expected = self._expected_sha256(
+                        verify_digest = self._expected_sha256(
                             refreshed,
                             self._find_installer_asset(refreshed) or {},
                         )
-                        if retry_expected and actual_sha256 == retry_expected:
-                            verify_digest = retry_expected
-                            self._info = self._apply_metadata_digest(
-                                dict(self._info),
-                                refreshed,
-                            )
+                        self._info = self._apply_metadata_digest(
+                            dict(self._info),
+                            refreshed,
+                        )
+                        _log.info(
+                            "安装包校验使用备用 version.json 摘要: sha256=%s",
+                            verify_digest,
+                        )
                     if actual_sha256 != verify_digest:
                         raise RuntimeError(
                             "安装包 SHA-256 校验失败。"

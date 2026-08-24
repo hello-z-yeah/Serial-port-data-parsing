@@ -299,6 +299,67 @@ def test_download_is_streamed_and_sha256_verified(tmp_path, monkeypatch):
     assert updater.phase is UpdatePhase.IDLE
 
 
+def test_download_accepts_matching_digest_from_alternate_metadata(tmp_path, monkeypatch):
+    payload = b"installer-with-correct-digest"
+    digest = hashlib.sha256(payload).hexdigest()
+    wrong_digest = "1" * 64
+    launched: list[list[str]] = []
+    monkeypatch.setattr(
+        updater_module.requests,
+        "get",
+        lambda *args, **kwargs: _DownloadResponse([payload]),
+    )
+    monkeypatch.setattr(
+        updater_module.subprocess,
+        "Popen",
+        lambda argv, shell=False: launched.append(list(argv)),
+    )
+
+    def fake_iter(tag, *, allow_bundled=False):
+        return [
+            {
+                "tag_name": "3.4.1",
+                "sha256": wrong_digest,
+                "assets": [{
+                    "name": "SerialXSetup3.4.1_x64.exe",
+                    "browser_download_url": "https://example.invalid/setup.exe",
+                    "sha256": wrong_digest,
+                }],
+            },
+            {
+                "tag_name": "3.4.1",
+                "sha256": digest,
+                "assets": [{
+                    "name": "SerialXSetup3.4.1_x64.exe",
+                    "browser_download_url": "https://example.invalid/setup.exe",
+                    "sha256": digest,
+                }],
+            },
+        ]
+
+    monkeypatch.setattr(Updater, "_iter_metadata_candidates_for_tag", fake_iter)
+    info = {
+        "tag_name": "3.4.1",
+        "sha256": wrong_digest,
+        "assets": [{
+            "name": "SerialXSetup3.4.1_x64.exe",
+            "browser_download_url": "https://example.invalid/setup.exe",
+            "sha256": wrong_digest,
+        }],
+    }
+
+    updater = Updater()
+    updater._target = tmp_path / "SerialX_setup_latest.exe"
+    assert updater.download_and_install(info) is True
+    thread = updater._download_thread
+    assert thread is not None
+    thread.join(2)
+
+    assert updater._target.read_bytes() == payload
+    assert launched == [[str(updater._target)]]
+    assert updater.phase is UpdatePhase.IDLE
+
+
 def test_bad_sha256_never_launches_installer(tmp_path, monkeypatch):
     chunks = [b"not-the-expected-installer"]
     launched: list[list[str]] = []
