@@ -397,5 +397,7 @@ def test_static_review_preserves_close_cleanup_and_screen_aware_minimum() -> Non
     assert "self.setMinimumSize(1000, 640)" not in gui
     assert "super().closeEvent(event)" in gui
     assert "self._cmdlib_flush_pending_save()" in gui
-    assert "collector.stop(timeout=3.0)" in gui
+    assert "collector.request_stop()" in gui
+    assert "collector.stop(timeout=1.0)" in gui
+    assert "_stop_all_timers()" in gui
     assert "_layout_resize_timer" in gui

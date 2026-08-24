@@ -9,7 +9,32 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QObject
 from PySide6.QtWidgets import QApplication, QWidget
 
+from qfluentwidgets import (
+    CardWidget,
+    ComboBox,
+    EditableComboBox,
+    HeaderCardWidget,
+    HyperlinkButton,
+    LineEdit,
+    ModelComboBox,
+    PlainTextEdit,
+    PrimaryDropDownPushButton,
+    PrimaryPushButton,
+    PushButton,
+    SimpleCardWidget,
+    TextEdit,
+    ToggleButton,
+    ToggleToolButton,
+    ToolButton,
+    TransparentPushButton,
+)
 from qfluentwidgets.common.style_sheet import getStyleSheet, setCustomStyleSheet, styleSheetManager
+from qfluentwidgets.components.widgets.menu import RoundMenu
+
+try:
+    from qfluentwidgets import DropDownPushButton
+except ImportError:  # pragma: no cover - older qfluentwidgets
+    DropDownPushButton = PushButton  # type: ignore[misc,assignment]
 
 try:
     from qfluentwidgets.common.config import qconfig
@@ -32,27 +57,31 @@ LineEdit, TextEdit, PlainTextEdit, TextBrowser {{
 """
 
 _COMBO_PATCH = f"""
-ComboBox, ModelComboBox {{
+ComboBox, EditableComboBox, ModelComboBox {{
     border-radius: {CORNER_RADIUS_PX}px;
 }}
 """
 
-_BUTTON_CLASSES = frozenset(
-    {
-        "PushButton",
-        "PrimaryPushButton",
-        "ToggleButton",
-        "ToolButton",
-        "TransparentPushButton",
-        "HyperlinkButton",
-        "DropDownPushButton",
-        "PrimaryDropDownPushButton",
-        "ToggleToolButton",
-    }
+_MENU_PATCH = f"""
+MenuActionListWidget {{
+    border-radius: {CORNER_RADIUS_PX}px;
+}}
+"""
+
+_BUTTON_TYPES = (
+    PushButton,
+    PrimaryPushButton,
+    ToggleButton,
+    ToolButton,
+    ToggleToolButton,
+    TransparentPushButton,
+    HyperlinkButton,
+    DropDownPushButton,
+    PrimaryDropDownPushButton,
 )
-_LINE_EDIT_CLASSES = frozenset({"LineEdit", "TextEdit", "PlainTextEdit"})
-_COMBO_CLASSES = frozenset({"ComboBox", "EditableComboBox", "ModelComboBox"})
-_CARD_CLASSES = frozenset({"CardWidget", "SimpleCardWidget", "HeaderCardWidget"})
+_COMBO_TYPES = (ComboBox, EditableComboBox, ModelComboBox)
+_LINE_EDIT_TYPES = (LineEdit, TextEdit, PlainTextEdit)
+_CARD_TYPES = (CardWidget, SimpleCardWidget, HeaderCardWidget)
 
 _PATCH_FLAG = "_smst_corner_radius_patched"
 
@@ -71,23 +100,27 @@ def patch_widget_corners(widget: QWidget) -> bool:
     if bool(widget.property(_PATCH_FLAG)):
         return False
 
-    class_name = widget.metaObject().className()
-    if class_name in _BUTTON_CLASSES:
-        setCustomStyleSheet(widget, _BUTTON_PATCH, _BUTTON_PATCH)
+    if isinstance(widget, RoundMenu):
+        setCustomStyleSheet(widget, _MENU_PATCH, _MENU_PATCH)
         _refresh_fluent_stylesheet(widget)
         widget.setProperty(_PATCH_FLAG, True)
         return True
-    if class_name in _LINE_EDIT_CLASSES:
-        setCustomStyleSheet(widget, _LINE_EDIT_PATCH, _LINE_EDIT_PATCH)
-        _refresh_fluent_stylesheet(widget)
-        widget.setProperty(_PATCH_FLAG, True)
-        return True
-    if class_name in _COMBO_CLASSES:
+    if isinstance(widget, _COMBO_TYPES):
         setCustomStyleSheet(widget, _COMBO_PATCH, _COMBO_PATCH)
         _refresh_fluent_stylesheet(widget)
         widget.setProperty(_PATCH_FLAG, True)
         return True
-    if class_name in _CARD_CLASSES:
+    if isinstance(widget, _BUTTON_TYPES):
+        setCustomStyleSheet(widget, _BUTTON_PATCH, _BUTTON_PATCH)
+        _refresh_fluent_stylesheet(widget)
+        widget.setProperty(_PATCH_FLAG, True)
+        return True
+    if isinstance(widget, _LINE_EDIT_TYPES):
+        setCustomStyleSheet(widget, _LINE_EDIT_PATCH, _LINE_EDIT_PATCH)
+        _refresh_fluent_stylesheet(widget)
+        widget.setProperty(_PATCH_FLAG, True)
+        return True
+    if isinstance(widget, _CARD_TYPES):
         setter = getattr(widget, "setBorderRadius", None)
         if callable(setter):
             setter(CORNER_RADIUS_PX)

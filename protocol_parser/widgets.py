@@ -15,6 +15,71 @@ from .theme import PALETTE
 from .dpi_font import fit_text_control, apply_adaptive_geometry, fit_window_to_screen
 
 
+def stabilize_transient_dialog(
+    widget: QWidget,
+    *,
+    min_width: int | None = 360,
+    max_width: int | None = 520,
+) -> None:
+    """Pin a modal window so global adaptive-geometry cannot bounce its size."""
+    widget.setProperty("smstSkipGlobalAdaptiveUi", True)
+    if min_width is not None:
+        widget.setMinimumWidth(int(min_width))
+    if max_width is not None:
+        widget.setMaximumWidth(int(max_width))
+
+
+def stabilize_native_message_box(
+    box: QMessageBox,
+    *,
+    min_width: int = 420,
+    max_width: int = 480,
+) -> None:
+    """Prevent global adaptive-geometry from resizing native QMessageBox in a loop.
+
+    Long wrapped text otherwise triggers LayoutRequest/Resize feedback on the
+    dialog window and makes it flicker horizontally.
+    """
+    stabilize_transient_dialog(box, min_width=min_width, max_width=max_width)
+    extra = f"""
+        QMessageBox {{
+            min-width: {min_width}px;
+            max-width: {max_width}px;
+        }}
+        QMessageBox QLabel {{
+            min-width: {max(280, min_width - 80)}px;
+            max-width: {max(320, max_width - 80)}px;
+        }}
+    """
+    box.setStyleSheet((box.styleSheet() or "") + extra)
+
+
+def ask_yes_no(
+    parent: QWidget | None,
+    title: str,
+    text: str,
+    *,
+    default_no: bool = True,
+) -> "QMessageBox.StandardButton":
+    """Yes/No prompt that cannot bounce when the message wraps."""
+    box = QMessageBox(parent)
+    stabilize_native_message_box(box)
+    box.setWindowTitle(str(title))
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setText(str(text))
+    box.setStandardButtons(
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    )
+    box.setDefaultButton(
+        QMessageBox.StandardButton.No if default_no else QMessageBox.StandardButton.Yes
+    )
+    result = box.exec()
+    try:
+        return QMessageBox.StandardButton(result)
+    except (TypeError, ValueError):
+        return QMessageBox.StandardButton.NoButton
+
+
 class FluentCellToolTipFilter(QObject):
     """表格单元格悬停提示统一为灰色 Fluent 气泡, 替代系统黄底。"""
 
@@ -109,6 +174,7 @@ def apply_tooltip(widget: QWidget, text: str) -> None:
 
 def apply_fluent_dialog_style(dialog: QDialog) -> None:
     """统一普通 ``QDialog`` 的背景与文字颜色，避免退回系统原始灰色外观。"""
+    dialog.setProperty("smstSkipGlobalAdaptiveUi", True)
     dialog.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     dialog.setStyleSheet(f"""
         QDialog {{
@@ -294,6 +360,7 @@ class _StyledMessageDialog(QDialog):
         title_label = StrongBodyLabel(str(title), card)
         body_label = BodyLabel(str(text), card)
         body_label.setWordWrap(True)
+        body_label.setMaximumWidth(400)
         body_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         text_box.addWidget(title_label)
         text_box.addWidget(body_label)
@@ -316,13 +383,18 @@ class _StyledMessageDialog(QDialog):
                 border-radius: 10px;
             }}
         """)
+        self.setProperty("smstSkipGlobalAdaptiveUi", True)
         apply_adaptive_geometry(self)
         fit_window_to_screen(
             self,
-            preferred=(max(420, self.sizeHint().width()), max(220, self.sizeHint().height())),
+            preferred=(
+                min(480, max(420, self.sizeHint().width())),
+                max(220, self.sizeHint().height()),
+            ),
             minimum=(380, 180),
             margin=(40, 80),
         )
+        self.setMaximumWidth(520)
 
     def _build_buttons(
         self,

@@ -1,4 +1,4 @@
-"""SerialX 在线更新模块(基于 GitHub Releases)。
+"""SerialX 在线更新模块（Gitee 主源 + GitHub 备用）。
 
 独立模块, 便于整体移除: 删除本文件, 并删除 gui.py 中
 _update_feature 相关代码即可, 不影响程序其他功能。
@@ -27,21 +27,67 @@ from protocol_parser.paths import resource_path
 _log = logging.getLogger(__name__)
 
 # ---- 发布仓库配置 ----
+GITEE_OWNER = "hou-zeyu15"
+GITEE_REPO = "Serial-port-data-parsing"
+GITEE_CHECK_URL = (
+    f"https://gitee.com/api/v5/repos/{GITEE_OWNER}/{GITEE_REPO}/releases/latest"
+)
+GITEE_RELEASES_URL = (
+    f"https://gitee.com/api/v5/repos/{GITEE_OWNER}/{GITEE_REPO}/releases"
+)
+DEFAULT_GITEE_VERSION_URL = (
+    f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}/raw/master/version.json"
+)
+
 GITHUB_OWNER = "hello-z-yeah"
 GITHUB_REPO = "Serial-port-data-parsing"
-CHECK_URL = (
+GITHUB_CHECK_URL = (
     f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+)
+GITHUB_RELEASES_URL = (
+    f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
 )
 # 备用静态版本信息源。开发环境只能通过显式环境变量覆盖，避免本机路径进入发布包。
 DEFAULT_FALLBACK_VERSION_URL = (
     f"https://{GITHUB_OWNER}.github.io/{GITHUB_REPO}/version.json"
 )
+DEFAULT_RAW_VERSION_URL = (
+    f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/"
+    "v3.1.0/version.json"
+)
+
+# 兼容旧引用
+CHECK_URL = GITHUB_CHECK_URL
+RELEASES_URL = GITHUB_RELEASES_URL
 MAX_INSTALLER_BYTES = 1024 * 1024 * 1024
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 _CHECK_BACKOFF_BASE_SEC = 300.0
 _CHECK_BACKOFF_MAX_SEC = 6 * 3600.0
 _UPDATE_NOTES_MAX_LINES = 10
-_UPDATE_NOTES_MAX_CHARS = 600
+_UPDATE_NOTES_MAX_CHARS = 400
+_UPDATE_NOTES_WRAP_WIDTH = 40
+
+
+def _wrap_update_text_line(line: str, width: int = _UPDATE_NOTES_WRAP_WIDTH) -> str:
+    """Break overlong release-note lines so QMessageBox width stays stable."""
+    stripped = str(line or "").strip()
+    if len(stripped) <= width:
+        return stripped
+    parts: list[str] = []
+    remaining = stripped
+    while remaining:
+        if len(remaining) <= width:
+            parts.append(remaining)
+            break
+        chunk = remaining[:width]
+        split_at = chunk.rfind(" ")
+        if split_at >= max(8, width // 4):
+            parts.append(remaining[:split_at].rstrip())
+            remaining = remaining[split_at:].lstrip()
+        else:
+            parts.append(chunk)
+            remaining = remaining[width:]
+    return "\n".join(parts)
 
 
 def format_update_prompt_message(
@@ -54,9 +100,16 @@ def format_update_prompt_message(
     """Keep native update prompts readable when GitHub release notes are very long."""
     body = str(notes or "").strip()
     if body:
-        lines = body.splitlines()
-        if len(lines) > max_lines:
-            body = "\n".join(lines[:max_lines]) + "\n…"
+        raw_lines = body.splitlines()
+        truncated = len(raw_lines) > max_lines
+        if truncated:
+            raw_lines = raw_lines[:max_lines]
+        wrapped: list[str] = []
+        for line in raw_lines:
+            wrapped.extend(_wrap_update_text_line(line).splitlines())
+        body = "\n".join(part for part in wrapped if part)
+        if truncated:
+            body += "\n…"
         if len(body) > max_chars:
             body = body[: max(1, max_chars - 1)].rstrip() + "…"
     else:
@@ -65,10 +118,20 @@ def format_update_prompt_message(
     return f"发现新版本 {tag}\n\n{body}\n\n是否立即下载并更新?"
 
 
+def gitee_release_download_url(version: str, asset_name: str) -> str:
+    """Public Gitee release asset URL used by build metadata."""
+    tag = str(version or "").strip().lstrip("vV")
+    name = str(asset_name or "").strip()
+    return (
+        f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}/releases/download/"
+        f"{tag}/{name}"
+    )
+
+
 def _resolve_fallback_url() -> str:
     return (
         os.environ.get("SERIALX_UPDATE_FALLBACK_URL", "").strip()
-        or DEFAULT_FALLBACK_VERSION_URL
+        or DEFAULT_GITEE_VERSION_URL
     )
 
 
@@ -93,14 +156,25 @@ def _bundled_version_json_paths() -> list[Path]:
     return paths
 
 
-def _iter_fallback_sources() -> list[str]:
-    """Return fallback metadata sources in priority order."""
+def _iter_remote_fallback_sources() -> list[str]:
+    """Remote-only metadata sources used to discover a newer release."""
     sources: list[str] = []
     env_url = os.environ.get("SERIALX_UPDATE_FALLBACK_URL", "").strip()
     if env_url:
         sources.append(env_url)
-    if DEFAULT_FALLBACK_VERSION_URL not in sources:
-        sources.append(DEFAULT_FALLBACK_VERSION_URL)
+    for url in (
+        DEFAULT_GITEE_VERSION_URL,
+        DEFAULT_FALLBACK_VERSION_URL,
+        DEFAULT_RAW_VERSION_URL,
+    ):
+        if url not in sources:
+            sources.append(url)
+    return sources
+
+
+def _iter_fallback_sources() -> list[str]:
+    """Remote sources plus bundled metadata (SHA enrichment only)."""
+    sources = _iter_remote_fallback_sources()
     for bundled in _bundled_version_json_paths():
         text = str(bundled)
         if text not in sources:
@@ -121,7 +195,7 @@ class _DownloadCancelled(RuntimeError):
 
 
 class Updater(QObject):
-    """检查 GitHub Releases 最新版本并下载安装包。"""
+    """检查 Gitee/GitHub Releases 最新版本并下载安装包。"""
 
     check_finished = Signal(bool, dict)      # (是否发现新版本, 发布信息)
     download_progress = Signal(int, int)     # (已下载字节, 总字节)
@@ -212,7 +286,7 @@ class Updater(QObject):
 
     @classmethod
     def _check_via_fallback_sources(cls) -> tuple[bool, dict]:
-        data = cls._fetch_fallback_from_sources(_iter_fallback_sources())
+        data = cls._fetch_fallback_from_sources(_iter_remote_fallback_sources())
         info = cls._fallback_release_info(data)
         tag = info.get("tag_name", "")
         newest = cls._parse_version(tag)
@@ -305,6 +379,51 @@ class Updater(QObject):
             _log.warning("无法从备用源补充安装包摘要: %s", exc)
         return info
 
+    @classmethod
+    def _evaluate_release_info(cls, info: dict, source: str) -> tuple[bool, dict]:
+        tag = info.get("tag_name", "")
+        newest = cls._parse_version(tag)
+        current = cls._parse_version(APP_VERSION)
+        has_new = bool(newest and newest > current)
+        if has_new:
+            if cls._find_installer_asset(info) is None:
+                raise RuntimeError(f"{source} 已发布 {tag}，但还没有上传安装包")
+            info = cls._enrich_release_integrity(info)
+        _log.info(
+            "检查更新(%s): 本地=%s, 远程=%s(%s), has_new=%s",
+            source,
+            APP_VERSION,
+            tag,
+            newest,
+            has_new,
+        )
+        return has_new, info
+
+    @classmethod
+    def _fetch_release_api(
+        cls,
+        check_url: str,
+        releases_url: str,
+        *,
+        headers: dict,
+        source: str,
+    ) -> tuple[bool, dict]:
+        resp = requests.get(check_url, headers=headers, timeout=10)
+        _log.info(
+            "检查更新响应(%s): http_status=%s, bytes=%d",
+            source,
+            resp.status_code,
+            len(resp.content),
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"{source} API 返回 {resp.status_code}")
+        info = resp.json()
+        if info.get("tag_name") and cls._find_installer_asset(info) is None:
+            listed = cls._fetch_usable_release_list(releases_url, headers=headers)
+            if listed is not None:
+                info = listed
+        return cls._evaluate_release_info(info, source)
+
     def check_update(self, *, manual: bool = False) -> bool:
         """启动一次后台检查；并发调用会被合并，静默检查失败会退避。"""
         if not self.can_check_now(manual=manual):
@@ -321,45 +440,38 @@ class Updater(QObject):
             self._phase = UpdatePhase.CHECKING
 
         def _run():
-            errors = []
+            errors: list[str] = []
             result: tuple[bool, dict] | None = None
             failed = False
 
             try:
-                # 1) 尝试 GitHub API 主源。
+                # 1) Gitee API 主源（国内访问更快）。
                 try:
-                    headers = {
-                        "Accept": "application/vnd.github+json",
-                        "User-Agent": "SerialX-Updater",
-                    }
-                    resp = requests.get(CHECK_URL, headers=headers, timeout=10)
-                    _log.info(
-                        "检查更新响应: http_status=%s, bytes=%d",
-                        resp.status_code,
-                        len(resp.content),
+                    result = self._fetch_release_api(
+                        GITEE_CHECK_URL,
+                        GITEE_RELEASES_URL,
+                        headers={"User-Agent": "SerialX-Updater"},
+                        source="Gitee",
                     )
-                    if resp.status_code == 200:
-                        info = resp.json()
-                        tag = info.get("tag_name", "")
-                        newest = self._parse_version(tag)
-                        current = self._parse_version(APP_VERSION)
-                        has_new = bool(newest and newest > current)
-                        if has_new:
-                            info = self._enrich_release_integrity(info)
-                        _log.info(
-                            "检查更新: 本地=%s, 远程=%s(%s), has_new=%s",
-                            APP_VERSION,
-                            tag,
-                            newest,
-                            has_new,
-                        )
-                        result = (has_new, info)
-                    else:
-                        errors.append(f"GitHub API 返回 {resp.status_code}")
                 except Exception as exc:
-                    errors.append(f"GitHub API 请求失败: {exc}")
+                    errors.append(f"Gitee API 请求失败: {exc}")
 
-                # 2) 主源失败，尝试 Pages / 环境变量 / 内置 version.json。
+                # 2) Gitee 失败时尝试 GitHub API。
+                if result is None:
+                    try:
+                        result = self._fetch_release_api(
+                            GITHUB_CHECK_URL,
+                            GITHUB_RELEASES_URL,
+                            headers={
+                                "Accept": "application/vnd.github+json",
+                                "User-Agent": "SerialX-Updater",
+                            },
+                            source="GitHub",
+                        )
+                    except Exception as exc:
+                        errors.append(f"GitHub API 请求失败: {exc}")
+
+                # 3) API 均失败，尝试 Gitee/GitHub version.json 备用源。
                 if result is None:
                     try:
                         result = self._check_via_fallback_sources()
@@ -542,3 +654,54 @@ class Updater(QObject):
             if name.lower().endswith(".exe") and "setup" in name.lower():
                 return asset
         return None
+
+    @classmethod
+    def _pick_usable_release(cls, releases: list) -> dict | None:
+        best: dict | None = None
+        best_version: tuple = ()
+        for release in releases or []:
+            if not isinstance(release, dict):
+                continue
+            if release.get("draft") or release.get("prerelease"):
+                continue
+            if cls._find_installer_asset(release) is None:
+                continue
+            version = cls._parse_version(release.get("tag_name", ""))
+            if version and version > best_version:
+                best = release
+                best_version = version
+        return best
+
+    @classmethod
+    def _fetch_usable_release_list(
+        cls,
+        releases_url: str,
+        *,
+        headers: dict,
+    ) -> dict | None:
+        resp = requests.get(
+            releases_url,
+            headers=headers,
+            params={"per_page": 10},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return None
+        payload = resp.json()
+        if not isinstance(payload, list):
+            return None
+        return cls._pick_usable_release(payload)
+
+    @classmethod
+    def _fetch_usable_github_release(cls, headers: dict) -> dict | None:
+        return cls._fetch_usable_release_list(
+            GITHUB_RELEASES_URL,
+            headers=headers,
+        )
+
+    @classmethod
+    def _fetch_usable_gitee_release(cls, headers: dict) -> dict | None:
+        return cls._fetch_usable_release_list(
+            GITEE_RELEASES_URL,
+            headers=headers,
+        )

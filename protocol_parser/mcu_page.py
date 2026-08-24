@@ -37,6 +37,7 @@ from protocol_parser.exceptions import ProductConfigError
 from protocol_parser.combo_font import MatchedPopupComboBox
 from protocol_parser.widgets import StyledMessageBox, apply_fluent_dialog_style, CellWidgetAlignedTable, apply_tooltip
 from protocol_parser.theme import PALETTE
+from protocol_parser.ui_corners import CORNER_RADIUS_PX
 from protocol_parser.dpi_font import (
     responsive_point_size,
     make_ui_font,
@@ -52,7 +53,7 @@ QTextEdit {{
     color: {PALETTE['text']};
     background-color: {PALETTE['card_bg']};
     border: 1px solid {PALETTE['card_border']};
-    border-radius: 6px;
+    border-radius: {CORNER_RADIUS_PX}px;
     padding: 6px;
 }}
 QTextEdit:focus {{ border: 1px solid {PALETTE['primary']}; }}
@@ -62,6 +63,79 @@ _RX_TAG_COLOR = "#0000CD"
 _TX_TAG_COLOR = "#008000"
 _RX_PARSED_COLOR = "#0000CD"   # RX 解析文字：深蓝
 _TX_PARSED_COLOR = "#008000"   # TX 解析文字：绿
+
+
+def build_display_segments(
+    result,
+    raw,
+    ts: float,
+    *,
+    is_tx: bool = False,
+    auto_reply: bool = False,
+    attr_center=None,
+    pending_data_chars: int = 0,
+) -> list[tuple[str, str, bool, str | None]]:
+    """Build colored MCU realtime segments off the GUI formatting path."""
+    text = format_frame_display(
+        result,
+        raw,
+        ts,
+        is_tx=is_tx,
+        auto_reply=bool(auto_reply),
+        attr_center=attr_center,
+    )
+    lines = text.splitlines(keepends=True)
+    raw_line = lines[0] if lines else text
+    parsed_text = "".join(lines[1:])
+    tag = "[TX]" if is_tx else "[RX]"
+    tag_index = raw_line.find(tag)
+    normal_color = PALETTE["text"]
+    tag_color = _TX_TAG_COLOR if is_tx else _RX_TAG_COLOR
+    parsed_color = _TX_PARSED_COLOR if is_tx else _RX_PARSED_COLOR
+    ts_end = raw_line.find("]")
+    if not (0 < ts_end < tag_index):
+        ts_end = -1
+
+    segments: list[tuple[str, str, bool, str | None]] = []
+    if tag_index >= 0:
+        if ts_end > 0:
+            segments.append((raw_line[:ts_end + 1], "#2E86FF", False, None))
+        segments.append((raw_line[ts_end + 1:tag_index], normal_color, False, None))
+        tag_bg = "#E8F5E9" if is_tx else "#E3F2FD"
+        segments.append((tag, tag_color, True, tag_bg))
+        segments.append((raw_line[tag_index + len(tag):], normal_color, False, None))
+    else:
+        if ts_end > 0:
+            segments.append((raw_line[:ts_end + 1], "#2E86FF", False, None))
+        segments.append((raw_line[ts_end + 1:], normal_color, False, None))
+    if parsed_text:
+        first = parsed_text.find(" | ")
+        second = parsed_text.find(" | ", first + 3) if first >= 0 else -1
+        if second >= 0:
+            head = parsed_text[:second]
+            arrow_idx = head.find("→")
+            if arrow_idx >= 0:
+                segments.append((head[:arrow_idx + 1], parsed_color, False, None))
+                segments.append((head[arrow_idx + 1:], parsed_color, False, tag_bg))
+            else:
+                segments.append((head, parsed_color, False, None))
+            body = parsed_text[second:]
+        else:
+            segments.append((parsed_text, parsed_color, False, None))
+            body = ""
+        if pending_data_chars > 256_000:
+            if body:
+                segments.append((body, parsed_color, False, None))
+        else:
+            pos = 0
+            for match in re.finditer(r"属性id:[0-9A-Fa-f]{2} 值:\S+", body):
+                if match.start() > pos:
+                    segments.append((body[pos:match.start()], parsed_color, False, None))
+                segments.append((match.group(), parsed_color, False, tag_bg))
+                pos = match.end()
+            if pos < len(body):
+                segments.append((body[pos:], parsed_color, False, None))
+    return [segment for segment in segments if segment[0]]
 
 
 class WrappedAttributeTextDelegate(QStyledItemDelegate):
@@ -138,14 +212,68 @@ class CtrlWheelZoomTextEdit(TextEdit):
 
     _FONT_MIN_PT = 8
     _FONT_MAX_PT = 24
+    _FONT_ZOOM_DEBOUNCE_MS = 80
+    # 字体变更比宽度变化更贵；更早进入“临时不换行 + 合并刷新”路径。
+    _FONT_ZOOM_HEAVY_BLOCK_THRESHOLD = 500
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._data_font_point_size = 10
+        self._pending_font_size: int | None = None
         self._doc_origin: tuple[float, float] | None = None
+        self.setLineWrapMode(TextEdit.LineWrapMode.WidgetWidth)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 大数据量下导航展开/窗口缩放会连续触发宽度变化，WidgetWidth 换行
+        # 每次都要全文重排导致卡死。动画期间临时切为不换行，尺寸稳定后
+        # 再恢复换行，把 N 次全文重排降为 2 次。
+        self._wrap_debounce_timer = QTimer(self)
+        self._wrap_debounce_timer.setSingleShot(True)
+        self._wrap_debounce_timer.setInterval(180)
+        self._wrap_debounce_timer.timeout.connect(self._restore_line_wrap)
+        self._font_zoom_timer = QTimer(self)
+        self._font_zoom_timer.setSingleShot(True)
+        self._font_zoom_timer.setInterval(self._FONT_ZOOM_DEBOUNCE_MS)
+        self._font_zoom_timer.timeout.connect(self._apply_pending_font_size)
         self.viewport().installEventFilter(self)
-        apply_tooltip(self, "按住 Ctrl 并滚动鼠标滚轮可调整本数据框字体大小")
         QTimer.singleShot(0, self._cache_doc_origin)
+
+    # 文本块数超过该阈值时，宽度变化期间才临时关闭换行；接收中适度降低阈值。
+    _WRAP_DEBOUNCE_BLOCK_THRESHOLD = 500
+
+    def _set_layout_freeze(self, frozen: bool) -> None:
+        """Reserved for callers that need to coordinate with the main window."""
+        del frozen
+
+    def _should_defer_wrap_relayout(self, block_count: int) -> bool:
+        if block_count > self._WRAP_DEBOUNCE_BLOCK_THRESHOLD:
+            return True
+        window = self.window()
+        if getattr(window, "is_collecting", False) and block_count > 80:
+            return True
+        return False
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        width_changed = (
+            event.oldSize().width() > 0
+            and event.oldSize().width() != event.size().width()
+        )
+        if not width_changed:
+            return
+        block_count = self.document().blockCount()
+        if (
+            self.lineWrapMode() == TextEdit.LineWrapMode.WidgetWidth
+            and self._should_defer_wrap_relayout(block_count)
+        ):
+            self.setLineWrapMode(TextEdit.LineWrapMode.NoWrap)
+            if block_count > self._FONT_ZOOM_HEAVY_BLOCK_THRESHOLD:
+                self.setUpdatesEnabled(False)
+            self._wrap_debounce_timer.start()
+
+    def _restore_line_wrap(self) -> None:
+        if self.lineWrapMode() != TextEdit.LineWrapMode.WidgetWidth:
+            self.setUpdatesEnabled(True)
+            self.setLineWrapMode(TextEdit.LineWrapMode.WidgetWidth)
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
@@ -164,28 +292,66 @@ class CtrlWheelZoomTextEdit(TextEdit):
 
     def data_font_point_size(self) -> int:
         """返回当前数据框字号（pt）。"""
+        if self._pending_font_size is not None:
+            return int(self._pending_font_size)
         return int(self._data_font_point_size)
 
-    def set_data_font_point_size(self, point_size: int) -> None:
+    def set_data_font_point_size(self, point_size: int, *, immediate: bool = True) -> None:
         """设置当前数据框的字体大小，并立即作用于已有和后续文本。"""
         size = max(self._FONT_MIN_PT, min(self._FONT_MAX_PT, int(point_size)))
+        if size == self._data_font_point_size and self._pending_font_size is None:
+            return
+        self._pending_font_size = size
+        if immediate:
+            self._font_zoom_timer.stop()
+            self._apply_pending_font_size()
+        elif not self._font_zoom_timer.isActive():
+            self._font_zoom_timer.start()
+        else:
+            self._font_zoom_timer.start()
+
+    def _apply_pending_font_size(self) -> None:
+        size = self._pending_font_size
+        self._pending_font_size = None
+        if size is None or size == self._data_font_point_size:
+            return
+
         self._data_font_point_size = size
+        document = self.document()
+        heavy = document.blockCount() > self._FONT_ZOOM_HEAVY_BLOCK_THRESHOLD
 
-        widget_font = QFont(self.font())
-        widget_font.setPointSize(size)
-        self.setFont(widget_font)
+        scroll_bar = self.verticalScrollBar()
+        saved_scroll = scroll_bar.value() if scroll_bar is not None else 0
+        restore_wrap = False
+        if heavy:
+            if self.lineWrapMode() == TextEdit.LineWrapMode.WidgetWidth:
+                self.setLineWrapMode(TextEdit.LineWrapMode.NoWrap)
+                restore_wrap = True
+            self.setUpdatesEnabled(False)
 
-        document_font = QFont(self.document().defaultFont())
-        if document_font.family() == "":
-            document_font.setFamily(widget_font.family())
-        document_font.setPointSize(size)
-        self.document().setDefaultFont(document_font)
+        try:
+            widget_font = QFont(self.font())
+            widget_font.setPointSize(size)
+            self.setFont(widget_font)
 
-        # 保持光标后续插入文本也使用相同字号；颜色、粗体等格式不受影响。
-        current_format = self.currentCharFormat()
-        current_format.setFontPointSize(float(size))
-        self.setCurrentCharFormat(current_format)
-        self.viewport().update()
+            document_font = QFont(document.defaultFont())
+            if document_font.family() == "":
+                document_font.setFamily(widget_font.family())
+            document_font.setPointSize(size)
+            document.setDefaultFont(document_font)
+
+            current_format = self.currentCharFormat()
+            current_format.setFontPointSize(float(size))
+            self.setCurrentCharFormat(current_format)
+        finally:
+            if heavy:
+                if scroll_bar is not None:
+                    scroll_bar.setValue(saved_scroll)
+                self.setUpdatesEnabled(True)
+                if restore_wrap:
+                    self._wrap_debounce_timer.start()
+            else:
+                self.viewport().update()
 
     @staticmethod
     def _wheel_delta(event) -> int:
@@ -208,8 +374,14 @@ class CtrlWheelZoomTextEdit(TextEdit):
         # 普通鼠标每格通常为 120；触控板可能返回更小或更大的增量。
         notch_count = max(1, abs(delta) // 120)
         direction = 1 if delta > 0 else -1
+        base_size = (
+            self._pending_font_size
+            if self._pending_font_size is not None
+            else self._data_font_point_size
+        )
         self.set_data_font_point_size(
-            self._data_font_point_size + direction * notch_count
+            base_size + direction * notch_count,
+            immediate=False,
         )
         event.accept()
         return True
@@ -301,6 +473,8 @@ class McuSimulatePage(QWidget):
         self.operation_layout.setContentsMargins(12, 8, 12, 8)
         self.operation_layout.setHorizontalSpacing(8)
         self.operation_layout.setVerticalSpacing(6)
+        # 粗体页标题，与“当前产品”同一行、位于其左侧并留间距分隔。
+        self.page_title_label = StrongBodyLabel("模拟MCU工具", operation)
         self.product_label = BodyLabel("当前产品：", operation)
         self.product_combo = MatchedPopupComboBox(operation)
         self.product_combo.setMinimumWidth(220)
@@ -330,7 +504,30 @@ class McuSimulatePage(QWidget):
                 QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
             )
             fit_text_control(button)
+        self.page_title_label.setContentsMargins(0, 0, 14, 0)
+        _title_font = QFont(self.page_title_label.font())
+        _title_font.setWeight(QFont.Weight.Bold)
+        self.page_title_label.setFont(_title_font)
+        # 防止标题独占整行：按文本宽度分配空间
+        self.page_title_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        self.page_title_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        # 在标题右侧加细竖线，与"当前产品"形成视觉分隔
+        self.page_separator = QFrame(operation)
+        self.page_separator.setFrameShape(QFrame.Shape.VLine)
+        self.page_separator.setStyleSheet(
+            "QFrame { color: rgba(0, 0, 0, 0.12); background: transparent; }"
+        )
+        self.page_separator.setFixedWidth(12)
+        self.page_separator.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
         self._operation_widgets = (
+            self.page_title_label,
+            self.page_separator,
             self.product_label,
             self.product_combo,
             self.import_json_button,
@@ -497,6 +694,7 @@ class McuSimulatePage(QWidget):
             if font_changed and self.attr_table.rowCount() > 0:
                 # Rebuild only on an actual DPI point-size transition so enum
                 # rows can both grow and shrink according to their button grid.
+                self._attr_table_structure_key = None
                 self.refresh_attr_table()
             else:
                 for row in range(self.attr_table.rowCount()):
@@ -553,35 +751,48 @@ class McuSimulatePage(QWidget):
                 fit_text_control(widget, point_size=self._side_font_point_size)
             except Exception:
                 pass
+        # fit_text_control 会覆盖字体 weight，这里重新确保标题为粗体
+        try:
+            title_font = QFont(self.page_title_label.font())
+            title_font.setWeight(QFont.Weight.Bold)
+            self.page_title_label.setFont(title_font)
+        except Exception:
+            pass
         wide_needed = sum(
             max(widget.minimumWidth(), widget.sizeHint().width())
             for widget in widgets
         ) + 56
         medium_needed = max(660, self.product_combo.minimumWidth() + 320)
         if width >= wide_needed:
-            layout.addWidget(self.product_label, 0, 0)
-            layout.addWidget(self.product_combo, 0, 1)
-            layout.addWidget(self.import_json_button, 0, 2)
-            layout.addWidget(self.manage_json_button, 0, 3)
-            layout.addWidget(self.attr_visible_toggle, 0, 4)
-            layout.addWidget(self.preset_visible_toggle, 0, 5)
-            layout.setColumnStretch(1, 1)
+            layout.addWidget(self.page_title_label, 0, 0)
+            layout.addWidget(self.page_separator, 0, 1)
+            layout.addWidget(self.product_label, 0, 2)
+            layout.addWidget(self.product_combo, 0, 3)
+            layout.addWidget(self.import_json_button, 0, 4)
+            layout.addWidget(self.manage_json_button, 0, 5)
+            layout.addWidget(self.attr_visible_toggle, 0, 6)
+            layout.addWidget(self.preset_visible_toggle, 0, 7)
+            layout.setColumnStretch(3, 1)
         elif width >= medium_needed:
-            layout.addWidget(self.product_label, 0, 0)
-            layout.addWidget(self.product_combo, 0, 1, 1, 4)
-            layout.addWidget(self.import_json_button, 1, 1)
-            layout.addWidget(self.manage_json_button, 1, 2)
-            layout.addWidget(self.attr_visible_toggle, 1, 3)
-            layout.addWidget(self.preset_visible_toggle, 1, 4)
-            layout.setColumnStretch(1, 1)
+            layout.addWidget(self.page_title_label, 0, 0)
+            layout.addWidget(self.page_separator, 0, 1)
+            layout.addWidget(self.product_label, 0, 2)
+            layout.addWidget(self.product_combo, 0, 3, 1, 4)
+            layout.addWidget(self.import_json_button, 1, 3)
+            layout.addWidget(self.manage_json_button, 1, 4)
+            layout.addWidget(self.attr_visible_toggle, 1, 5)
+            layout.addWidget(self.preset_visible_toggle, 1, 6)
+            layout.setColumnStretch(3, 1)
         else:
-            layout.addWidget(self.product_label, 0, 0)
-            layout.addWidget(self.product_combo, 0, 1, 1, 3)
-            layout.addWidget(self.import_json_button, 1, 0)
-            layout.addWidget(self.manage_json_button, 1, 1)
-            layout.addWidget(self.attr_visible_toggle, 1, 2)
-            layout.addWidget(self.preset_visible_toggle, 1, 3)
-            layout.setColumnStretch(1, 1)
+            layout.addWidget(self.page_title_label, 0, 0)
+            layout.addWidget(self.page_separator, 0, 1)
+            layout.addWidget(self.product_label, 0, 2)
+            layout.addWidget(self.product_combo, 0, 3, 1, 3)
+            layout.addWidget(self.import_json_button, 1, 2)
+            layout.addWidget(self.manage_json_button, 1, 3)
+            layout.addWidget(self.attr_visible_toggle, 1, 4)
+            layout.addWidget(self.preset_visible_toggle, 1, 5)
+            layout.setColumnStretch(3, 1)
         for button in (
             self.import_json_button,
             self.manage_json_button,
@@ -1152,7 +1363,9 @@ QTableView#AttributeTable::item:selected {{
         if any(column in self._attr_wrapped_column_maximums for column in selected):
             self._resize_attr_rows_to_wrapped_content()
             self._schedule_attr_row_resize(0)
-            QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
+            # 走防抖定时器而非 singleShot：连续触发时只重算一次，
+            # 避免窗口拖拽/导航动画期间叠加多次全表行高重算。
+            self._schedule_attr_row_resize(160)
             # 产品切换前若曾记住旧的超宽侧栏，按新的内容理想宽度收回；
             # 否则名称列虽然已变窄，splitter 仍可能保留旧宽度造成大片空白。
             ideal_width = self._attr_ideal_width()
@@ -1376,10 +1589,9 @@ QTableView#AttributeTable::item:selected {{
         self._relayout_attr_header()
         self._relayout_autoreply_header()
         self._layout_common_commands()
-        # 表格侧栏宽度改变后同步重算受控换行列与行高。
+        # 表格侧栏宽度改变后同步重算受控换行列与行高
+        # （内部已含防抖行高补测，无需额外 singleShot）。
         self._remeasure_attr_columns((2, 3))
-        self._schedule_attr_row_resize(0)
-        QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
         QTimer.singleShot(0, self._rebalance_lower_panels)
 
 
@@ -1426,6 +1638,7 @@ QTableView#AttributeTable::item:selected {{
         self.manage_json_button.setEnabled(bool(names))
 
         if not current:
+            self._attr_table_structure_key = None
             self.attr_table.clearContents()
             self.attr_table.setRowCount(0)
             self.poweron_table.clearContents()
@@ -1460,68 +1673,26 @@ QTableView#AttributeTable::item:selected {{
         auto_reply: bool | None = None,
     ) -> None:
         """Queue formatted text; a 40 ms timer performs one document update."""
-        text = format_frame_display(
+        segments = build_display_segments(
             result,
             raw,
             ts,
             is_tx=is_tx,
             auto_reply=bool(auto_reply),
             attr_center=self._mw.get_attr_center(),
+            pending_data_chars=self._pending_data_chars,
         )
-        lines = text.splitlines(keepends=True)
-        raw_line = lines[0] if lines else text
-        parsed_text = "".join(lines[1:])
-        tag = "[TX]" if is_tx else "[RX]"
-        tag_index = raw_line.find(tag)
-        normal_color = PALETTE["text"]
-        tag_color = _TX_TAG_COLOR if is_tx else _RX_TAG_COLOR
-        parsed_color = _TX_PARSED_COLOR if is_tx else _RX_PARSED_COLOR
-        ts_end = raw_line.find("]")
-        if not (0 < ts_end < tag_index):
-            ts_end = -1
+        self.enqueue_segments_batch([segments])
 
-        segments: list[tuple[str, str, bool, str | None]] = []
-        if tag_index >= 0:
-            if ts_end > 0:
-                segments.append((raw_line[:ts_end + 1], "#2E86FF", False, None))
-            segments.append((raw_line[ts_end + 1:tag_index], normal_color, False, None))
-            tag_bg = "#E8F5E9" if is_tx else "#E3F2FD"
-            segments.append((tag, tag_color, True, tag_bg))
-            segments.append((raw_line[tag_index + len(tag):], normal_color, False, None))
-        else:
-            if ts_end > 0:
-                segments.append((raw_line[:ts_end + 1], "#2E86FF", False, None))
-            segments.append((raw_line[ts_end + 1:], normal_color, False, None))
-        if parsed_text:
-            # 解析文本: 头部(→ 命令名 (0xXX) | 方向 |)与每条属性的
-            # "属性id:XX 值:XX"前缀带背景, 其余内容(名称值、状态描述等)无背景。
-            first = parsed_text.find(" | ")
-            second = parsed_text.find(" | ", first + 3) if first >= 0 else -1
-            if second >= 0:
-                head = parsed_text[:second]
-                arrow_idx = head.find("→")
-                if arrow_idx >= 0:
-                    # 箭头本身无背景, 后面的命令名/方向保留背景。
-                    segments.append((head[:arrow_idx + 1], parsed_color, False, None))
-                    segments.append((head[arrow_idx + 1:], parsed_color, False, tag_bg))
-                else:
-                    segments.append((head, parsed_color, False, None))
-                body = parsed_text[second:]
-            else:
-                segments.append((parsed_text, parsed_color, False, None))
-                body = ""
-            pos = 0
-            for m in re.finditer(r"属性id:[0-9A-Fa-f]{2} 值:\S+", body):
-                if m.start() > pos:
-                    segments.append((body[pos:m.start()], parsed_color, False, None))
-                segments.append((m.group(), parsed_color, False, tag_bg))
-                pos = m.end()
-            if pos < len(body):
-                segments.append((body[pos:], parsed_color, False, None))
-
-        self._pending_data_segments.extend(seg for seg in segments if seg[0])
-        self._pending_data_chars += sum(len(seg[0]) for seg in segments)
-        # Bound the pre-render queue if the GUI thread is temporarily busy.
+    def enqueue_segments_batch(self, batches: list[list[tuple]]) -> None:
+        """Append preformatted MCU segments produced off the hot GUI path."""
+        if not batches:
+            return
+        for segments in batches:
+            if not segments:
+                continue
+            self._pending_data_segments.extend(segments)
+            self._pending_data_chars += sum(len(segment[0]) for segment in segments)
         if self._pending_data_chars > 1_000_000:
             while self._pending_data_segments and self._pending_data_chars > 500_000:
                 old_text, _, _, _ = self._pending_data_segments.popleft()
@@ -1532,41 +1703,86 @@ QTableView#AttributeTable::item:selected {{
         if not self._data_flush_timer.isActive():
             self._data_flush_timer.start()
 
+    _FLUSH_MAX_SEGMENTS = 120
+    _FLUSH_MAX_CHARS = 32_000
+
+    _FLUSH_MAX_SEGMENTS_FROZEN = 24
+
     def _flush_data_batch(self) -> None:
+        main_window = getattr(self, "_mw", None)
+        frozen = (
+            main_window is not None and main_window.is_data_display_frozen()
+        )
+        max_segments = (
+            self._FLUSH_MAX_SEGMENTS_FROZEN
+            if frozen
+            else self._FLUSH_MAX_SEGMENTS
+        )
+        if frozen and not self._pending_data_segments:
+            if not self._data_flush_timer.isActive():
+                self._data_flush_timer.start(40)
+            return
         if not self._pending_data_segments:
             return
-        segments = list(self._pending_data_segments)
-        self._pending_data_segments.clear()
-        self._pending_data_chars = 0
+        batch: list[tuple] = []
+        batch_chars = 0
+        while (
+            self._pending_data_segments
+            and len(batch) < max_segments
+            and batch_chars < self._FLUSH_MAX_CHARS
+        ):
+            segment = self._pending_data_segments.popleft()
+            batch.append(segment)
+            batch_chars += len(segment[0])
+        self._pending_data_chars = max(0, self._pending_data_chars - batch_chars)
 
         scroll_bar = self.data_text.verticalScrollBar()
         saved_scroll_value = scroll_bar.value()
         cursor = QTextCursor(self.data_text.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
         format_cache: dict[tuple[str, bool, str | None], QTextCharFormat] = {}
-        for segment in segments:
-            if len(segment) == 4:
-                text, color, bold, bg_color = segment
-            else:
-                text, color, bold = segment
-                bg_color = None
-            key = (color, bold, bg_color)
-            fmt = format_cache.get(key)
-            if fmt is None:
-                fmt = QTextCharFormat()
-                fmt.setForeground(QColor(color))
-                if bold:
-                    fmt.setFontWeight(QFont.Weight.DemiBold.value)
-                if bg_color:
-                    fmt.setBackground(QColor(bg_color))
-                format_cache[key] = fmt
-            cursor.insertText(text, fmt)
+        heavy_doc = self.data_text.document().blockCount() > 500
+        if heavy_doc:
+            self.data_text.setUpdatesEnabled(False)
+        try:
+            for segment in batch:
+                if len(segment) == 4:
+                    text, color, bold, bg_color = segment
+                else:
+                    text, color, bold = segment
+                    bg_color = None
+                key = (color, bold, bg_color)
+                fmt = format_cache.get(key)
+                if fmt is None:
+                    fmt = QTextCharFormat()
+                    fmt.setForeground(QColor(color))
+                    if bold:
+                        fmt.setFontWeight(QFont.Weight.DemiBold.value)
+                    if bg_color:
+                        fmt.setBackground(QColor(bg_color))
+                    format_cache[key] = fmt
+                cursor.insertText(text, fmt)
+        finally:
+            if heavy_doc:
+                self.data_text.setUpdatesEnabled(True)
 
         if self._auto_scroll:
-            self.data_text.setTextCursor(cursor)
-            self.data_text.ensureCursorVisible()
+            if heavy_doc:
+                scroll_bar.setValue(scroll_bar.maximum())
+            else:
+                self.data_text.setTextCursor(cursor)
+                self.data_text.ensureCursorVisible()
         else:
             scroll_bar.setValue(saved_scroll_value)
+
+        if self._pending_data_segments:
+            interval = 80 if self._pending_data_chars > 256_000 else 40
+            self._data_flush_timer.start(interval)
+        else:
+            main_window = getattr(self, "_mw", None)
+            scheduler = getattr(main_window, "_schedule_status_refresh", None)
+            if callable(scheduler):
+                scheduler()
 
     def refresh_current_values(self, attrids=None) -> None:
         """Refresh only requested IDs; ``None`` means a full value-only refresh."""
@@ -1579,7 +1795,7 @@ QTableView#AttributeTable::item:selected {{
                 entry = center.get_entry(raw_id)
                 if entry is not None:
                     entries.append(entry)
-        current_value_changed = False
+        remeasure_needed = False
         for entry in entries:
             row = self._attr_row_by_id.get(entry.attrid)
             if row is None:
@@ -1587,12 +1803,21 @@ QTableView#AttributeTable::item:selected {{
             item = self.attr_table.item(row, 6)
             if item is not None:
                 current_text = str(entry.current_value)
-                if item.text() != current_text:
+                previous_text = item.text()
+                if previous_text != current_text:
+                    if self._attr_value_width_tier(previous_text) != self._attr_value_width_tier(
+                        current_text
+                    ):
+                        remeasure_needed = True
                     item.setText(current_text)
                     item.setToolTip(current_text)
-                    current_value_changed = True
-        if current_value_changed:
+        if remeasure_needed:
             self._schedule_attr_column_remeasure(6)
+
+    @staticmethod
+    def _attr_value_width_tier(text: str) -> int:
+        """Bucket value text length so remeasure runs only when width may change."""
+        return max(0, len(str(text or ""))) // 8
 
     @staticmethod
     def _sorted_enum_items(enum_map: dict) -> list[tuple[str, str]]:
@@ -1738,6 +1963,31 @@ QTableView#AttributeTable::item:selected {{
         self._attr_send_edits[entry.attrid] = send_edit
         return send_cell, self._attr_base_row_height
 
+    def _attr_entries_structure_key(
+        self,
+        entries,
+        canonical_map: dict[int, int],
+        wire_mapping_active: bool,
+    ) -> tuple:
+        key_parts: list[tuple] = []
+        for entry in entries:
+            wire_id = entry.attrid
+            if wire_mapping_active and canonical_map:
+                wire_id = int(canonical_map.get(entry.attrid, entry.attrid)) & 0xFF
+            enum_sig = tuple(
+                sorted((str(k), str(v)) for k, v in (entry.enum or {}).items())
+            )
+            key_parts.append((
+                entry.attrid,
+                wire_id,
+                entry.access,
+                entry.typeid,
+                entry.name,
+                entry.cn_name,
+                enum_sig,
+            ))
+        return tuple(key_parts)
+
     def refresh_attr_table(self) -> None:
         center = self._mw.get_attr_center()
         old_send = {aid: edit.text() for aid, edit in self._attr_send_edits.items()}
@@ -1757,6 +2007,18 @@ QTableView#AttributeTable::item:selected {{
         except Exception:
             # 显示层兜底：映射不可用时继续显示内部 ID，不影响业务逻辑。
             canonical_map, wire_mapping_active = {}, False
+
+        structure_key = self._attr_entries_structure_key(
+            entries, canonical_map, wire_mapping_active
+        )
+        if (
+            structure_key == getattr(self, "_attr_table_structure_key", None)
+            and self.attr_table.rowCount() == len(entries)
+            and len(self._attr_row_by_id) == len(entries)
+        ):
+            self.refresh_current_values()
+            return
+        self._attr_table_structure_key = structure_key
 
         self.attr_table.setUpdatesEnabled(False)
         try:
@@ -2255,6 +2517,8 @@ QTableView#AttributeTable::item:selected {{
         return item
 
     def _on_attr_send(self, attrid: int, value_text: str) -> None:
+        if not self._mw.guard_click(f"attr_send_{attrid}"):
+            return
         center = self._mw.get_attr_center()
         entry = center.get_entry(attrid)
         if entry is None:

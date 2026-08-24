@@ -16,7 +16,7 @@ def read(relative: str) -> str:
 
 
 def test_online_update_runtime_module_is_parseable() -> None:
-    # 产品策略: 支持基于 GitHub Releases 的在线更新。
+    # 产品策略: 支持 Gitee 主源 + GitHub 备用的在线更新。
     updater = ROOT / "protocol_parser" / "updater.py"
     assert updater.exists()
     ast.parse(updater.read_text(encoding="utf-8"), filename=str(updater))
@@ -41,7 +41,7 @@ def test_product_name_and_version_are_consistent_across_build_files() -> None:
     assert version_json["version"] == APP_VERSION
     assert version_json["tag_name"] == APP_VERSION
     assert re.fullmatch(r"[0-9a-f]{64}", version_json["sha256"])
-    assert version_json["download_url"].startswith("https://")
+    assert version_json["download_url"].startswith("https://gitee.com/")
     assert "VERSION: str = APP_VERSION" in init_text
 
 
@@ -53,7 +53,16 @@ def test_gui_source_freezes_monitor_mode_and_uses_incremental_updates() -> None:
     assert "on_mcu_frame=on_mcu_frame if mcu_enabled else None" in gui
     assert "primary_enabled=not mcu_enabled" in gui
     assert "self._auto_reply.set_collector(self.collector if mcu_enabled else None)" in gui
-    assert "self.bridge.attr_updated_signal.emit(changed)" in gui
+    assert "receive_display_batch_signal" in gui
+    assert "mcu_display_batch_signal" in gui
+    assert "def _on_receive_display_batch" in gui
+    assert "def _active_monitoring_page_index" in gui
+    assert "def _reset_inactive_display_buffers" in gui
+    assert 'setProperty("smstNoAutoToolTip", True)' in gui
+    assert "def _schedule_attr_refresh" in gui
+    assert "self._schedule_attr_refresh(changed)" in gui
+    assert "parse_queue_size=512" in gui
+    assert "self._mcu_display_batcher.add(segments)" in gui
     assert "if cmd_int == 0x01:" in gui
     assert "result = SimpleNamespace(" in gui
     assert "self._auto_reply.last_applied_attrids" in gui

@@ -1,8 +1,8 @@
 {
-  "version": "3.3.3",
-  "tag_name": "3.3.3",
-  "asset_name": "SerialXSetup3.3.3_x64.exe",
-  "download_url": "https://github.com/hello-z-yeah/Serial-port-data-parsing/releases/download/3.3.3/SerialXSetup3.3.3_x64.exe",
-  "sha256": "a3542e10c86bd04c189525db4d9b25f2d1cadaef93b97f122b8e20759895efd2",
-  "notes": "v3.3.3 update"
+  "version": "3.3.9",
+  "tag_name": "3.3.9",
+  "asset_name": "SerialXSetup3.3.9_x64.exe",
+  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.3.9/SerialXSetup3.3.9_x64.exe",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "notes": "v3.3.9 update"
 }

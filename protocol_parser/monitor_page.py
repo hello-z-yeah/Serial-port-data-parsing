@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import re
+import threading
+from collections import deque
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer
@@ -17,7 +19,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLineEdit,
-    QMessageBox,
+    QProgressDialog,
     QSizePolicy,
     QSplitter,
     QVBoxLayout,
@@ -34,6 +36,12 @@ from qfluentwidgets import (
 )
 
 from protocol_parser.mcu_page import CtrlWheelZoomTextEdit
+from protocol_parser.display_format import (
+    build_receive_color_segments,
+    format_monitor_raw_line,
+    LEVEL_STYLES,
+    normalize_monitor_display_line,
+)
 from protocol_parser.dpi_font import UI_FONT_BASE_POINT_SIZE
 from protocol_parser.log_text_style import apply_log_text_edit_style
 from protocol_parser.monitor_settings import (
@@ -42,7 +50,14 @@ from protocol_parser.monitor_settings import (
     sanitize_monitor_settings,
     save_monitor_settings,
 )
-from protocol_parser.widgets import apply_tooltip
+from protocol_parser.widgets import (
+    apply_tooltip,
+    apply_fluent_dialog_style,
+    stabilize_transient_dialog,
+    StyledMessageBox,
+)
+
+QMessageBox = StyledMessageBox
 
 
 class _MonitorSettingsDialog(QDialog):
@@ -73,6 +88,8 @@ class _MonitorSettingsDialog(QDialog):
         button_layout.addWidget(self.btn_ok)
         button_layout.addWidget(self.btn_cancel)
         layout.addLayout(button_layout)
+        # 统一浅底深字外观，避免透明容器链下弹框背景缺失发黑
+        apply_fluent_dialog_style(self)
 
     def get_values(self) -> tuple[str, bool]:
         return self.pattern_edit.text().strip(), self.hex_check.isChecked()
@@ -182,10 +199,15 @@ class MonitorToolPage(QWidget):
         self.serial_text.setReadOnly(True)
         self.serial_text.setUndoRedoEnabled(False)
         self.serial_text.setAcceptRichText(False)
-        self.serial_text.setLineWrapMode(CtrlWheelZoomTextEdit.WidgetWidth)
-        self.serial_text.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.serial_text.document().setMaximumBlockCount(20000)
         self._apply_text_style(self.serial_text)
+        self._realtime_pending: deque[str] = deque()
+        self._record_pending: deque[tuple[str, list[str] | None]] = deque()
+        self._pending_realtime_chars = 0
+        self._log_flush_timer = QTimer(self)
+        self._log_flush_timer.setSingleShot(True)
+        self._log_flush_timer.setInterval(50)
+        self._log_flush_timer.timeout.connect(self._flush_log_batch)
         layout.addWidget(self.serial_text, stretch=1)
 
         return card
@@ -219,8 +241,6 @@ class MonitorToolPage(QWidget):
         self.record_text.setReadOnly(True)
         self.record_text.setUndoRedoEnabled(False)
         self.record_text.setAcceptRichText(False)
-        self.record_text.setLineWrapMode(CtrlWheelZoomTextEdit.WidgetWidth)
-        self.record_text.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.record_text.document().setMaximumBlockCount(self._max_record_lines)
         self._apply_text_style(self.record_text)
         layout.addWidget(self.record_text, stretch=1)
@@ -327,13 +347,21 @@ class MonitorToolPage(QWidget):
         return True
 
     def _clear_output(self) -> None:
+        self._realtime_pending.clear()
+        self._pending_realtime_chars = 0
+        if self._log_flush_timer.isActive():
+            self._log_flush_timer.stop()
         self.serial_text.clear()
+        self._schedule_main_status_refresh()
 
     def _clear_records(self) -> None:
+        self._record_pending.clear()
+        if self._log_flush_timer.isActive() and not self._realtime_pending:
+            self._log_flush_timer.stop()
         self.record_text.clear()
 
     def _export_records(self) -> None:
-        """将监听记录导出为 Word 文档。"""
+        """将监听记录导出为 Word 文档（后台线程写入，避免阻塞 UI）。"""
         text = self.record_text.toPlainText()
         if not text.strip():
             QMessageBox.information(self, "无记录", "当前没有监听记录可导出。")
@@ -345,17 +373,49 @@ class MonitorToolPage(QWidget):
         if not path:
             return
 
-        try:
-            from docx import Document
-            doc = Document()
-            doc.add_heading("监听记录", level=1)
-            for line in text.splitlines():
-                if line.strip():
+        lines = [line for line in text.splitlines() if line.strip()]
+        progress = QProgressDialog("正在导出 Word 文档…", None, 0, 0, self)
+        stabilize_transient_dialog(progress, min_width=360, max_width=480)
+        progress.setWindowTitle("导出监听记录")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setCancelButton(None)
+        progress.show()
+
+        def worker() -> None:
+            error: Exception | None = None
+            try:
+                from docx import Document
+
+                doc = Document()
+                doc.add_heading("监听记录", level=1)
+                for line in lines:
                     doc.add_paragraph(line)
-            doc.save(path)
-            QMessageBox.information(self, "导出成功", f"已保存到：{path}")
-        except Exception as exc:
-            QMessageBox.warning(self, "导出失败", f"导出 Word 失败：{exc}")
+                doc.save(path)
+            except Exception as exc:
+                error = exc
+            QTimer.singleShot(
+                0,
+                lambda: self._finish_export_records(path, error, progress),
+            )
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="smst-monitor-export",
+        ).start()
+
+    def _finish_export_records(
+        self,
+        path: str,
+        error: Exception | None,
+        progress: QProgressDialog,
+    ) -> None:
+        progress.close()
+        if error is not None:
+            QMessageBox.warning(self, "导出失败", f"导出 Word 失败：{error}")
+            return
+        QMessageBox.information(self, "导出成功", f"已保存到：{path}")
 
     def _on_settings(self) -> None:
         dialog = _MonitorSettingsDialog(self)
@@ -374,16 +434,88 @@ class MonitorToolPage(QWidget):
 
     def display_raw_data(self, data: bytes, ts: float) -> None:
         """显示原始 RX 数据，并检查是否命中监听内容。"""
-        ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
-        self._append_to_text(self.serial_text, self._format_data_line(data, ts_str))
+        line = format_monitor_raw_line(data, ts, hex_format=bool(self.hex_format))
+        if line:
+            self._enqueue_realtime(line)
         self._check_and_record(data, ts)
 
-    def display_tx(self, data: bytes, ts: float) -> None:
-        """显示 TX 数据（监听匹配只针对 RX，这里仅用于实时数据窗口显示）。"""
-        ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
-        raw_label = "Raw-HEX" if self.hex_format else "Raw-ASCII"
-        line = f"[{ts_str}] [TX] {raw_label} {self._format_data(data)}\n"
-        self._append_to_text(self.serial_text, line)
+    def display_raw_line(self, line: str, data: bytes, ts: float) -> None:
+        """Append a preformatted monitor line and run pattern matching."""
+        if not line:
+            line = format_monitor_raw_line(data, ts, hex_format=bool(self.hex_format))
+        if line:
+            self._enqueue_realtime(line)
+        self._check_and_record(data, ts)
+
+    def _enqueue_realtime(self, line: str) -> None:
+        line = normalize_monitor_display_line(line)
+        if not line:
+            return
+        self._realtime_pending.append(line)
+        self._pending_realtime_chars += len(line)
+        if self._pending_realtime_chars > 512_000:
+            while self._realtime_pending and self._pending_realtime_chars > 256_000:
+                dropped = self._realtime_pending.popleft()
+                self._pending_realtime_chars -= len(dropped)
+        if not self._log_flush_timer.isActive():
+            self._log_flush_timer.start()
+
+    def _enqueue_record(self, line: str, highlight_terms: list[str] | None = None) -> None:
+        line = normalize_monitor_display_line(line)
+        if not line:
+            return
+        self._record_pending.append((line, highlight_terms))
+        if not self._log_flush_timer.isActive():
+            self._log_flush_timer.start()
+
+    _FLUSH_MAX_LINES = 80
+    _FLUSH_MAX_LINES_FROZEN = 20
+    _COLOR_BLOCK_CHARS = 512_000
+    _COLOR_BLOCK_LINES = 20_000
+
+    def _colorization_enabled(self, text_edit: CtrlWheelZoomTextEdit) -> bool:
+        if self._pending_realtime_chars > self._COLOR_BLOCK_CHARS:
+            return False
+        try:
+            if text_edit.document().blockCount() > self._COLOR_BLOCK_LINES:
+                return False
+        except Exception:
+            pass
+        return True
+
+    def _flush_log_batch(self) -> None:
+        main_window = getattr(self, "_mw", None)
+        frozen = (
+            main_window is not None and main_window.is_data_display_frozen()
+        )
+        max_lines = self._FLUSH_MAX_LINES_FROZEN if frozen else self._FLUSH_MAX_LINES
+        if frozen and not self._realtime_pending and not self._record_pending:
+            if not self._log_flush_timer.isActive():
+                self._log_flush_timer.start(50)
+            return
+        flushed = 0
+        while self._realtime_pending and flushed < max_lines:
+            line = self._realtime_pending.popleft()
+            self._pending_realtime_chars -= len(line)
+            self._append_to_text(self.serial_text, line)
+            flushed += 1
+        while self._record_pending and flushed < max_lines:
+            line, terms = self._record_pending.popleft()
+            self._append_to_text(self.record_text, line, highlight_terms=terms)
+            flushed += 1
+        if self._realtime_pending or self._record_pending:
+            interval = 50 if frozen else 0
+            self._log_flush_timer.start(interval)
+        elif flushed:
+            self._schedule_main_status_refresh()
+
+    def _schedule_main_status_refresh(self) -> None:
+        main_window = getattr(self, "_mw", None)
+        if main_window is None:
+            return
+        scheduler = getattr(main_window, "_schedule_status_refresh", None)
+        if callable(scheduler):
+            scheduler()
 
     def clear_output(self) -> None:
         self._clear_output()
@@ -406,20 +538,22 @@ class MonitorToolPage(QWidget):
                 pass
 
         if matched:
-            ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
+            line = format_monitor_raw_line(
+                data,
+                ts,
+                hex_format=bool(self._monitor_is_hex),
+            )
+            if not line:
+                return
             if self._monitor_is_hex:
-                shown = " ".join(f"{byte:02X}" for byte in data)
                 highlighted = " ".join(f"{byte:02X}" for byte in pattern)
             else:
-                shown = self._format_data(data)
                 highlighted = self._monitor_pattern_text
-            line = f"[{ts_str}] {shown}\n"
             highlight = [highlighted]
-            self._append_to_text(self.record_text, line, highlight_terms=highlight)
+            self._enqueue_record(line.rstrip("\n") + "\n", highlight_terms=highlight)
 
-    def _format_data_line(self, data: bytes, ts_str: str) -> str:
-        raw_label = "Raw-HEX" if self.hex_format else "Raw-ASCII"
-        return f"[{ts_str}] [RX] {raw_label} {self._format_data(data)}\n"
+    def _format_data_line(self, data: bytes, ts: float) -> str:
+        return format_monitor_raw_line(data, ts, hex_format=bool(self.hex_format))
 
     def _format_data(self, data: bytes) -> str:
         if self.hex_format:
@@ -433,20 +567,8 @@ class MonitorToolPage(QWidget):
 
     _SEGMENT_RE = re.compile(
         r"(\[\d{2}:\d{2}:\d{2}\.\d{3}\])|"
-        r"(\[\s*(?:EMERG|ERROR|WARN|NOTICE|INFO|DEBUG|TRACE)\s*\])|"
-        r"(\[(TX|RX)\])|"
-        r"(Raw-(?:ASCII|HEX))"
+        r"(\[\s*(?:EMERG|ERROR|WARN|NOTICE|INFO|DEBUG|TRACE)\s*\])"
     )
-
-    _LEVEL_STYLES = {
-        "EMERG":  ("#C42B1C", "#FDE9E7"),
-        "ERROR":  ("#C42B1C", "#FDE9E7"),
-        "WARN":   ("#E65100", "#FFF3E0"),
-        "NOTICE": ("#0066CC", "#E3F2FD"),
-        "INFO":   ("#374151", "#E8E8E8"),
-        "DEBUG":  ("#607D8B", "#ECEFF1"),
-        "TRACE":  ("#607D8B", "#ECEFF1"),
-    }
 
     def _append_to_text(
         self,
@@ -460,6 +582,28 @@ class MonitorToolPage(QWidget):
             return
 
         terms = [t for t in (highlight_terms or []) if t]
+        if not terms and not self._colorization_enabled(text_edit):
+            cursor = QTextCursor(text_edit.document())
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            for segment in build_receive_color_segments(text):
+                seg_text, seg_color, seg_bg, _pill = segment
+                if not seg_text:
+                    continue
+                fmt = QTextCharFormat()
+                if seg_color:
+                    fmt.setForeground(QColor(seg_color))
+                if seg_bg:
+                    fmt.setBackground(QColor(seg_bg))
+                cursor.setCharFormat(fmt)
+                cursor.insertText(seg_text)
+            if getattr(self, "autoscroll", True):
+                scroll_bar = text_edit.verticalScrollBar()
+                if scroll_bar is not None and text_edit.document().blockCount() > 500:
+                    scroll_bar.setValue(scroll_bar.maximum())
+                else:
+                    text_edit.setTextCursor(cursor)
+                    text_edit.ensureCursorVisible()
+            return
 
         cursor = QTextCursor(text_edit.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -515,15 +659,8 @@ class MonitorToolPage(QWidget):
                 _apply("#2E86FF", "#FFF9C4")
             elif match.group(2):  # [DEBUG] / [INFO] 等级别标签
                 level = match.group(2).strip("[] ").upper()
-                fg, bg = self._LEVEL_STYLES.get(level, ("#374151", "#E8E8E8"))
+                fg, bg = LEVEL_STYLES.get(level, ("#374151", "#E8E8E8"))
                 _apply(fg, bg)
-            elif match.group(3):  # [TX] / [RX]
-                if match.group(4).upper() == "TX":
-                    _apply("#008000", "#E8F5E9")
-                else:
-                    _apply("#0000CD", "#E3F2FD")
-            else:  # Raw-ASCII / Raw-HEX
-                _apply("#008000", "#E8F5E9")
 
             cursor.insertText(match.group(0))
             pos = match.end()
@@ -532,5 +669,9 @@ class MonitorToolPage(QWidget):
             _insert_plain(text[pos:], "#0000CD", None)
 
         if getattr(self, "autoscroll", True):
-            text_edit.setTextCursor(cursor)
-            text_edit.ensureCursorVisible()
+            scroll_bar = text_edit.verticalScrollBar()
+            if scroll_bar is not None and text_edit.document().blockCount() > 500:
+                scroll_bar.setValue(scroll_bar.maximum())
+            else:
+                text_edit.setTextCursor(cursor)
+                text_edit.ensureCursorVisible()

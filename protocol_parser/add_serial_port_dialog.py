@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QSizePolicy,
     QVBoxLayout,
-    QMessageBox,
     QWidget,
 )
 from qfluentwidgets import BodyLabel, CardWidget, PrimaryPushButton, PushButton, StrongBodyLabel
@@ -25,7 +24,9 @@ from protocol_parser.gui_layout_helpers import (
     fit_button_to_text,
 )
 from protocol_parser.log_text_style import make_crisp_ui_font
-from protocol_parser.widgets import apply_fluent_dialog_style
+from protocol_parser.widgets import apply_fluent_dialog_style, StyledMessageBox
+
+QMessageBox = StyledMessageBox
 
 class AddSerialPortDialog(QDialog):
     """与主界面一致的添加串口对话框。"""

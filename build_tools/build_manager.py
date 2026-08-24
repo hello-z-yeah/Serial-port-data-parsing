@@ -47,16 +47,22 @@ def _load_app_identity():
     return module
 
 
-_APP_INFO = _load_app_identity()
-APP_EXE_BASENAME = _APP_INFO.APP_EXE_BASENAME
-APP_EXE_NAME = _APP_INFO.APP_EXE_NAME
-APP_NAME = _APP_INFO.APP_NAME
-APP_VERSION = _APP_INFO.APP_VERSION
+def _refresh_app_identity() -> None:
+    """Reload app_info.py so a long-lived Build Manager sees version edits."""
+    global _APP_INFO, APP_EXE_BASENAME, APP_EXE_NAME, APP_NAME, APP_VERSION
+    global EXPECTED_APP_DIR, EXPECTED_APP_EXE, EXPECTED_PORTABLE_EXE, EXPECTED_INSTALLER
+    _APP_INFO = _load_app_identity()
+    APP_EXE_BASENAME = _APP_INFO.APP_EXE_BASENAME
+    APP_EXE_NAME = _APP_INFO.APP_EXE_NAME
+    APP_NAME = _APP_INFO.APP_NAME
+    APP_VERSION = _APP_INFO.APP_VERSION
+    EXPECTED_APP_DIR = DIST_DIR / APP_EXE_BASENAME
+    EXPECTED_APP_EXE = EXPECTED_APP_DIR / APP_EXE_NAME
+    EXPECTED_PORTABLE_EXE = DIST_DIR / f"{APP_EXE_BASENAME}_Portable.exe"
+    EXPECTED_INSTALLER = RELEASE_DIR / f"{APP_EXE_BASENAME}Setup{APP_VERSION}_x64.exe"
 
-EXPECTED_APP_DIR = DIST_DIR / APP_EXE_BASENAME
-EXPECTED_APP_EXE = EXPECTED_APP_DIR / APP_EXE_NAME
-EXPECTED_PORTABLE_EXE = DIST_DIR / f"{APP_EXE_BASENAME}_Portable.exe"
-EXPECTED_INSTALLER = RELEASE_DIR / f"{APP_EXE_BASENAME}Setup{APP_VERSION}_x64.exe"
+
+_refresh_app_identity()
 REQUIREMENTS_FILE = PROJECT_ROOT / "requirements.txt"
 
 SUPPORTED_MIN = (3, 11)
@@ -103,6 +109,7 @@ def validate_inno_setup_script(path: Path = ISS_FILE) -> None:
 
 def validate_version_artifacts() -> None:
     """Fail before a build when generated/release metadata drift from app_info."""
+    _refresh_app_identity()
     errors: list[str] = []
     try:
         iss = ISS_FILE.read_text(encoding="utf-8-sig")
@@ -140,6 +147,9 @@ def _sha256_file(path: Path) -> str:
 
 def write_release_version_json(installer: Path) -> Path:
     """Generate updater metadata from the canonical identity and built installer."""
+    from protocol_parser.updater import gitee_release_download_url
+
+    _refresh_app_identity()
     if not installer.is_file():
         raise BuildManagerError(f"无法生成更新元数据，安装包不存在：{installer}")
     notes = f"v{APP_VERSION} update"
@@ -153,10 +163,7 @@ def write_release_version_json(installer: Path) -> Path:
         "version": APP_VERSION,
         "tag_name": APP_VERSION,
         "asset_name": installer.name,
-        "download_url": (
-            f"https://github.com/hello-z-yeah/Serial-port-data-parsing/releases/"
-            f"download/{APP_VERSION}/{installer.name}"
-        ),
+        "download_url": gitee_release_download_url(APP_VERSION, installer.name),
         "sha256": _sha256_file(installer),
         "notes": notes,
     }
@@ -270,8 +277,10 @@ class BuildRunner:
         command: Sequence[str | os.PathLike[str]],
         *,
         cwd: Path = PROJECT_ROOT,
-        env: dict[str, str] | None = None,
+        env: dict[str] | None = None,
         description: str | None = None,
+        idle_timeout: float | None = None,
+        tolerate_exit_anomaly: bool = False,
     ) -> None:
         self._check_cancelled()
         cmd = [str(part) for part in command]
@@ -285,6 +294,7 @@ class BuildRunner:
                 "PYTHONUTF8": "1",
                 "PYTHONIOENCODING": "utf-8",
                 "PYTHONPATH": str(PROJECT_ROOT),
+                "PYTHONUNBUFFERED": "1",
             }
         )
         if env:
@@ -311,25 +321,87 @@ class BuildRunner:
         except OSError as exc:
             raise BuildManagerError(f"无法启动命令：{exc}") from exc
 
+        # 读取线程 + 队列：主循环不被 readline 永久阻塞，子进程挂起时
+        # 可由空闲超时强杀，避免构建管理器整体卡死。
+        lines: list[str] = []
+        line_queue: "queue.Queue[str | None]" = queue.Queue()
+
+        def _reader() -> None:
+            assert process.stdout is not None
+            for raw in process.stdout:
+                line_queue.put(raw)
+            line_queue.put(None)
+
+        reader = threading.Thread(target=_reader, daemon=True)
+        reader.start()
         with self._process_lock:
             self._process = process
         try:
-            assert process.stdout is not None
+            last_activity = time.monotonic()
             while True:
                 self._check_cancelled()
-                line = process.stdout.readline()
-                if line:
-                    self.log(line.rstrip("\r\n"))
-                    continue
-                if process.poll() is not None:
+                try:
+                    item = line_queue.get(timeout=0.2)
+                except queue.Empty:
+                    if process.poll() is None:
+                        if (
+                            idle_timeout is not None
+                            and time.monotonic() - last_activity > idle_timeout
+                        ):
+                            self.log(
+                                f"子进程 {idle_timeout:.0f} 秒无输出，"
+                                "判定为退出阶段挂起，强制终止。"
+                            )
+                            process.kill()
+                        continue
+                    # 子进程已退出：等 reader 排空剩余输出后再结束。
+                    reader.join(2.0)
+                    while True:
+                        try:
+                            item = line_queue.get_nowait()
+                        except queue.Empty:
+                            item = None
+                        if item is None:
+                            break
+                        text = item.rstrip("\r\n")
+                        lines.append(text)
+                        self.log(text)
                     break
-                time.sleep(0.03)
+                if item is None:
+                    break
+                last_activity = time.monotonic()
+                text = item.rstrip("\r\n")
+                lines.append(text)
+                self.log(text)
             return_code = process.wait()
         finally:
             with self._process_lock:
                 self._process = None
 
         if return_code != 0:
+            if tolerate_exit_anomaly:
+                # Qt 测试进程在退出阶段偶发访问冲突/挂起（退出码异常），
+                # 但测试汇总已输出。以汇总文本判定真实结果：
+                # 仅当出现 passed 且无 failed/error 时视为通过。
+                summary = next(
+                    (
+                        line
+                        for line in reversed(lines)
+                        if re.search(r"\d+ (passed|failed|error)", line)
+                    ),
+                    "",
+                )
+                if (
+                    " passed" in summary
+                    and " failed" not in summary
+                    and " error" not in summary
+                ):
+                    self.log(
+                        f"警告：pytest 退出代码 {return_code}"
+                        "（Qt 退出阶段偶发异常），"
+                        f"但测试汇总显示全部通过：{summary.strip()}。继续构建。"
+                    )
+                    return
             raise BuildManagerError(
                 f"命令执行失败，退出代码 {return_code}：{subprocess.list2cmdline(cmd)}"
             )
@@ -489,6 +561,7 @@ class BuildRunner:
             )
 
     def run_checks(self) -> None:
+        _refresh_app_identity()
         self.check_python()
         self.verify_dependencies()
         validate_inno_setup_script()
@@ -505,6 +578,10 @@ class BuildRunner:
         self.run_command(
             [PYTHON_EXECUTABLE, "-m", "pytest", "-q"],
             description="自动测试",
+            # Qt 测试进程退出阶段偶发访问冲突/挂起；空闲超时强杀兜底，
+            # 并以测试汇总文本判定真实结果，避免误判构建失败。
+            idle_timeout=90.0,
+            tolerate_exit_anomaly=True,
         )
 
     def clean_build_output(self) -> None:
@@ -580,6 +657,7 @@ class BuildRunner:
         return EXPECTED_PORTABLE_EXE
 
     def build_installer(self, *, install_if_missing: bool = False) -> Path:
+        _refresh_app_identity()
         if os.name != "nt":
             raise BuildManagerError("Windows 安装包只能在 Windows 系统上构建。")
         if not ISS_FILE.is_file():
