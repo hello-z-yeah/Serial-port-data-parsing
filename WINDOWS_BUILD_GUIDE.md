@@ -24,7 +24,7 @@ SMST_Build_Manager.vbs
 生成位置：
 
 ```text
-release\SerialXSetup3.4.2_x64.exe
+release\SerialXSetup3.4.3_x64.exe
 ```
 
 ## 命令行构建

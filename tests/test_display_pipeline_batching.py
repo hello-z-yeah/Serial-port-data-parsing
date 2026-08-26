@@ -69,6 +69,8 @@ def test_format_receive_raw_items_hex_mode():
     items = format_receive_raw_items(b"\x01\x02", 2.0, hex_format=True)
     assert len(items) == 1
     assert "Raw-HEX" in items[0]["text"]
+    assert items[0]["segments"]
+    assert items[0]["segments"][0][1] == "#2E86FF"
     assert items[0]["raw_bytes"] == b"\x01\x02"
     monitor_line = format_monitor_raw_line(b"\x01\x02", 2.0, hex_format=True)
     assert "Raw-HEX" not in monitor_line

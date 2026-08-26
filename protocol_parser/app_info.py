@@ -3,7 +3,7 @@ from __future__ import annotations
 
 APP_NAME = "SerialX"
 APP_SHORT_NAME = "SerialX"
-APP_VERSION = "3.4.2"
+APP_VERSION = "3.4.3"
 APP_ID = "SST.SerialTool.App.3"
 APP_DATA_DIR_NAME = "SST_串口工具"
 APP_EXE_BASENAME = "SerialX"

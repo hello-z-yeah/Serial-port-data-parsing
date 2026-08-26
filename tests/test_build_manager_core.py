@@ -76,7 +76,7 @@ def test_validate_version_artifacts_ignores_stale_cached_version():
         bm.validate_version_artifacts()
     finally:
         bm._refresh_app_identity()
-    assert bm.APP_VERSION == "3.4.2"
+    assert bm.APP_VERSION == "3.4.3"
 
 
 def test_version_validation_reloads_identity_before_compare():

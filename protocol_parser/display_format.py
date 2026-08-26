@@ -204,7 +204,7 @@ def format_receive_raw_items(
         return [{
             "text": line,
             "color": "#0000CD",
-            "ts_colorize": False,
+            "segments": build_receive_color_segments(line, "#0000CD"),
             "kind": "raw",
             "raw_bytes": data,
             "ts": ts,

@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QHBoxLayout,
-    QLineEdit,
     QProgressDialog,
     QSizePolicy,
     QSplitter,
@@ -29,6 +28,7 @@ from qfluentwidgets import (
     BodyLabel,
     CardWidget,
     CheckBox,
+    LineEdit,
     PrimaryPushButton,
     PushButton,
     StrongBodyLabel,
@@ -42,7 +42,7 @@ from protocol_parser.display_format import (
     LEVEL_STYLES,
     normalize_monitor_display_line,
 )
-from protocol_parser.dpi_font import UI_FONT_BASE_POINT_SIZE
+from protocol_parser.dpi_font import UI_FONT_BASE_POINT_SIZE, fit_dialog_to_content, fit_text_control
 from protocol_parser.log_text_style import apply_log_text_edit_style, reapply_log_text_font
 from protocol_parser.monitor_settings import (
     MAX_MONITOR_PATTERN_CHARS,
@@ -53,7 +53,6 @@ from protocol_parser.monitor_settings import (
 from protocol_parser.widgets import (
     apply_tooltip,
     apply_fluent_dialog_style,
-    stabilize_transient_dialog,
     apply_fluent_progress_dialog_style,
     StyledMessageBox,
 )
@@ -66,31 +65,59 @@ class _MonitorSettingsDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        apply_fluent_dialog_style(self)
         self.setWindowTitle("设置监听内容")
-        self.setMinimumWidth(360)
+        self.setMinimumSize(420, 220)
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 14, 14, 14)
+        outer.setSpacing(0)
+
+        card = CardWidget(self)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(10)
-
-        layout.addWidget(BodyLabel("匹配内容：", self))
-        self.pattern_edit = QLineEdit(self)
+        layout.addWidget(StrongBodyLabel("设置监听内容", card))
+        layout.addWidget(BodyLabel("匹配内容：", card))
+        self.pattern_edit = LineEdit(card)
         self.pattern_edit.setPlaceholderText("例如 ASCII: FW_NAME  或 HEX: A5 A5")
+        self.pattern_edit.setClearButtonEnabled(True)
         layout.addWidget(self.pattern_edit)
 
-        self.hex_check = CheckBox("HEX 格式（按十六进制字节匹配）", self)
+        self.hex_check = CheckBox("HEX 格式（按十六进制字节匹配）", card)
         layout.addWidget(self.hex_check)
 
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(8)
         button_layout.addStretch(1)
-        self.btn_ok = PrimaryPushButton("确定", self)
-        self.btn_ok.clicked.connect(self.accept)
-        self.btn_cancel = PushButton("取消", self)
+        self.btn_cancel = PushButton("取消", card)
         self.btn_cancel.clicked.connect(self.reject)
-        button_layout.addWidget(self.btn_ok)
+        fit_text_control(self.btn_cancel, point_size=UI_FONT_BASE_POINT_SIZE)
         button_layout.addWidget(self.btn_cancel)
+        self.btn_ok = PrimaryPushButton("确定", card)
+        self.btn_ok.clicked.connect(self.accept)
+        fit_text_control(self.btn_ok, point_size=UI_FONT_BASE_POINT_SIZE)
+        button_layout.addWidget(self.btn_ok)
         layout.addLayout(button_layout)
-        # 统一浅底深字外观，避免透明容器链下弹框背景缺失发黑
-        apply_fluent_dialog_style(self)
+        outer.addWidget(card)
+
+        fit_dialog_to_content(
+            self,
+            preferred_width=480,
+            minimum=(420, 220),
+            margin=(36, 72),
+            point_size=UI_FONT_BASE_POINT_SIZE,
+        )
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.property("_smstDialogGeometryPinned"):
+            return
+        self.setProperty("_smstDialogGeometryPinned", True)
+        pinned = self.size()
+        if pinned.width() > 0 and pinned.height() > 0:
+            self.setMinimumSize(pinned)
+            self.setMaximumSize(pinned)
 
     def get_values(self) -> tuple[str, bool]:
         return self.pattern_edit.text().strip(), self.hex_check.isChecked()

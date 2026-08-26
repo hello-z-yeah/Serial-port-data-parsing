@@ -599,6 +599,7 @@ class ProtocolParserApp(FluentWindow):
         self._port_disappear_handled = False
         self._protocol_load_inflight = False
         self._port_poll_inflight = False
+        self._add_port_dialog = None
         self._serial_reconnect_timer = QTimer(self)
         self._serial_reconnect_timer.setSingleShot(True)
         self._serial_reconnect_timer.timeout.connect(self._attempt_serial_reconnect)
@@ -3555,7 +3556,25 @@ class ProtocolParserApp(FluentWindow):
 
         if changed and not silent:
             self._set_status(f"找到 {len(ports)} 个串口")
+        self._refresh_add_port_dialog(ports)
         return changed
+
+    def _refresh_add_port_dialog(self, ports: list[dict] | None = None) -> None:
+        dlg = getattr(self, "_add_port_dialog", None)
+        if dlg is None:
+            return
+        try:
+            if not dlg.isVisible():
+                return
+        except RuntimeError:
+            self._add_port_dialog = None
+            return
+        if ports is None:
+            ports = SerialCollector.list_ports()
+        try:
+            dlg.update_ports(list(ports or []))
+        except Exception as exc:
+            _log_error_to_disk(exc)
 
     def _poll_ports(self, *, initial_startup: bool = False) -> None:
         if self._port_poll_inflight:
@@ -3778,9 +3797,9 @@ class ProtocolParserApp(FluentWindow):
         except Exception:
             self._monitoring_page = 0
         self._reset_inactive_display_buffers()
-        mcu_enabled = bool(
-            self._monitoring_page == 1
-            and self._is_mcu_auto_reply_context_active()
+        mcu_session = self._monitoring_page == 1
+        mcu_auto_reply = bool(
+            mcu_session and self._is_mcu_auto_reply_context_active()
         )
         self._set_status(f"正在{'重新' if is_reconnect else ''}连接 {port} @ {baudrate}...")
 
@@ -3811,10 +3830,11 @@ class ProtocolParserApp(FluentWindow):
                 _log_error_to_disk(e)
 
         def on_mcu_frame(result, frame, ts):
-            if generation != self._collector_generation or not mcu_enabled:
+            if generation != self._collector_generation or not mcu_session:
                 return
             try:
-                self.bridge.mcu_frame_signal.emit(generation, result, frame, ts)
+                if mcu_auto_reply:
+                    self.bridge.mcu_frame_signal.emit(generation, result, frame, ts)
                 segments = build_display_segments(
                     result,
                     frame.raw,
@@ -3883,7 +3903,7 @@ class ProtocolParserApp(FluentWindow):
                 self._write_raw_data(data_sent, ts, prefix="TX ")
                 meta = metadata or {}
                 is_auto_reply_tx = bool(meta.get("auto_reply"))
-                if mcu_enabled:
+                if mcu_session:
                     result = None
                     if self._mcu_cfg:
                         try:
@@ -3924,16 +3944,16 @@ class ProtocolParserApp(FluentWindow):
                 on_error=on_error,
                 on_connection_error=on_connection_error,
                 on_raw=on_raw,
-                mcu_cfg=self._mcu_cfg if mcu_enabled else {},
+                mcu_cfg=self._mcu_cfg if mcu_auto_reply else {},
                 mcu_direction="request",
-                on_mcu_frame=on_mcu_frame if mcu_enabled else None,
-                primary_enabled=not mcu_enabled,
+                on_mcu_frame=on_mcu_frame if mcu_session else None,
+                primary_enabled=not mcu_session,
                 raw_mode=(is_ascii or self.view_mode == "raw"),
                 on_tx_sent=on_tx_sent,
                 max_reconnect_attempts=0,
                 parse_queue_size=512,
             )
-            self._auto_reply.set_collector(self.collector if mcu_enabled else None)
+            self._auto_reply.set_collector(self.collector if mcu_auto_reply else None)
             self._attr_center.reset_heartbeat_counter()
             self.collector.start()
         except Exception as e:
@@ -5635,7 +5655,9 @@ class ProtocolParserApp(FluentWindow):
             return
 
         dlg = AddSerialPortDialog(self, ports)
-        if dlg.exec() == QDialog.Accepted:
+        self._add_port_dialog = dlg
+        dlg.finished.connect(lambda _result: setattr(self, "_add_port_dialog", None))
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             self._spawn_monitor(dlg.selected_port(), dlg.selected_baud())
 
     def _spawn_monitor(self, port: str, baudrate: int) -> None:

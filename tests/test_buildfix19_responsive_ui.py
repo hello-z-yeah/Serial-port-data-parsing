@@ -64,15 +64,20 @@ def test_narrow_mcu_page_stacks_panels_and_reflows_headers():
     assert "columns = 3 if width >= 600 else (2 if width >= 380 else 1)" in source
 
 
-def test_long_dialogs_use_resizable_scroll_areas():
+def test_long_dialogs_fit_content_without_unnecessary_scroll_areas():
     import_source = IMPORT_DIALOG.read_text(encoding="utf-8")
     manage_source = MANAGE_DIALOG.read_text(encoding="utf-8")
-    for source in (import_source, manage_source):
-        assert "QScrollArea" in source
-        assert "setWidgetResizable(True)" in source
-        assert "ScrollBarAsNeeded" in source
+    dpi_source = DPI.read_text(encoding="utf-8")
+    assert "fit_dialog_to_content" in dpi_source
+    assert "fit_dialog_to_content" in import_source
+    assert "fit_dialog_to_content" in manage_source
+    assert "QScrollArea" not in manage_source
+    assert "content_scroll" not in import_source
     assert "QGridLayout" in import_source
-    assert "QGridLayout" in manage_source
+    assert "fields.addWidget(BodyLabel(\"产品名称：\"), 0, 0)" in import_source
+    assert "fields.addWidget(BodyLabel(\"MCU版本：\"), 0, 2)" in import_source
+    assert "product_row = QHBoxLayout()" in manage_source
+    assert "BodyLabel(\"产品：\"" in manage_source
 
 
 def test_navigation_auto_collapses_only_for_narrow_workspaces():

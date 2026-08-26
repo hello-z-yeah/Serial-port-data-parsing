@@ -13,7 +13,7 @@ from qfluentwidgets import (
 
 from .theme import PALETTE
 from .ui_corners import CORNER_RADIUS_PX
-from .dpi_font import fit_text_control, apply_adaptive_geometry, fit_window_to_screen
+from .dpi_font import fit_text_control, apply_adaptive_geometry, fit_dialog_to_content
 
 
 def stabilize_transient_dialog(
@@ -424,12 +424,9 @@ class _StyledMessageDialog(QDialog):
             }}
         """)
         self.setProperty("smstSkipGlobalAdaptiveUi", True)
-        fit_window_to_screen(
+        fit_dialog_to_content(
             self,
-            preferred=(
-                min(520, max(420, self.sizeHint().width())),
-                max(220, self.sizeHint().height()),
-            ),
+            preferred_width=520,
             minimum=(380, 180),
             margin=(40, 80),
         )

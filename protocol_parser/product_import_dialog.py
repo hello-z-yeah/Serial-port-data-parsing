@@ -4,8 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFileDialog, QWidget, QScrollArea, QSizePolicy, QFrame
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QGridLayout, QFileDialog, QWidget, QSizePolicy
 from qfluentwidgets import (
     BodyLabel, StrongBodyLabel, LineEdit, TextEdit, PushButton, PrimaryPushButton,
     CardWidget,
@@ -14,7 +13,7 @@ from qfluentwidgets import (
 from .widgets import StyledMessageBox, apply_fluent_dialog_style
 from .theme import PALETTE
 from .ui_error import format_expected_user_error
-from .dpi_font import apply_adaptive_geometry, fit_window_to_screen
+from .dpi_font import fit_dialog_to_content
 
 
 class PlainJsonTextEdit(TextEdit):
@@ -45,17 +44,11 @@ class ProductImportDialog(QDialog):
         self._edit_mode = bool(edit_mode)
         self.delete_requested = False
         self.setWindowTitle("修改产品JSON" if self._edit_mode else "导入产品JSON")
-        self.setMinimumSize(620, 560)
-        self.resize(720, 660)
-        self.setAcceptDrops(True)
+        self.setMinimumSize(680, 480)
+        self.resize(760, 520)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(14, 14, 14, 14)
-        self.content_scroll = QScrollArea(self)
-        self.content_scroll.setWidgetResizable(True)
-        self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         card = CardWidget()
         card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(card)
@@ -69,10 +62,33 @@ class ProductImportDialog(QDialog):
         )
         layout.addWidget(StrongBodyLabel(heading))
 
-        self.product_name_edit = self._add_line(layout, "产品名称", "如：巴迪斯智能浴霸")
-        self.pid_edit = self._add_line(layout, "PID", "设备 PID")
-        self.model_edit = self._add_line(layout, "Model", "设备 Model")
-        self.version_edit = self._add_line(layout, "MCU版本", "1.0.0")
+        fields = QGridLayout()
+        fields.setHorizontalSpacing(12)
+        fields.setVerticalSpacing(8)
+        fields.setColumnStretch(1, 1)
+        fields.setColumnStretch(3, 1)
+
+        fields.addWidget(BodyLabel("产品名称："), 0, 0)
+        self.product_name_edit = LineEdit()
+        self.product_name_edit.setPlaceholderText("如：巴迪斯智能浴霸")
+        fields.addWidget(self.product_name_edit, 0, 1)
+
+        fields.addWidget(BodyLabel("MCU版本："), 0, 2)
+        self.version_edit = LineEdit()
+        self.version_edit.setPlaceholderText("1.0.0")
+        fields.addWidget(self.version_edit, 0, 3)
+
+        fields.addWidget(BodyLabel("PID："), 1, 0)
+        self.pid_edit = LineEdit()
+        self.pid_edit.setPlaceholderText("设备 PID")
+        fields.addWidget(self.pid_edit, 1, 1)
+
+        fields.addWidget(BodyLabel("Model："), 1, 2)
+        self.model_edit = LineEdit()
+        self.model_edit.setPlaceholderText("设备 Model")
+        fields.addWidget(self.model_edit, 1, 3)
+        layout.addLayout(fields)
+
         self.product_name_edit.setText(str(product_name or ""))
         self.pid_edit.setText(str(pid or ""))
         self.model_edit.setText(str(model or ""))
@@ -102,7 +118,8 @@ class ProductImportDialog(QDialog):
         self.json_edit.setPlaceholderText(
             '支持：①米家 services 格式  ② {"0x00": {...}} 属性字典  ③属性数组'
         )
-        self.json_edit.setMinimumHeight(160)
+        self.json_edit.setMinimumHeight(96)
+        self.json_edit.setMaximumHeight(128)
         if isinstance(json_text, str):
             initial_json = json_text
         elif json_text:
@@ -110,7 +127,7 @@ class ProductImportDialog(QDialog):
         else:
             initial_json = ""
         self.json_edit.setPlainText(initial_json)
-        layout.addWidget(self.json_edit, stretch=1)
+        layout.addWidget(self.json_edit)
         hint = BodyLabel("拖入 JSON 文件时会自动读取 UTF-8 内容。")
         hint.setEnabled(False)
         layout.addWidget(hint)
@@ -139,18 +156,18 @@ class ProductImportDialog(QDialog):
         next_button.clicked.connect(self._accept_checked)
         buttons.addWidget(next_button, 1, next_column)
         layout.addLayout(buttons)
-        self.content_scroll.setWidget(card)
-        outer.addWidget(self.content_scroll)
-        apply_adaptive_geometry(self)
-        fit_window_to_screen(
+        outer.addWidget(card)
+        self.setAcceptDrops(True)
+        fit_dialog_to_content(
             self,
-            preferred=(720, 660),
-            minimum=(560, 460),
+            preferred_width=760,
+            minimum=(680, 480),
             margin=(36, 72),
         )
 
     @staticmethod
     def _add_line(layout: QVBoxLayout, label: str, placeholder: str) -> LineEdit:
+        """Legacy helper kept for tests and external callers."""
         layout.addWidget(BodyLabel(label + "："))
         edit = LineEdit()
         edit.setPlaceholderText(placeholder)

@@ -2333,103 +2333,105 @@ QTableView#AttributeTable::item:selected {{
         )
 
         try:
-            attributes = parse_function_json(dialog.json_text)
-            localize_attributes(attributes)
-            product_name = dialog.product_name or dialog.model or dialog.pid or "未命名产品"
-            product_name = str(product_name).strip()
-            if not product_name:
-                raise ProductConfigError("产品名称不能为空")
+            while True:
+                attributes = parse_function_json(dialog.json_text)
+                localize_attributes(attributes)
+                product_name = dialog.product_name or dialog.model or dialog.pid or "未命名产品"
+                product_name = str(product_name).strip()
+                if not product_name:
+                    raise ProductConfigError("产品名称不能为空")
 
-            sources, _kinds = self._mw.get_product_catalog()
-            existing_source = str(sources.get(product_name) or "")
-            if existing_source:
-                same_source = False
-                if old_source_path is not None:
+                sources, _kinds = self._mw.get_product_catalog()
+                existing_source = str(sources.get(product_name) or "")
+                if existing_source:
+                    same_source = False
+                    if old_source_path is not None:
+                        try:
+                            same_source = Path(existing_source).resolve() == old_source_path.resolve()
+                        except Exception:
+                            same_source = existing_source == str(old_source_path)
+                    if not same_source:
+                        StyledMessageBox.warning(self, "提示", f"产品名称“{product_name}”已存在，请更换名称")
+                        return
+
+                source_metadata = extract_device_info_metadata(dialog.json_text)
+                source_version = source_metadata.get("version") or []
+                source_pid = str(source_metadata.get("pid") or "").strip()
+                source_model = str(source_metadata.get("model") or "").strip()
+                imported_cfg = build_product_cfg(
+                    product_name=product_name,
+                    pid=dialog.pid or source_pid,
+                    model=dialog.model or source_model,
+                    attributes=attributes,
+                    # Base.version is the authoritative 3-byte prefix of the 0x21
+                    # reply.  The dialog value remains a fallback for JSON formats
+                    # that do not carry device-information metadata.
+                    mcu_version=source_version or dialog.version,
+                )
+                imported_cfg["source_function_json"] = dialog.json_text
+                if source_metadata.get("expand_rules"):
+                    imported_cfg["device_info_expand_rules"] = source_metadata["expand_rules"]
+                if source_version:
+                    imported_cfg.setdefault("product_info", {})["device_info_version"] = list(source_version)
+
+                # 修改现有产品时，若用户仍使用原来的 services JSON，重新解析会
+                # 丢失先前从属性配置导出文件学到的 snapshot_wire_id/nowValue。
+                # 按属性键继承这些隐藏协议元数据，避免保存后 0x24 又退回空字符串。
+                old_cfg_for_metadata = None
+                if old_source_path is not None and old_source_path.exists():
                     try:
-                        same_source = Path(existing_source).resolve() == old_source_path.resolve()
+                        old_cfg_for_metadata = json.loads(
+                            old_source_path.read_text(encoding="utf-8-sig")
+                        )
                     except Exception:
-                        same_source = existing_source == str(old_source_path)
-                if not same_source:
-                    StyledMessageBox.warning(self, "提示", f"产品名称“{product_name}”已存在，请更换名称")
-                    return
-
-            source_metadata = extract_device_info_metadata(dialog.json_text)
-            source_version = source_metadata.get("version") or []
-            source_pid = str(source_metadata.get("pid") or "").strip()
-            source_model = str(source_metadata.get("model") or "").strip()
-            imported_cfg = build_product_cfg(
-                product_name=product_name,
-                pid=dialog.pid or source_pid,
-                model=dialog.model or source_model,
-                attributes=attributes,
-                # Base.version is the authoritative 3-byte prefix of the 0x21
-                # reply.  The dialog value remains a fallback for JSON formats
-                # that do not carry device-information metadata.
-                mcu_version=source_version or dialog.version,
-            )
-            imported_cfg["source_function_json"] = dialog.json_text
-            if source_metadata.get("expand_rules"):
-                imported_cfg["device_info_expand_rules"] = source_metadata["expand_rules"]
-            if source_version:
-                imported_cfg.setdefault("product_info", {})["device_info_version"] = list(source_version)
-
-            # 修改现有产品时，若用户仍使用原来的 services JSON，重新解析会
-            # 丢失先前从属性配置导出文件学到的 snapshot_wire_id/nowValue。
-            # 按属性键继承这些隐藏协议元数据，避免保存后 0x24 又退回空字符串。
-            old_cfg_for_metadata = None
-            if old_source_path is not None and old_source_path.exists():
-                try:
-                    old_cfg_for_metadata = json.loads(
-                        old_source_path.read_text(encoding="utf-8-sig")
-                    )
-                except Exception:
-                    old_cfg_for_metadata = None
-            if isinstance(old_cfg_for_metadata, dict):
-                old_attrs = old_cfg_for_metadata.get("attributes") or {}
-                for attr_key, new_meta in (imported_cfg.get("attributes") or {}).items():
-                    old_meta = old_attrs.get(attr_key)
-                    if not isinstance(new_meta, dict) or not isinstance(old_meta, dict):
-                        continue
-                    for passthrough_key in (
-                        "snapshot_wire_id",
-                        "initial_value",
-                        "snapshot_include",
-                        "source_data_rwx",
-                        "source_data_type",
-                        "source_attribute_key",
-                        "source_attribute_name",
+                        old_cfg_for_metadata = None
+                if isinstance(old_cfg_for_metadata, dict):
+                    old_attrs = old_cfg_for_metadata.get("attributes") or {}
+                    for attr_key, new_meta in (imported_cfg.get("attributes") or {}).items():
+                        old_meta = old_attrs.get(attr_key)
+                        if not isinstance(new_meta, dict) or not isinstance(old_meta, dict):
+                            continue
+                        for passthrough_key in (
+                            "snapshot_wire_id",
+                            "initial_value",
+                            "snapshot_include",
+                            "source_data_rwx",
+                            "source_data_type",
+                            "source_attribute_key",
+                            "source_attribute_name",
+                        ):
+                            if passthrough_key in old_meta and passthrough_key not in new_meta:
+                                new_meta[passthrough_key] = old_meta.get(passthrough_key)
+                    if old_cfg_for_metadata.get("device_info_expand_rules") and not imported_cfg.get("device_info_expand_rules"):
+                        imported_cfg["device_info_expand_rules"] = old_cfg_for_metadata.get(
+                            "device_info_expand_rules"
+                        )
+                    old_info = old_cfg_for_metadata.get("product_info") or {}
+                    if (
+                        isinstance(old_info, dict)
+                        and old_info.get("device_info_version")
+                        and not imported_cfg.get("product_info", {}).get("device_info_version")
                     ):
-                        if passthrough_key in old_meta and passthrough_key not in new_meta:
-                            new_meta[passthrough_key] = old_meta.get(passthrough_key)
-                if old_cfg_for_metadata.get("device_info_expand_rules") and not imported_cfg.get("device_info_expand_rules"):
-                    imported_cfg["device_info_expand_rules"] = old_cfg_for_metadata.get(
-                        "device_info_expand_rules"
-                    )
-                old_info = old_cfg_for_metadata.get("product_info") or {}
-                if (
-                    isinstance(old_info, dict)
-                    and old_info.get("device_info_version")
-                    and not imported_cfg.get("product_info", {}).get("device_info_version")
-                ):
-                    imported_cfg.setdefault("product_info", {})["device_info_version"] = list(
-                        old_info.get("device_info_version")
-                    )
+                        imported_cfg.setdefault("product_info", {})["device_info_version"] = list(
+                            old_info.get("device_info_version")
+                        )
 
-            # ``extract_device_info_metadata`` above already normalizes and
-            # validates Base.expandRules.  Do not regenerate the F3 mapping from
-            # the selected attribute list when exact export bytes are available:
-            # serial order/SIID/PIID in Base.expandRules are protocol data, not UI
-            # ordering, and changing them produces an invalid 0x21 reply.
+                editor = AttributeEditorDialog(
+                    self,
+                    imported_cfg,
+                    prefer_chinese_name=True,
+                    selected_attrids=selected_attrids,
+                    allow_back=True,
+                )
+                if editor.exec() != QDialog.DialogCode.Accepted or not editor.result:
+                    if editor.back_requested:
+                        if dialog.exec() != QDialog.DialogCode.Accepted:
+                            return
+                        continue
+                    return
+                user_cfg = editor.result
+                break
 
-            editor = AttributeEditorDialog(
-                self,
-                imported_cfg,
-                prefer_chinese_name=True,
-                selected_attrids=selected_attrids,
-            )
-            if editor.exec() != QDialog.DialogCode.Accepted or not editor.result:
-                return
-            user_cfg = editor.result
             user_cfg["import_source"] = "json"
             user_cfg["product_info"] = dict(imported_cfg.get("product_info") or {})
             user_cfg["product"] = str(user_cfg.get("product") or product_name)

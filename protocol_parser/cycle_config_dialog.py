@@ -16,8 +16,7 @@ from qfluentwidgets import BodyLabel, CheckBox, PrimaryPushButton, PushButton
 
 from protocol_parser.dpi_font import (
     UI_FONT_BASE_POINT_SIZE,
-    apply_adaptive_geometry,
-    fit_window_to_screen,
+    fit_dialog_to_content,
 )
 from protocol_parser.log_text_style import make_crisp_ui_font
 from protocol_parser.gui_layout_helpers import fit_button_to_text
@@ -108,12 +107,13 @@ class CycleConfigDialog(QDialog):
         self._seq_map = seq_map
 
         self._build_ui()
-        apply_adaptive_geometry(self, UI_FONT_BASE_POINT_SIZE)
-        fit_window_to_screen(
+        fit_dialog_to_content(
             self,
-            preferred=(760, 520),
+            preferred_width=760,
             minimum=(560, 360),
             margin=(36, 72),
+            point_size=UI_FONT_BASE_POINT_SIZE,
+            include_tables=True,
         )
 
     def _build_ui(self) -> None:

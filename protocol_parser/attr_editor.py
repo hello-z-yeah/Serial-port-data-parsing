@@ -13,19 +13,22 @@ from typing import Callable
 import weakref
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtGui import QFont, QFontMetrics, QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QHeaderView, QAbstractItemView,
     QTableWidgetItem, QWidget, QFormLayout, QDialogButtonBox, QMessageBox,
-    QListView, QApplication,
+    QListView, QApplication, QStyledItemDelegate, QAbstractItemDelegate,
+    QStyleOptionViewItem, QStyle, QSizePolicy,
 )
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, LineEdit, ComboBox, EditableComboBox, BodyLabel,
-    TableWidget, StrongBodyLabel, CheckBox,
+    CheckBox, FluentIcon, IconWidget,
 )
 
 from .parser import TYPEID_MAP
-from .widgets import StyledMessageBox, apply_fluent_dialog_style
+from .theme import PALETTE
+from .ui_corners import CORNER_RADIUS_PX
+from .widgets import StyledMessageBox, apply_fluent_dialog_style, CellWidgetAlignedTable, stabilize_transient_dialog
 from .attr_center import AttrStateCenter
 from .ui_error import format_expected_user_error
 from .combo_font import MatchedPopupComboBox, MatchedPopupEditableComboBox
@@ -140,6 +143,213 @@ COL_ACCESS = 5
 COL_RANGE = 6
 COL_ENUM = 7
 
+ROW_KIND_ROLE = Qt.ItemDataRole.UserRole + 2
+ROW_KIND_COLUMN_HEADER = "column_header"
+
+_ATTR_ROW_HEIGHT = 38
+_GROUP_COLUMN_HEADER_HEIGHT = 34
+_GROUP_HEADER_HEIGHT = 40
+
+_ATTR_CHECKBOX_LEFT_MARGIN = 10 + 16 + 8  # group margin + chevron + spacing
+
+_COLUMN_WIDTHS = {
+    COL_SELECTED: 96,
+    COL_ATTRID: 92,
+    COL_NAME: 200,
+    COL_CN_NAME: 220,
+    COL_TYPEID: 156,
+    COL_ACCESS: 92,
+    COL_RANGE: 132,
+    COL_ENUM: 220,
+}
+
+_ATTR_EDITOR_CELL_QSS = f"""
+LineEdit {{
+    color: {PALETTE["text"]};
+    background-color: {PALETTE["card_bg"]};
+    border: 1px solid {PALETTE["primary"]};
+    border-radius: {CORNER_RADIUS_PX}px;
+    padding: 2px 6px;
+}}
+"""
+
+_EDITABLE_COLUMNS = (
+    COL_NAME,
+    COL_CN_NAME,
+    COL_TYPEID,
+    COL_ACCESS,
+    COL_RANGE,
+    COL_ENUM,
+)
+
+_GROUP_HEADER_QSS = f"""
+QWidget#AttributeGroupHeader {{
+    background-color: {PALETTE["card_bg"]};
+    border: none;
+    border-bottom: 1px solid {PALETTE["card_border"]};
+}}
+QWidget#AttributeGroupHeader:hover {{
+    background-color: {PALETTE["surface"]};
+}}
+"""
+
+
+class _AttributeGroupHeader(QWidget):
+    """Tree-style collapsible group row: chevron + checkbox + title."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("AttributeGroupHeader")
+        self.setProperty("smstGroupHeader", True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(_GROUP_HEADER_QSS)
+
+        self._chevron = IconWidget(FluentIcon.CHEVRON_RIGHT_MED, self)
+        self._chevron.setFixedSize(16, 16)
+        self.checkbox = CheckBox(self)
+        self.title_label = BodyLabel("", self)
+        self.count_label = BodyLabel("", self)
+        self.count_label.setStyleSheet(f"color: {PALETTE['text_secondary']};")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 0, 12, 0)
+        layout.setSpacing(8)
+        layout.addWidget(self._chevron, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.title_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.count_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addStretch(1)
+
+        self._toggle_callback: Callable[[], None] | None = None
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        self._chevron.setIcon(
+            FluentIcon.CHEVRON_RIGHT_MED if collapsed else FluentIcon.CHEVRON_DOWN_MED
+        )
+
+    def set_content(self, title: str, count: int) -> None:
+        self.title_label.setText(title)
+        self.count_label.setText(f"· {count} 项")
+
+    def bind_toggle(self, callback: Callable[[], None]) -> None:
+        self._toggle_callback = callback
+
+    def mousePressEvent(self, event) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and not self.checkbox.geometry().contains(event.pos())
+            and self._toggle_callback is not None
+        ):
+            self._toggle_callback()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class AttributeEditorCellDelegate(QStyledItemDelegate):
+    """Flat, readable cell delegate without Fluent zebra striping."""
+
+    def __init__(self, table: CellWidgetAlignedTable) -> None:
+        super().__init__(table)
+
+    @staticmethod
+    def _cell_background(index) -> QColor:
+        bg = index.data(Qt.ItemDataRole.BackgroundRole)
+        if isinstance(bg, QColor):
+            return bg
+        return QColor(PALETTE["card_bg"])
+
+    def paint(self, painter, option, index) -> None:
+        table = self.parent()
+        if table is not None and table.cellWidget(index.row(), index.column()) is not None:
+            return
+        opt = QStyleOptionViewItem(option)
+        opt.textElideMode = Qt.TextElideMode.ElideNone
+        opt.displayAlignment = (
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        painter.save()
+        painter.fillRect(opt.rect, self._cell_background(index))
+        if opt.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(opt.rect, QColor("#E8F3FC"))
+        if table is not None:
+            kind_item = table.item(index.row(), COL_ATTRID)
+            if (
+                kind_item is not None
+                and kind_item.data(ROW_KIND_ROLE) == ROW_KIND_COLUMN_HEADER
+            ):
+                border = QColor(PALETTE["card_border"])
+                painter.setPen(border)
+                painter.drawLine(
+                    opt.rect.left(),
+                    opt.rect.bottom(),
+                    opt.rect.right(),
+                    opt.rect.bottom(),
+                )
+        painter.restore()
+        super().paint(painter, opt, index)
+
+    def createEditor(self, parent, option, index):
+        editor = LineEdit(parent)
+        editor.setObjectName("AttributeEditorCellEditor")
+        editor.setClearButtonEnabled(False)
+        editor.setProperty("transparent", False)
+        try:
+            editor.setFont(self.parent().font())
+        except Exception:
+            pass
+        editor.setStyleSheet(_ATTR_EDITOR_CELL_QSS)
+        return editor
+
+    def setEditorData(self, editor, index) -> None:
+        editor.setText(str(index.data(Qt.ItemDataRole.EditRole) or ""))
+        editor.selectAll()
+
+    def setModelData(self, editor, model, index) -> None:
+        model.setData(index, editor.text(), Qt.ItemDataRole.EditRole)
+
+    def updateEditorGeometry(self, editor, option, index) -> None:
+        editor.setGeometry(option.rect.adjusted(2, 2, -2, -2))
+
+
+class AttributeEditorTable(CellWidgetAlignedTable):
+    """Attribute table with full-width group headers and stable cell widgets."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlternatingRowColors(False)
+        self.setTextElideMode(Qt.TextElideMode.ElideNone)
+
+    def _reposition_cell_widgets(self) -> None:
+        super()._reposition_cell_widgets()
+        self._reposition_group_headers()
+
+    def _reposition_group_headers(self) -> None:
+        if self.columnCount() <= 0:
+            return
+        last_col = self.columnCount() - 1
+        for row in range(self.rowCount()):
+            widget = self.cellWidget(row, COL_SELECTED)
+            if widget is None or not widget.property("smstGroupHeader"):
+                continue
+            left_rect = self.visualRect(self.model().index(row, 0))
+            right_rect = self.visualRect(self.model().index(row, last_col))
+            if left_rect.height() <= 0:
+                continue
+            width = max(left_rect.width(), right_rect.right() - left_rect.left() + 1)
+            widget.setGeometry(left_rect.x(), left_rect.y(), width, left_rect.height())
+
+
+def attribute_group_key(attr: dict) -> str:
+    """Derive collapsible group key from original_name (or name) prefix."""
+    source = str(attr.get("original_name") or attr.get("name") or "").strip()
+    if not source:
+        return "其他"
+    if "-" in source:
+        prefix = source.split("-", 1)[0].strip()
+        return prefix or source
+    return source
+
 
 class AttributeEditorDialog(QDialog):
     """属性表选择/编辑对话框。
@@ -159,6 +369,7 @@ class AttributeEditorDialog(QDialog):
         prefer_chinese_name: bool = False,
         selected_attrids: set[str] | None = None,
         allow_delete: bool = False,
+        allow_back: bool = False,
     ):
         super().__init__(parent)
         apply_fluent_dialog_style(self)
@@ -166,7 +377,9 @@ class AttributeEditorDialog(QDialog):
         self.on_save = on_save
         self.prefer_chinese_name = bool(prefer_chinese_name)
         self.allow_delete = bool(allow_delete)
+        self.allow_back = bool(allow_back)
         self.delete_requested = False
+        self.back_requested = False
         self._initial_selected_attrids = (
             {str(key).upper() for key in selected_attrids}
             if selected_attrids is not None
@@ -205,15 +418,54 @@ class AttributeEditorDialog(QDialog):
                 ),
             }
 
+        self._collapsed_groups: set[str] = set()
+        self._group_checkboxes: dict[str, CheckBox] = {}
+        self._attr_row_map: dict[str, int] = {}
+        self._updating_group_checkbox = False
+        self._column_headers: list[str] = []
+
         self._build_ui()
         self._refresh_table()
-        apply_adaptive_geometry(self)
+        apply_adaptive_geometry(self, include_tables=False)
         fit_window_to_screen(
             self,
-            preferred=(1040, 620),
-            minimum=(680, 420),
+            preferred=(1180, 640),
+            minimum=(1080, 560),
             margin=(36, 72),
         )
+        self._stabilize_dialog_geometry()
+        QTimer.singleShot(0, self._stabilize_dialog_geometry)
+
+    def _stabilize_dialog_geometry(self) -> None:
+        """Keep dialog size stable while inline table editors open/close."""
+        if self.property("_smstAttrEditorGeometryLocked"):
+            return
+        if self.width() <= 0 or self.height() <= 0:
+            return
+        self.setProperty("_smstAttrEditorGeometryLocked", True)
+        size = self.size()
+        min_width = max(size.width(), 1080)
+        min_height = max(size.height(), 560)
+        stabilize_transient_dialog(
+            self,
+            min_width=min_width,
+            max_width=max(min_width + 120, 1280),
+        )
+        self.setMinimumSize(min_width, min_height)
+        self.setMaximumHeight(min_height)
+
+    def _apply_column_widths(self) -> None:
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(52)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        for column, width in _COLUMN_WIDTHS.items():
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+            self.table.setColumnWidth(column, width)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._stabilize_dialog_geometry()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -254,43 +506,37 @@ class AttributeEditorDialog(QDialog):
         layout.addLayout(top)
 
         # 表格
-        self.table = TableWidget()
-        from protocol_parser.widgets import FluentCellToolTipFilter
-        FluentCellToolTipFilter(self.table)
-        # Use Qt's row index internally so odd/even colors cannot get stuck on
-        # the same tag when rows are inserted or refreshed.
-        self.table.setAlternatingRowColors(True)
+        self.table = AttributeEditorTable()
+        self.table.setProperty("smstSkipTableAdaptiveGeometry", True)
         self.table.setStyleSheet(
             self.table.styleSheet()
-            + """
-            QTableView {
-                alternate-background-color: #F6F8FB;
-                background-color: #FFFFFF;
-            }
+            + f"""
+            QTableView {{
+                background-color: {PALETTE["card_bg"]};
+                gridline-color: transparent;
+                alternate-background-color: {PALETTE["card_bg"]};
+            }}
             """
         )
-        headers = list(TABLE_HEADERS)
+        self._column_headers = list(TABLE_HEADERS)
         if self.prefer_chinese_name:
-            headers[COL_NAME] = "名称（中文）"
-            headers[COL_CN_NAME] = "原始名称"
-        self.table.setColumnCount(len(headers))
-        self.table.setHorizontalHeaderLabels(headers)
+            self._column_headers[COL_NAME] = "名称（中文）"
+            self._column_headers[COL_CN_NAME] = "原始名称"
+        self.table.setColumnCount(len(self._column_headers))
+        self.table.setHorizontalHeaderLabels(self._column_headers)
+        self.table.horizontalHeader().setVisible(False)
+        self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
-        header = self.table.horizontalHeader()
-        for column in range(len(headers)):
-            header.setSectionResizeMode(column, QHeaderView.Interactive)
-        header.setStretchLastSection(False)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.table.setColumnWidth(COL_SELECTED, 50)
-        self.table.setColumnWidth(COL_ATTRID, 80)
-        self.table.setColumnWidth(COL_NAME, 140)
-        self.table.setColumnWidth(COL_CN_NAME, 110)
-        self.table.setColumnWidth(COL_TYPEID, 130)
-        self.table.setColumnWidth(COL_ACCESS, 80)
-        self.table.setColumnWidth(COL_RANGE, 100)
+        self._apply_column_widths()
+        self._flat_delegate = AttributeEditorCellDelegate(self.table)
+        for column in range(len(self._column_headers)):
+            if column == COL_SELECTED:
+                continue
+            self.table.setItemDelegateForColumn(column, self._flat_delegate)
         self.table.cellChanged.connect(self._on_cell_changed)
+        self.table.currentCellChanged.connect(self._on_table_current_cell_changed)
         layout.addWidget(self.table, stretch=1)
 
         # 底部说明和操作分行，防止高 DPI 下长提示把按钮挤出窗口。
@@ -312,15 +558,28 @@ class AttributeEditorDialog(QDialog):
             bottom.addWidget(btn_delete_proto, 1, action_column)
             action_column += 1
         bottom.setColumnStretch(action_column, 1)
+        btn_save = PrimaryPushButton("保存")
+        btn_save.clicked.connect(self._on_save)
+        btn_save.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        fit_text_control(btn_save)
+        bottom.addWidget(btn_save, 1, action_column)
+        action_column += 1
         btn_cancel = PushButton("取消")
         btn_cancel.clicked.connect(self.reject)
         fit_text_control(btn_cancel)
-        bottom.addWidget(btn_cancel, 1, action_column + 1)
-        btn_save = PrimaryPushButton("保存")
-        btn_save.clicked.connect(self._on_save)
-        fit_text_control(btn_save)
-        bottom.addWidget(btn_save, 1, action_column + 2)
+        bottom.addWidget(btn_cancel, 1, action_column)
+        action_column += 1
+        if self.allow_back:
+            btn_back = PushButton("返回")
+            btn_back.clicked.connect(self._request_back)
+            fit_text_control(btn_back)
+            bottom.addWidget(btn_back, 1, action_column)
         layout.addLayout(bottom)
+
+    def _request_back(self) -> None:
+        """Return to the product JSON step without saving attributes."""
+        self.back_requested = True
+        self.reject()
 
     def _request_delete(self) -> None:
         """标记请求删除整个协议，由调用方确认后执行。"""
@@ -370,76 +629,314 @@ class AttributeEditorDialog(QDialog):
             sorted_pairs = list(enum_map.items())
         return ", ".join(f"{k}: {v}" for k, v in sorted_pairs)
 
+    @staticmethod
+    def _attr_sort_key(k: str) -> int:
+        try:
+            return int(k, 0)
+        except Exception:
+            return 9999
+
+    def _group_display_title(self, group_key: str, group_attrs: list[dict]) -> str:
+        if self.prefer_chinese_name and group_attrs:
+            sample = str(group_attrs[0].get("cn_name") or "").strip()
+            if sample and "-" in sample:
+                cn_prefix = sample.split("-", 1)[0].strip()
+                if cn_prefix:
+                    return cn_prefix
+        return group_key
+
+    def _build_grouped_keys(self) -> tuple[list[str], dict[str, list[str]]]:
+        groups: dict[str, list[str]] = {}
+        for key, attr in self._attr_state.items():
+            group_key = attribute_group_key(attr)
+            groups.setdefault(group_key, []).append(key)
+        for member_keys in groups.values():
+            member_keys.sort(key=self._attr_sort_key)
+        ordered_groups = sorted(
+            groups.keys(),
+            key=lambda group_key: self._attr_sort_key(groups[group_key][0]),
+        )
+        return ordered_groups, groups
+
+    def _sync_group_checkbox_state(self, checkbox: CheckBox, member_keys: list[str]) -> None:
+        states = [
+            bool(self._attr_state[key].get("selected", True))
+            for key in member_keys
+            if key in self._attr_state
+        ]
+        checkbox.blockSignals(True)
+        try:
+            if not states or not any(states):
+                checkbox.setCheckState(Qt.CheckState.Unchecked)
+            elif all(states):
+                checkbox.setCheckState(Qt.CheckState.Checked)
+            else:
+                checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
+        finally:
+            checkbox.blockSignals(False)
+
+    def _sync_group_checkbox_for_key(self, group_key: str) -> None:
+        checkbox = self._group_checkboxes.get(group_key)
+        if checkbox is None:
+            return
+        member_keys = [
+            key
+            for key, attr in self._attr_state.items()
+            if attribute_group_key(attr) == group_key
+        ]
+        self._updating_group_checkbox = True
+        self._sync_group_checkbox_state(checkbox, member_keys)
+        self._updating_group_checkbox = False
+
+    def _set_attr_checkbox(self, key: str, selected: bool) -> None:
+        row = self._attr_row_map.get(key)
+        if row is None:
+            return
+        cell = self.table.cellWidget(row, COL_SELECTED)
+        if cell is None:
+            return
+        checkbox = cell.findChild(CheckBox)
+        if checkbox is None:
+            return
+        checkbox.blockSignals(True)
+        checkbox.setChecked(selected)
+        checkbox.blockSignals(False)
+
+    def _close_active_cell_editor(self) -> None:
+        table = self.table
+        try:
+            if table.state() != QAbstractItemView.State.EditingState:
+                return
+        except Exception:
+            return
+        editor = table.focusWidget()
+        if editor in (None, table, table.viewport()):
+            for candidate in table.viewport().findChildren(LineEdit):
+                if candidate.isVisible():
+                    editor = candidate
+                    break
+        if editor in (None, table, table.viewport()):
+            return
+        try:
+            table.commitData(editor)
+        except Exception:
+            pass
+        try:
+            delegate = table.itemDelegate(table.currentIndex())
+            if delegate is not None:
+                delegate.closeEditor.emit(
+                    editor, QAbstractItemDelegate.EndEditHint.NoHint
+                )
+        except Exception:
+            pass
+
+    def _cleanup_stale_cell_editors(self) -> None:
+        table = self.table
+        active_editor = None
+        try:
+            if table.state() == QAbstractItemView.State.EditingState:
+                active_editor = table.focusWidget()
+        except Exception:
+            active_editor = None
+        for editor in table.viewport().findChildren(LineEdit):
+            if editor is active_editor:
+                continue
+            if editor.parent() is not table.viewport():
+                continue
+            editor.hide()
+            editor.deleteLater()
+        table.viewport().update()
+
+    def _on_table_current_cell_changed(
+        self, _cur_row: int, _cur_col: int, _prev_row: int, _prev_col: int
+    ) -> None:
+        QTimer.singleShot(0, self._cleanup_stale_cell_editors)
+
+    def _insert_group_row(self, row: int, group_key: str, member_keys: list[str]) -> None:
+        self.table.insertRow(row)
+        group_bg = QColor(PALETTE["card_bg"])
+
+        collapsed = group_key in self._collapsed_groups
+        header = _AttributeGroupHeader()
+        header.set_collapsed(collapsed)
+        header.bind_toggle(lambda gk=group_key: self._toggle_group_collapsed(gk))
+
+        header.checkbox.setTristate(True)
+        self._sync_group_checkbox_state(header.checkbox, member_keys)
+        header.checkbox.clicked.connect(
+            lambda _checked=False, gk=group_key, keys=list(member_keys): self._toggle_group_selection(
+                gk, keys
+            )
+        )
+        self._group_checkboxes[group_key] = header.checkbox
+
+        sample_attrs = [self._attr_state[key] for key in member_keys]
+        title = self._group_display_title(group_key, sample_attrs)
+        header.set_content(title, len(member_keys))
+
+        self.table.setCellWidget(row, COL_SELECTED, header)
+        for column in range(1, self.table.columnCount()):
+            filler = QTableWidgetItem("")
+            filler.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            filler.setBackground(group_bg)
+            filler.setForeground(QColor(PALETTE["text"]))
+            self.table.setItem(row, column, filler)
+        self.table.setRowHeight(row, _GROUP_HEADER_HEIGHT)
+        self.table._reposition_group_headers()
+
+    def _nested_section_brush(self) -> QColor:
+        return QColor(PALETTE["card_bg"])
+
+    def _make_column_header_item(self, text: str, *, mark_kind: bool = False) -> QTableWidgetItem:
+        item = QTableWidgetItem(text)
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        item.setBackground(self._nested_section_brush())
+        font = QFont(item.font())
+        font.setWeight(QFont.Weight.DemiBold)
+        item.setFont(font)
+        item.setForeground(QColor(PALETTE["text_secondary"]))
+        if mark_kind:
+            item.setData(ROW_KIND_ROLE, ROW_KIND_COLUMN_HEADER)
+        return item
+
+    def _insert_group_column_header_row(self, row: int) -> None:
+        self.table.insertRow(row)
+        for column, label in enumerate(self._column_headers):
+            text = "" if column == COL_SELECTED else label
+            item = self._make_column_header_item(
+                text,
+                mark_kind=(column == COL_ATTRID),
+            )
+            self.table.setItem(row, column, item)
+        self.table.setRowHeight(row, _GROUP_COLUMN_HEADER_HEIGHT)
+
+    def _insert_attr_row(self, row: int, key: str) -> None:
+        attr = self._attr_state[key]
+        self.table.insertRow(row)
+        self._attr_row_map[key] = row
+
+        checkbox = CheckBox()
+        checkbox.setChecked(bool(attr.get("selected", True)))
+        checkbox.clicked.connect(lambda checked, k=key: self._on_attr_checkbox_clicked(k, checked))
+        cell = QWidget()
+        cell.setMinimumWidth(_COLUMN_WIDTHS[COL_SELECTED])
+        layout = QHBoxLayout(cell)
+        layout.setContentsMargins(_ATTR_CHECKBOX_LEFT_MARGIN, 0, 8, 0)
+        layout.addWidget(checkbox)
+        layout.addStretch()
+        self.table.setCellWidget(row, COL_SELECTED, cell)
+
+        item_id = QTableWidgetItem(key)
+        item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
+        item_id.setData(Qt.UserRole, key)
+        self.table.setItem(row, COL_ATTRID, item_id)
+
+        if self.prefer_chinese_name:
+            self.table.setItem(row, COL_NAME, QTableWidgetItem(attr.get("cn_name", "")))
+            self.table.setItem(
+                row,
+                COL_CN_NAME,
+                QTableWidgetItem(attr.get("original_name") or attr.get("name", "")),
+            )
+        else:
+            self.table.setItem(row, COL_NAME, QTableWidgetItem(attr.get("name", "")))
+            self.table.setItem(row, COL_CN_NAME, QTableWidgetItem(attr.get("cn_name", "")))
+        self.table.setItem(row, COL_TYPEID, QTableWidgetItem(self._format_typeid(attr.get("typeid"))))
+        self.table.setItem(row, COL_ACCESS, QTableWidgetItem(attr.get("access", "")))
+
+        range_text = attr.get("range", "")
+        unit = (attr.get("unit") or "").strip()
+        if unit:
+            range_text = f"{range_text} {unit}".strip()
+        self.table.setItem(row, COL_RANGE, QTableWidgetItem(range_text))
+        self.table.setItem(row, COL_ENUM, QTableWidgetItem(self._enum_to_text(attr.get("enum") or {})))
+        for column in range(self.table.columnCount()):
+            item = self.table.item(row, column)
+            if item is not None:
+                item.setBackground(QColor(PALETTE["card_bg"]))
+                item.setForeground(QColor(PALETTE["text"]))
+        self.table.setRowHeight(row, _ATTR_ROW_HEIGHT)
+
     def _refresh_table(self) -> None:
+        self._close_active_cell_editor()
+        self._cleanup_stale_cell_editors()
         self.table.blockSignals(True)
         self.table.setRowCount(0)
+        self._group_checkboxes.clear()
+        self._attr_row_map.clear()
 
-        def _sort_key(k: str) -> int:
-            try:
-                return int(k, 0)
-            except Exception:
-                return 9999
+        ordered_groups, groups = self._build_grouped_keys()
+        row = 0
+        for group_key in ordered_groups:
+            member_keys = groups[group_key]
+            self._insert_group_row(row, group_key, member_keys)
+            row += 1
+            if group_key not in self._collapsed_groups:
+                self._insert_group_column_header_row(row)
+                row += 1
+                for key in member_keys:
+                    self._insert_attr_row(row, key)
+                    row += 1
 
-        keys = sorted(self._attr_state.keys(), key=_sort_key)
-        self.table.setRowCount(len(keys))
-
-        for row, key in enumerate(keys):
-            attr = self._attr_state[key]
-            # 选中
-            chk = CheckBox()
-            chk.setChecked(bool(attr.get("selected", True)))
-            chk.stateChanged.connect(lambda state, k=key: self._on_check_changed(k, state))
-            cell = QWidget()
-            lay = QHBoxLayout(cell)
-            lay.setContentsMargins(8, 0, 0, 0)
-            lay.addWidget(chk)
-            lay.addStretch()
-            self.table.setCellWidget(row, COL_SELECTED, cell)
-
-            # attrID（只读）
-            item_id = QTableWidgetItem(key)
-            item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
-            item_id.setData(Qt.UserRole, key)
-            self.table.setItem(row, COL_ATTRID, item_id)
-
-            if self.prefer_chinese_name:
-                self.table.setItem(row, COL_NAME, QTableWidgetItem(attr.get("cn_name", "")))
-                self.table.setItem(
-                    row, COL_CN_NAME,
-                    QTableWidgetItem(attr.get("original_name") or attr.get("name", "")),
-                )
-            else:
-                self.table.setItem(row, COL_NAME, QTableWidgetItem(attr.get("name", "")))
-                self.table.setItem(row, COL_CN_NAME, QTableWidgetItem(attr.get("cn_name", "")))
-            self.table.setItem(row, COL_TYPEID, QTableWidgetItem(self._format_typeid(attr.get("typeid"))))
-            self.table.setItem(row, COL_ACCESS, QTableWidgetItem(attr.get("access", "")))
-
-            range_text = attr.get("range", "")
-            unit = (attr.get("unit") or "").strip()
-            if unit:
-                range_text = f"{range_text} {unit}".strip()
-            self.table.setItem(row, COL_RANGE, QTableWidgetItem(range_text))
-            self.table.setItem(row, COL_ENUM, QTableWidgetItem(self._enum_to_text(attr.get("enum") or {})))
-
-        for row in range(self.table.rowCount()):
+        for table_row in range(self.table.rowCount()):
             for column in range(self.table.columnCount()):
-                item = self.table.item(row, column)
+                item = self.table.item(table_row, column)
                 if item is not None:
                     item.setToolTip(item.text())
+        self._apply_column_widths()
         self.table.blockSignals(False)
-        self.info_label.setText(f"共 {len(self._attr_state)} 个属性。勾选要保留的属性，双击单元格修改内容。")
-        apply_adaptive_geometry(self.table)
+        group_count = len(ordered_groups)
+        self.info_label.setText(
+            f"共 {len(self._attr_state)} 个属性，{group_count} 个分组。"
+            "勾选要保留的属性，点击分组标题可全选该组，双击单元格修改内容。"
+        )
+
+    def _toggle_group_selection(self, group_key: str, member_keys: list[str]) -> None:
+        """Select all when any member is unchecked; otherwise clear the whole group."""
+        if self._updating_group_checkbox:
+            return
+        states = [
+            bool(self._attr_state[key].get("selected", True))
+            for key in member_keys
+            if key in self._attr_state
+        ]
+        select_all = not all(states) if states else True
+        for key in member_keys:
+            attr = self._attr_state.get(key)
+            if attr is not None:
+                attr["selected"] = select_all
+        for key in member_keys:
+            self._set_attr_checkbox(key, select_all)
+        checkbox = self._group_checkboxes.get(group_key)
+        if checkbox is not None:
+            self._updating_group_checkbox = True
+            self._sync_group_checkbox_state(checkbox, member_keys)
+            self._updating_group_checkbox = False
+
+    def _toggle_group_collapsed(self, group_key: str) -> None:
+        if group_key in self._collapsed_groups:
+            self._collapsed_groups.discard(group_key)
+        else:
+            self._collapsed_groups.add(group_key)
+        self._refresh_table()
 
     def _row_key(self, row: int) -> str | None:
         item = self.table.item(row, COL_ATTRID)
         if item is None:
             return None
-        return item.data(Qt.UserRole) or item.text()
+        if item.data(ROW_KIND_ROLE) == ROW_KIND_COLUMN_HEADER:
+            return None
+        key = item.data(Qt.ItemDataRole.UserRole)
+        if key:
+            return str(key)
+        return None
 
-    def _on_check_changed(self, key: str, state: int) -> None:
+    def _on_attr_checkbox_clicked(self, key: str, checked: bool) -> None:
         attr = self._attr_state.get(key)
-        if attr is not None:
-            attr["selected"] = state == Qt.Checked
+        if attr is None:
+            return
+        attr["selected"] = bool(checked)
+        self._sync_group_checkbox_for_key(attribute_group_key(attr))
 
     def _on_cell_changed(self, row: int, col: int) -> None:
         key = self._row_key(row)
@@ -706,6 +1203,8 @@ class AttributeEditorDialog(QDialog):
         return True
 
     def _on_save(self) -> None:
+        self._close_active_cell_editor()
+        self._cleanup_stale_cell_editors()
         # 重建 attributes（只保留 selected=True 的）——与原版逻辑一致
         new_attributes: dict = {}
         for key, attr in self._attr_state.items():

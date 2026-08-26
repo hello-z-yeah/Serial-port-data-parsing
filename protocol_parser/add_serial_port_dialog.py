@@ -14,14 +14,13 @@ from qfluentwidgets import BodyLabel, CardWidget, PrimaryPushButton, PushButton,
 
 from protocol_parser.dpi_font import (
     UI_FONT_BASE_POINT_SIZE,
-    apply_adaptive_geometry,
-    fit_window_to_screen,
+    fit_dialog_to_content,
+    fit_text_control,
 )
 from protocol_parser.gui_combos import DpiAwareComboBox, ToggleCloseEditableComboBox
 from protocol_parser.gui_layout_helpers import (
     ADD_SERIAL_DIALOG_MIN_WIDTH,
     ADD_SERIAL_PORT_COMBO_MIN_WIDTH,
-    fit_button_to_text,
 )
 from protocol_parser.log_text_style import make_crisp_ui_font
 from protocol_parser.widgets import apply_fluent_dialog_style, StyledMessageBox
@@ -38,7 +37,6 @@ class AddSerialPortDialog(QDialog):
         self._dialog_font = make_crisp_ui_font(UI_FONT_BASE_POINT_SIZE)
         self.setFont(self._dialog_font)
         self.setMinimumSize(ADD_SERIAL_DIALOG_MIN_WIDTH, 260)
-        self.resize(660, 280)
         self._ports = list(ports)
 
         outer = QVBoxLayout(self)
@@ -68,9 +66,7 @@ class AddSerialPortDialog(QDialog):
         self.port_combo.setFont(self._dialog_font)
         port_texts: list[str] = []
         for port in self._ports:
-            device = str(port.get("device") or "")
-            description = str(port.get("description") or "")
-            text = f"{device} - {description}" if description and description != device else device
+            text = self._port_display_text(port)
             port_texts.append(text)
             self.port_combo.addItem(text)
         combo_metrics = QFontMetrics(self._dialog_font)
@@ -98,25 +94,61 @@ class AddSerialPortDialog(QDialog):
         buttons.setSpacing(8)
         buttons.addStretch(1)
         cancel_button = PushButton("取消", card)
-        cancel_button.setFont(self._dialog_font)
-        fit_button_to_text(cancel_button, horizontal_padding=28, vertical_padding=12, minimum_width=88)
         cancel_button.clicked.connect(self.reject)
+        fit_text_control(cancel_button, point_size=UI_FONT_BASE_POINT_SIZE)
         buttons.addWidget(cancel_button)
         ok_button = PrimaryPushButton("确定", card)
-        ok_button.setFont(self._dialog_font)
-        fit_button_to_text(ok_button, horizontal_padding=28, vertical_padding=12, minimum_width=88)
         ok_button.clicked.connect(self.accept)
+        fit_text_control(ok_button, point_size=UI_FONT_BASE_POINT_SIZE)
         buttons.addWidget(ok_button)
         card_layout.addLayout(buttons)
 
         outer.addWidget(card)
-        apply_adaptive_geometry(self, UI_FONT_BASE_POINT_SIZE)
-        fit_window_to_screen(
+        fit_dialog_to_content(
             self,
-            preferred=(700, 320),
+            preferred_width=700,
             minimum=(520, 260),
             margin=(36, 72),
+            point_size=UI_FONT_BASE_POINT_SIZE,
         )
+
+    @staticmethod
+    def _port_display_text(port: dict) -> str:
+        device = str(port.get("device") or "")
+        description = str(port.get("description") or "")
+        if description and description != device:
+            return f"{device} - {description}"
+        return device
+
+    def update_ports(self, ports: list[dict]) -> None:
+        """Refresh the COM list while the dialog stays open."""
+        self._ports = list(ports or [])
+        current = self.port_combo.currentText()
+        current_device = current.split(" - ")[0].strip() if current else ""
+        port_texts = [self._port_display_text(port) for port in self._ports]
+        self.port_combo.blockSignals(True)
+        self.port_combo.clear()
+        for text in port_texts:
+            self.port_combo.addItem(text)
+        if current_device:
+            for index, text in enumerate(port_texts):
+                if text.split(" - ")[0].strip() == current_device:
+                    self.port_combo.setCurrentIndex(index)
+                    break
+        elif port_texts:
+            self.port_combo.setCurrentIndex(0)
+        self.port_combo.blockSignals(False)
+        if port_texts:
+            combo_metrics = QFontMetrics(self._dialog_font)
+            longest_port = max(
+                (combo_metrics.horizontalAdvance(text) for text in port_texts),
+                default=0,
+            )
+            port_combo_width = max(
+                ADD_SERIAL_PORT_COMBO_MIN_WIDTH,
+                min(560, longest_port + 56),
+            )
+            self.port_combo.setMinimumWidth(port_combo_width)
 
     def selected_port(self) -> str:
         return self.port_combo.currentText().split(" - ")[0].strip()

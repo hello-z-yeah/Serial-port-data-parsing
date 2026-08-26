@@ -457,6 +457,8 @@ def apply_table_font(table: QTableWidget, font: QFont, *, minimum_padding: int =
 
 def adapt_table_geometry(table: QTableWidget, *, point_size: int | None = None) -> None:
     """Prevent clipping in headers, rows and embedded cell controls."""
+    if bool(table.property("smstSkipTableAdaptiveGeometry")):
+        return
     font = QFont(table.font())
     if point_size is not None and font.pointSizeF() <= 0:
         font.setPointSize(max(1, int(point_size)))
@@ -637,6 +639,29 @@ def fit_window_to_screen(
     return window.size()
 
 
+def fit_dialog_to_content(
+    dialog: QWidget,
+    *,
+    preferred_width: int,
+    minimum: tuple[int, int] = (480, 240),
+    margin: tuple[int, int] = (36, 72),
+    point_size: int | None = None,
+    include_tables: bool = False,
+) -> QSize:
+    """Size a dialog to its content first; scroll only appears if the screen is too small."""
+    apply_adaptive_geometry(dialog, point_size, include_tables=include_tables)
+    try:
+        dialog.adjustSize()
+        hint = dialog.sizeHint()
+    except Exception:
+        hint = QSize(int(preferred_width), int(minimum[1]))
+    preferred = (
+        max(int(minimum[0]), int(preferred_width), int(hint.width())),
+        max(int(minimum[1]), int(hint.height())),
+    )
+    return fit_window_to_screen(dialog, preferred=preferred, minimum=minimum, margin=margin)
+
+
 def scoped_font_stylesheet(object_name: str, point_size: int) -> str:
     """Stylesheet for normal UI text under one root, excluding QTextEdit data."""
     root = f"QWidget#{object_name}"
@@ -724,6 +749,8 @@ class _AdaptiveUiController(QObject):
         except Exception:
             top = widget
         if self._is_transient_window(top):
+            return
+        if isinstance(top, QDialog):
             return
         key = id(top)
         if key in self._pending:
