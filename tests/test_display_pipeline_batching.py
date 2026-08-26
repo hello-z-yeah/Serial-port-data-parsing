@@ -94,6 +94,19 @@ def test_format_receive_raw_items_ascii_mode_has_segments():
     assert items[0]["monitor_line"].endswith(" hello\n")
 
 
+def test_monitor_page_ignores_receive_hex_pref_for_display():
+    """Monitor page must format raw bytes with its own HEX toggle, not receive page's."""
+    data = b"hello"
+    receive_items = format_receive_raw_items(data, 2.0, hex_format=True)
+    receive_monitor_line = receive_items[0]["monitor_line"]
+    assert "68 65 6C 6C 6F" in receive_monitor_line or "68" in receive_monitor_line.lower()
+
+    monitor_line = format_monitor_raw_line(data, 2.0, hex_format=False)
+    assert monitor_line.endswith(" hello\n")
+    assert "Raw-HEX" not in monitor_line
+    assert monitor_line != receive_monitor_line
+
+
 def test_display_batcher_coalesces_until_flush():
     payloads: list[dict] = []
 

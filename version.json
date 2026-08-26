@@ -1,8 +1,8 @@
 {
-  "version": "3.4.5",
-  "tag_name": "3.4.5",
-  "asset_name": "SerialXSetup3.4.5_x64.exe",
-  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.4.5/SerialXSetup3.4.5_x64.exe",
-  "sha256": "405628943b6964cb072cb00e0a83a8738564c94c287c456d922c4a517452bb85",
-  "notes": "Import and display product actions/events; MCU event report via 0x11"
+  "version": "3.5.5",
+  "tag_name": "3.5.5",
+  "asset_name": "SerialXSetup3.5.5_x64.exe",
+  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.5.5/SerialXSetup3.5.5_x64.exe",
+  "sha256": "3d415cf8ddcdaaeacd3ef4185d38ba6faecd6c500cde9841659d62cb0c4839eb",
+  "notes": "Fix monitor-page HEX display isolation and start-monitor crash"
 }

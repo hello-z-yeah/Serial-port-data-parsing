@@ -76,6 +76,18 @@ def test_gui_source_freezes_monitor_mode_and_uses_incremental_updates() -> None:
     assert "def _flush_data_batch" in mcu_page
 
 
+def test_start_serial_success_path_uses_session_mode_label() -> None:
+    gui = read("protocol_parser/gui.py")
+    start = gui.index("def _start_serial")
+    stop = gui.index("def _stop_serial")
+    body = gui[start:stop]
+    assert "is_ascii" not in body
+    assert "def _session_hex_format" in gui
+    assert "def _session_raw_mode" in gui
+    assert "mode_label = \"HEX\" if self.monitor_page.hex_format else \"ASCII\"" in body
+    assert "raw_mode=self._session_raw_mode()" in body
+
+
 def test_gui_source_has_async_stop_and_visible_storage_failures() -> None:
     gui = read("protocol_parser/gui.py")
     assert "collector.stop_async(" in gui

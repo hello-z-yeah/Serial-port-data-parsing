@@ -1,8 +1,13 @@
-# SerialX 3.4.5
+# SerialX 3.5.5
 
 SerialX（原名 Super Max Serial Tool / SMST）是 Windows 串口协议分析与模拟 MCU 工具，支持 HEX/ASCII 收发、产品 JSON、实时属性、自动回复、原始数据保存和协议日志。
 
 详细使用说明见 **[USER_GUIDE.md](USER_GUIDE.md)**。
+
+## 3.5.5 关键变化
+
+- 修复监听工具 HEX 格式按钮受串口接收分析页影响的问题，各页签显示格式完全独立。
+- 修复开始监控时因内部变量未定义导致报错弹窗的问题。
 
 ## 3.4.5 关键变化
 
@@ -79,7 +84,7 @@ python SMST_Build_Manager.py build-installer
 
 | 产物 | 路径 |
 |---|---|
-| 安装包 | `release\SerialXSetup3.4.5_x64.exe` |
+| 安装包 | `release\SerialXSetup3.5.5_x64.exe` |
 | 文件夹版 | `dist\SerialX\SerialX.exe` |
 | 便携版 | `dist\SerialX_Portable.exe` |
 

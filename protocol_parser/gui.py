@@ -3807,7 +3807,7 @@ class ProtocolParserApp(FluentWindow):
         )
         self._set_status(f"正在{'重新' if is_reconnect else ''}连接 {port} @ {baudrate}...")
 
-        self._display_prefs["hex_format"] = bool(self.hex_format)
+        self._display_prefs["hex_format"] = self._session_hex_format()
         self._receive_display_batcher = DisplayBatcher(
             self.bridge.receive_display_batch_signal.emit,
             batch_ms=40.0,
@@ -3937,14 +3937,14 @@ class ProtocolParserApp(FluentWindow):
             except Exception as e:
                 _log_error_to_disk(e)
 
+        session_hex = self._session_hex_format()
         direction = None
-        if self.hex_format:
+        if session_hex and self._active_monitoring_page_index() != 2:
             if self.serial_sender == "模组发送":
                 direction = "request"
             elif self.serial_sender == "MCU发送":
                 direction = "response"
 
-        is_ascii = not self.hex_format
         try:
             self.collector = SerialCollector(
                 cfg=cfg,
@@ -3961,7 +3961,7 @@ class ProtocolParserApp(FluentWindow):
                 mcu_direction="request",
                 on_mcu_frame=on_mcu_frame if mcu_session else None,
                 primary_enabled=not mcu_session,
-                raw_mode=(is_ascii or self.view_mode == "raw"),
+                raw_mode=self._session_raw_mode(),
                 on_tx_sent=on_tx_sent,
                 max_reconnect_attempts=0,
                 parse_queue_size=512,
@@ -4006,7 +4006,13 @@ class ProtocolParserApp(FluentWindow):
         self.btn_start.setText("✓ 停止监控")
         self._set_tx_controls_enabled(True)
         self._restart_port_watch_timer()
-        mode_label = "ASCII" if is_ascii else "HEX"
+        page_index = self._active_monitoring_page_index()
+        if page_index == 2 and self.monitor_page is not None:
+            mode_label = "HEX" if self.monitor_page.hex_format else "ASCII"
+        elif page_index == 1:
+            mode_label = "MCU"
+        else:
+            mode_label = "HEX" if self.hex_format else "ASCII"
         proto_tag = " (无协议·通用模式)" if no_protocol else ""
         reconnect_tag = "（自动重连成功）" if is_reconnect else ""
         if self.save_raw_enabled and not self._save_raw_active:
@@ -4144,6 +4150,18 @@ class ProtocolParserApp(FluentWindow):
         except (TypeError, ValueError):
             return 0
 
+    def _session_hex_format(self) -> bool:
+        """Return HEX display preference for the active monitoring session."""
+        if self._active_monitoring_page_index() == 2 and self.monitor_page is not None:
+            return bool(self.monitor_page.hex_format)
+        return bool(self.hex_format)
+
+    def _session_raw_mode(self) -> bool:
+        """Return whether the collector should emit raw RX chunks for this session."""
+        if self._active_monitoring_page_index() == 2:
+            return True
+        return (not self.hex_format) or (self.view_mode == "raw")
+
     def _enqueue_receive_display_item(self, item: dict) -> None:
         segments = item.get("segments")
         if segments:
@@ -4195,13 +4213,11 @@ class ProtocolParserApp(FluentWindow):
                     raw_ts = item.get("ts")
                     if isinstance(raw_bytes, (bytes, bytearray)) and raw_ts is not None:
                         try:
-                            monitor_line = item.get("monitor_line")
-                            if not monitor_line:
-                                monitor_line = format_monitor_raw_line(
-                                    bytes(raw_bytes),
-                                    float(raw_ts),
-                                    hex_format=bool(getattr(self, "hex_format", False)),
-                                )
+                            monitor_line = format_monitor_raw_line(
+                                bytes(raw_bytes),
+                                float(raw_ts),
+                                hex_format=bool(self.monitor_page.hex_format),
+                            )
                             monitor_line = str(monitor_line or "")
                             if monitor_line:
                                 self.monitor_page.display_raw_line(
@@ -5590,7 +5606,8 @@ class ProtocolParserApp(FluentWindow):
 
     def _on_hex_toggled(self, checked: bool) -> None:
         self.hex_format = checked
-        self._display_prefs["hex_format"] = bool(checked)
+        if self._active_monitoring_page_index() != 2:
+            self._display_prefs["hex_format"] = bool(checked)
         # 按钮文字固定为 HEX格式：蓝色选中表示 HEX，未选中表示 ASCII。
         self.btn_hex.setText("HEX格式")
         if not checked:
@@ -5599,12 +5616,20 @@ class ProtocolParserApp(FluentWindow):
             self.btn_view_mode.setEnabled(False)
         else:
             self.btn_view_mode.setEnabled(True)
-        if self.collector:
-            self.collector.raw_mode = (not checked) or (self.view_mode == "raw")
+        if self.collector and self._active_monitoring_page_index() != 2:
+            self.collector.raw_mode = self._session_raw_mode()
             direction = None
             if checked:
                 direction = "request" if self.serial_sender == "模组发送" else "response"
             self.collector.direction = direction
+
+    def _on_monitor_hex_toggled(self, checked: bool) -> None:
+        if self._active_monitoring_page_index() != 2:
+            return
+        self._display_prefs["hex_format"] = bool(checked)
+        if self.collector:
+            self.collector.raw_mode = True
+            self.collector.direction = None
 
     def _on_view_mode_toggled(self, checked: bool) -> None:
         self.view_mode = "protocol" if checked else "raw"
@@ -5618,13 +5643,13 @@ class ProtocolParserApp(FluentWindow):
         # 协议工具组显隐会改变左侧最小尺寸，立即重平衡分栏，防止左右控件显示不全。
         self._schedule_splitter_rebalance()
 
-        if self.collector:
-            self.collector.raw_mode = (not self.hex_format) or (self.view_mode == "raw")
+        if self.collector and self._active_monitoring_page_index() != 2:
+            self.collector.raw_mode = self._session_raw_mode()
 
     def _on_sender_changed(self, value: str) -> None:
         self.serial_sender = "MCU发送" if str(value) == "MCU发送" else "模组发送"
         self.tx_direction = self.serial_sender
-        if self.collector and self.hex_format:
+        if self.collector and self.hex_format and self._active_monitoring_page_index() != 2:
             self.collector.direction = (
                 "request" if self.serial_sender == "模组发送" else "response"
             )

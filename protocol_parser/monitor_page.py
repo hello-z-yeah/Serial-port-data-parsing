@@ -302,6 +302,9 @@ class MonitorToolPage(QWidget):
     def _on_hex_toggled(self, checked: bool) -> None:
         self.hex_format = bool(checked)
         self._save_settings()
+        notify = getattr(self._mw, "_on_monitor_hex_toggled", None)
+        if callable(notify):
+            notify(bool(checked))
 
     def _on_autoscroll_toggled(self, checked: bool) -> None:
         self.autoscroll = bool(checked)
