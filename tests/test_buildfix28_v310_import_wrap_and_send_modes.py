@@ -14,7 +14,7 @@ def test_application_identity_is_v330_everywhere():
     assert APP_VERSION == "3.4.5"
     assert f'#define MyAppVersion       "{APP_VERSION}"' in (ROOT / "installer" / "serial_port_parser.iss").read_text(encoding="utf-8-sig")
     version_info = (ROOT / "resources" / "version_info.txt").read_text(encoding="utf-8")
-    assert "filevers=(3, 4, 4, 0)" in version_info
+    assert "filevers=(3, 4, 5, 0)" in version_info
     assert f"StringStruct('ProductVersion', '{APP_VERSION}')" in version_info
 
 
