@@ -395,55 +395,40 @@ class AutoReplyEngine:
         return 0
 
     def _action_outputs(self, action_id: int) -> list[tuple[int, Any, int]]:
-        """Resolve optional Action output parameters from imported JSON.
+        """Resolve optional Action output parameters from imported JSON."""
+        from .action_event_importer import parse_action_event_entries
 
-        Products without ActionEvent/output metadata correctly return an empty
-        output list.  Several common key spellings are accepted so future JSON
-        imports do not require per-product hard-coding.
-        """
         cfg = self._ac.cfg or {}
-        raw = cfg.get("source_function_json")
-        try:
-            source = json.loads(raw) if isinstance(raw, str) else (raw or {})
-        except Exception:
-            source = {}
-        actions = (
-            cfg.get("actions")
-            or cfg.get("ActionEvent")
-            or (source.get("ActionEvent") if isinstance(source, dict) else None)
-            or (source.get("actions") if isinstance(source, dict) else None)
-            or []
-        )
-        if isinstance(actions, dict):
-            actions = list(actions.values())
+        actions = cfg.get("actions") or []
+        if not actions:
+            raw = cfg.get("source_function_json")
+            try:
+                source = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except Exception:
+                source = {}
+            if isinstance(source, dict):
+                attributes = cfg.get("attributes") or {}
+                actions, _ = parse_action_event_entries(source, attributes)
+
         target = None
         for item in actions if isinstance(actions, list) else []:
             if not isinstance(item, dict):
                 continue
-            raw_id = item.get("serialId", item.get("actionId", item.get("iid", item.get("id"))))
             try:
-                resolved = int(str(raw_id), 16) if str(raw_id).lower().startswith("0x") else int(raw_id)
+                resolved = int(item.get("serial_id", -1)) & 0xFF
             except (TypeError, ValueError):
                 continue
-            if (resolved & 0xFF) == (action_id & 0xFF):
+            if resolved == (action_id & 0xFF):
                 target = item
                 break
         if not isinstance(target, dict):
             return []
-        outputs = (
-            target.get("outParams")
-            or target.get("outputParams")
-            or target.get("outputs")
-            or target.get("output")
-            or []
-        )
-        if isinstance(outputs, dict):
-            outputs = list(outputs.values())
+        outputs = target.get("out_params") or []
         result: list[tuple[int, Any, int]] = []
         for item in outputs if isinstance(outputs, list) else []:
             if not isinstance(item, dict):
                 continue
-            raw_id = item.get("serialId", item.get("attrid", item.get("iid", item.get("id"))))
+            raw_id = item.get("attrid", item.get("serialId", item.get("iid", item.get("id"))))
             try:
                 attrid = int(str(raw_id), 16) if str(raw_id).lower().startswith("0x") else int(raw_id)
             except (TypeError, ValueError):
@@ -455,10 +440,10 @@ class AutoReplyEngine:
                     value = self._ac.validate_attr_value(attrid, value)
                 except ValueError:
                     value = entry.current_value
-                result.append((attrid, value, entry.typeid))
+                result.append((attrid & 0xFF, value, entry.typeid))
                 continue
             try:
-                typeid = int(item.get("type", item.get("typeid", 2)))
+                typeid = int(item.get("typeid", item.get("type", 2)))
             except (TypeError, ValueError):
                 typeid = 2
             value = item.get("value", item.get("default", 0))

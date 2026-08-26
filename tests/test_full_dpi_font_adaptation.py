@@ -32,7 +32,7 @@ def test_mcu_attribute_and_preset_panels_receive_explicit_dpi_font() -> None:
     source = MCU.read_text(encoding="utf-8")
     assert "def apply_dpi_metrics" in source
     assert "apply_scoped_font(self, resolved)" in source
-    assert "for table in (self.attr_table, self.poweron_table, self.autoreply_table)" in source
+    assert "for table in (self.attr_table, self.action_event_table, self.poweron_table, self.autoreply_table)" in source
     assert "apply_table_font(table, font" in source
     assert "self._attr_base_row_height = max(38, metrics.height() + 16)" in source
     assert "self._preset_row_height = max(34, metrics.height() + 14)" in source

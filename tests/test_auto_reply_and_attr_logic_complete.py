@@ -9,14 +9,14 @@ from protocol_parser.attr_center import AttrStateCenter
 from protocol_parser.auto_cmd import AutoCmdEngine
 from protocol_parser.auto_reply import AutoReplyEngine
 from protocol_parser.parser import encode_frame, load_protocol, merge_protocol, parse_frame, split_frame
-from protocol_parser.product_importer import build_product_cfg, parse_function_json
+from protocol_parser.product_importer import build_product_cfg, parse_function_attributes
 from protocol_parser.ui_helpers import format_attr_validation_message
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def make_cfg() -> dict:
-    attrs = parse_function_json([
+    attrs = parse_function_attributes([
         {
             "attrid": "0x01",
             "name": "level",
@@ -237,7 +237,7 @@ def test_wise_write_only_enum_uses_legal_initial_value_for_generated_command():
 
 
 def test_invalid_initial_value_falls_back_to_enum_or_range_default():
-    attrs = parse_function_json([
+    attrs = parse_function_attributes([
         {
             "attrid": "0x01",
             "name": "mode",

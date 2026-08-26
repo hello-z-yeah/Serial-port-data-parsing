@@ -70,6 +70,17 @@ def test_realtime_textedit_defers_wrap_relayout_during_layout_freeze():
     assert "def _should_defer_wrap_relayout" in source
     assert "setLineWrapMode(TextEdit.LineWrapMode.NoWrap)" in source
     assert "def _restore_line_wrap" in source
+    assert "def _capture_scroll_anchor" in source
+    assert "def _apply_scroll_anchor" in source
+    assert "_scroll_anchor_ratio" in source
+    assert "_wants_auto_scroll" in source
+
+
+def test_realtime_textedit_restores_scroll_after_wrap_relayout():
+    source = MCU_PAGE.read_text(encoding="utf-8")
+    assert "self._capture_scroll_anchor()" in source
+    assert "QTimer.singleShot(0, self._apply_scroll_anchor)" in source
+    assert "scroll_bar.setValue(scroll_bar.maximum())" in source
 
 
 def test_main_window_pauses_display_flush_while_layout_is_frozen():

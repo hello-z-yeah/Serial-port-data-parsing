@@ -7,7 +7,7 @@ from protocol_parser.parser import load_protocol, merge_protocol, to_hex
 from protocol_parser.product_importer import (
     build_product_cfg,
     parse_expand_rules,
-    parse_function_json,
+    parse_function_attributes,
 )
 
 EXPECTED_SNAPSHOT = (
@@ -32,7 +32,7 @@ def _build_cfg(raw_text: str, root: Path) -> dict:
         product_name="test",
         pid=info["pid"],
         model=info["model"],
-        attributes=parse_function_json(raw_text),
+        attributes=parse_function_attributes(raw_text),
         mcu_version=source["Base"]["version"],
     )
     user_cfg["source_function_json"] = raw_text

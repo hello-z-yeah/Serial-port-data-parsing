@@ -1,0 +1,47 @@
+{
+  "type": "urn:miot-spec-v2:device:curtain:0000A00C:xjiang-wb28:1:0000D031",
+  "description": "xjiang curtain wb26t",
+  "services": [
+    {
+      "properties": [
+        {"format": "string", "access": ["read"], "iid": 1, "description": "Device Manufacturer", "comment": "企业标志"}
+      ],
+      "iid": 1,
+      "description": "Device Information",
+      "comment": "设备信息"
+    },
+    {
+      "properties": [
+        {"format": "uint8", "access": ["write"], "iid": 1, "description": "Motor Control", "comment": "电机控制"}
+      ],
+      "actions": [
+        {"in": [], "out": [], "iid": 1, "description": "Motor Calibrate", "comment": "电机校准"}
+      ],
+      "events": [
+        {"arguments": [], "iid": 1, "description": "Curtain Manually Opened", "comment": "窗帘被手动打开"},
+        {"arguments": [], "iid": 2, "description": "Curtain Manually Closed", "comment": "窗帘被手动关闭"}
+      ],
+      "iid": 2,
+      "description": "curtain",
+      "comment": "窗帘电机"
+    },
+    {
+      "properties": [
+        {"format": "bool", "access": ["read", "write", "notify"], "iid": 1, "description": "", "comment": "bool"},
+        {"format": "uint8", "access": ["read", "notify", "write"], "value-range": [0, 255, 1], "iid": 4, "description": "", "comment": "uint8"}
+      ],
+      "actions": [
+        {"in": [], "out": [], "iid": 1, "type": "urn:xjiang-spec:action:action-unparam:00002801:xjiang-wb28:1", "description": "action-unparam", "comment": "方法下发不带参"},
+        {"in": [1], "out": [1], "iid": 2, "type": "urn:xjiang-spec:action:action-param:00002802:xjiang-wb28:1", "description": "action-param", "comment": "方法下发带参"}
+      ],
+      "events": [
+        {"arguments": [], "iid": 1, "type": "urn:xjiang-spec:event:event-unparam:00005001:xjiang-wb28:1", "description": "event-unparam", "comment": "事件上报不带参"},
+        {"arguments": [4, 1], "iid": 2, "type": "urn:xjiang-spec:event:event-param:00005002:xjiang-wb28:1", "description": "event-param", "comment": "事件上报带参"}
+      ],
+      "iid": 3,
+      "type": "urn:xjiang-spec:service:data:00007801:xjiang-wb28:1",
+      "description": "data",
+      "comment": "数据类型"
+    }
+  ]
+}

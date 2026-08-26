@@ -1,8 +1,20 @@
-# SerialX 3.4.3
+# SerialX 3.4.5
 
 SerialX（原名 Super Max Serial Tool / SMST）是 Windows 串口协议分析与模拟 MCU 工具，支持 HEX/ASCII 收发、产品 JSON、实时属性、自动回复、原始数据保存和协议日志。
 
 详细使用说明见 **[USER_GUIDE.md](USER_GUIDE.md)**。
+
+## 3.4.5 关键变化
+
+- 修复 xjiang int-d/array 的 0x24 快照编码，以及有符号类型/字符串的默认快照值，避免模组反复请求快照。
+- 导入标准 MIOT / 厂商 Spec 产品的 `services.actions/events`（如浴霸「待机」），不再仅限 xjiang-spec。
+- 修复实时数据窗口尺寸变化后滚动条跳顶；属性解析显示改为 `名称：值` 格式。
+- 完善 0x21 设备信息中的 xjiang typeid、动作/事件映射与属性编辑器线协议 attrID 显示。
+
+## 3.4.4 关键变化
+
+- 导入产品 JSON 时同时解析 Wise `ActionEvent` 与 MIOT `services.actions/events`。
+- 模拟 MCU 页新增「动作/事件」标签：动作仅展示定义；事件支持填写出参并通过 0x11 帧 MCU 上报。
 
 ## 3.4.3 关键变化
 
@@ -67,7 +79,7 @@ python SMST_Build_Manager.py build-installer
 
 | 产物 | 路径 |
 |---|---|
-| 安装包 | `release\SerialXSetup3.4.3_x64.exe` |
+| 安装包 | `release\SerialXSetup3.4.5_x64.exe` |
 | 文件夹版 | `dist\SerialX\SerialX.exe` |
 | 便携版 | `dist\SerialX_Portable.exe` |
 

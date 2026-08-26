@@ -12,6 +12,7 @@ from typing import Any
 
 from .product_importer import extract_enum_map, extract_range_value
 from .dev_info_encoder import build_snapshot_attrid_map
+from .parser import XJIANG_VARINT_SNAPSHOT_DEFAULT, is_xjiang_varint_meta
 
 
 _UNSET = object()
@@ -62,6 +63,8 @@ class AttrEntry:
     range_str: str = ""
     current_value: Any = 0
     batch_value: Any = None
+    initial_value_from_product: bool = False
+    uses_xjiang_varint: bool = False
 
 
 class AttrStateCenter:
@@ -263,6 +266,7 @@ class AttrStateCenter:
                                 f"[{parsed_range[0]},{parsed_range[1]},{meta.get('step')}]"
                             )
                     default_value = copy.deepcopy(TYPEID_DEFAULTS.get(typeid, 0))
+                    initial_from_product = "initial_value" in meta
                     initial_value = meta.get("initial_value", source.get("initial_value", default_value))
                     if initial_value is None:
                         initial_value = copy.deepcopy(default_value)
@@ -295,6 +299,8 @@ class AttrStateCenter:
                         enum=dict(meta.get("enum") or source.get("enum") or {}),
                         range_str=str(range_value or ""),
                         current_value=initial_value,
+                        initial_value_from_product=initial_from_product,
+                        uses_xjiang_varint=is_xjiang_varint_meta(meta),
                     )
                     self._attrs[attrid] = entry
                     self._attr_order.append(attrid)
@@ -345,6 +351,15 @@ class AttrStateCenter:
                     entry.current_value = self._resolve_valid_value_locked(
                         entry, entry.current_value
                     )
+                    if (
+                        entry.typeid == 14
+                        and entry.uses_xjiang_varint
+                        and entry.current_value in (None, "", [])
+                    ):
+                        warnings.append(
+                            f"属性 0x{entry.attrid:02X}（{entry.cn_name or entry.name}）"
+                            " 未设置 int-d/array 初始值，0x24 快照将使用默认整数"
+                        )
                 # 最后一次性发布 cfg，避免无锁读取者看到“新 cfg + 旧属性表”。
                 self.cfg = target_cfg
                 self.load_warnings = warnings
@@ -511,6 +526,12 @@ class AttrStateCenter:
         else:
             candidates.append(type_default)
 
+        if entry.typeid == 14 and entry.uses_xjiang_varint:
+            candidates.extend((
+                XJIANG_VARINT_SNAPSHOT_DEFAULT,
+                0,
+            ))
+
         failures: list[str] = []
         for candidate in candidates:
             try:
@@ -531,6 +552,86 @@ class AttrStateCenter:
             resolved_preferred = entry.current_value if preferred is _UNSET else preferred
             return self._resolve_valid_value_locked(entry, resolved_preferred)
 
+    def _meta_for_attrid(self, attrid: int) -> dict:
+        cfg = self.cfg or {}
+        key = f"0x{int(attrid) & 0xFF:02X}"
+        meta = (cfg.get("attributes") or {}).get(key)
+        if isinstance(meta, dict) and meta:
+            return meta
+        for raw_key, candidate in (cfg.get("attributes") or {}).items():
+            if str(raw_key).startswith("__") or not isinstance(candidate, dict):
+                continue
+            try:
+                internal = (
+                    int(str(raw_key), 16)
+                    if str(raw_key).lower().startswith("0x")
+                    else int(raw_key)
+                ) & 0xFF
+            except (TypeError, ValueError):
+                continue
+            if internal == (int(attrid) & 0xFF):
+                return candidate
+        return {}
+
+    def get_snapshot_value_for_encode(self, attrid: int) -> Any:
+        """Return the value that should be encoded into an auto-reply 0x24 snapshot."""
+        with self._lock:
+            entry = self._attrs.get(int(attrid))
+            if entry is None:
+                raise AttributeValidationError(f"未知属性 0x{int(attrid) & 0xFF:02X}")
+            meta = self._meta_for_attrid(entry.attrid)
+            value = entry.current_value
+
+            if entry.typeid == 14 and entry.uses_xjiang_varint:
+                if value in (None, "", []):
+                    if entry.initial_value_from_product:
+                        initial = meta.get("initial_value")
+                        if initial not in (None, "", []):
+                            return self.validate_attr_value(attrid, initial)
+                    return self.validate_attr_value(attrid, XJIANG_VARINT_SNAPSHOT_DEFAULT)
+
+            if entry.typeid in (1, 3, 5, 7) and value == 0 and not entry.initial_value_from_product:
+                minimum, _, _, _ = self._range_parts(entry)
+                if minimum in (None, ""):
+                    low, _high = INTEGER_TYPE_BOUNDS.get(entry.typeid, (None, None))
+                    if low is not None and low < 0:
+                        return self.validate_attr_value(attrid, low)
+                else:
+                    try:
+                        if float(minimum) < 0:
+                            return self.validate_attr_value(
+                                attrid, math.ceil(float(minimum))
+                            )
+                    except (TypeError, ValueError, OverflowError):
+                        pass
+
+            if entry.typeid == 11 and value in (None, ""):
+                if entry.initial_value_from_product:
+                    initial = meta.get("initial_value")
+                    if initial not in (None, ""):
+                        return self.validate_attr_value(attrid, initial)
+                default_string = str(
+                    (self.cfg.get("product_info") or {}).get(
+                        "snapshot_string_default", "helloworld"
+                    )
+                )
+                return self.validate_attr_value(attrid, default_string)
+
+            if (
+                entry.typeid in (19, 20, 21, 22)
+                and value == 0
+                and not entry.initial_value_from_product
+            ):
+                minimum, _, _, _ = self._range_parts(entry)
+                if minimum not in (None, ""):
+                    try:
+                        if float(minimum) < 0:
+                            return self.validate_attr_value(attrid, float(minimum))
+                    except (TypeError, ValueError, OverflowError):
+                        pass
+
+            return self.validate_attr_value(attrid, value)
+
     def validate_attr_value(self, attrid: int, value: Any) -> Any:
         """Coerce and validate a value against type/enum/range metadata.
 
@@ -547,7 +648,9 @@ class AttrStateCenter:
             if normalized is None:
                 raise AttributeValidationError(f"属性“{entry.cn_name or entry.name}”的值不能为空")
 
-            if entry.typeid in INTEGER_TYPE_BOUNDS and not isinstance(normalized, int):
+            if entry.typeid in INTEGER_TYPE_BOUNDS and entry.typeid not in (
+                15, 16, 17, 18, 19, 20, 21, 22,
+            ) and not isinstance(normalized, int):
                 raise AttributeValidationError(f"属性“{entry.cn_name or entry.name}”需要整数")
             if entry.typeid in (9, 10) and not isinstance(normalized, (int, float)):
                 raise AttributeValidationError(f"属性“{entry.cn_name or entry.name}”需要数值")

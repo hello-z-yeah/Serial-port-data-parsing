@@ -9,7 +9,7 @@ import json
 import re
 from collections import deque
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from PySide6.QtCore import Qt, QTimer, QEvent, QSize, QRectF, QPointF
 from PySide6.QtGui import (
@@ -25,6 +25,12 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     CardWidget, BodyLabel, StrongBodyLabel, PushButton, PrimaryPushButton,
     ToggleButton, LineEdit, TextEdit, CheckBox, TableWidget, Pivot, SpinBox,
+)
+
+from protocol_parser.action_event_importer import (
+    action_event_entry_key,
+    format_param_summary,
+    _coerce_typeid,
 )
 
 from protocol_parser.ui_helpers import (
@@ -235,6 +241,8 @@ class CtrlWheelZoomTextEdit(TextEdit):
         self._wrap_debounce_timer.setSingleShot(True)
         self._wrap_debounce_timer.setInterval(180)
         self._wrap_debounce_timer.timeout.connect(self._restore_line_wrap)
+        self._scroll_anchor_ratio: float | None = None
+        self._scroll_anchor_auto = False
         self._font_zoom_timer = QTimer(self)
         self._font_zoom_timer.setSingleShot(True)
         self._font_zoom_timer.setInterval(self._FONT_ZOOM_DEBOUNCE_MS)
@@ -257,12 +265,51 @@ class CtrlWheelZoomTextEdit(TextEdit):
             return True
         return False
 
+    def _wants_auto_scroll(self) -> bool:
+        widget = self.parentWidget()
+        while widget is not None:
+            if hasattr(widget, "_auto_scroll"):
+                return bool(getattr(widget, "_auto_scroll"))
+            if hasattr(widget, "autoscroll"):
+                return bool(getattr(widget, "autoscroll"))
+            widget = widget.parentWidget()
+        return False
+
+    def _capture_scroll_anchor(self) -> None:
+        """记录换行/重排前的滚动位置，供恢复后还原。"""
+        self._scroll_anchor_auto = self._wants_auto_scroll()
+        scroll_bar = self.verticalScrollBar()
+        if self._scroll_anchor_auto or scroll_bar is None:
+            self._scroll_anchor_ratio = None
+            return
+        max_val = scroll_bar.maximum()
+        if max_val <= 0:
+            self._scroll_anchor_ratio = 0.0
+        else:
+            self._scroll_anchor_ratio = scroll_bar.value() / max_val
+
+    def _apply_scroll_anchor(self) -> None:
+        """换行/重排完成后恢复滚动位置或跟随自动滚动到底。"""
+        scroll_bar = self.verticalScrollBar()
+        if scroll_bar is None:
+            return
+        if self._scroll_anchor_auto or self._wants_auto_scroll():
+            scroll_bar.setValue(scroll_bar.maximum())
+            return
+        ratio = self._scroll_anchor_ratio
+        if ratio is None:
+            return
+        max_val = scroll_bar.maximum()
+        scroll_bar.setValue(0 if max_val <= 0 else int(ratio * max_val))
+
     def resizeEvent(self, event) -> None:  # type: ignore[override]
-        super().resizeEvent(event)
         width_changed = (
             event.oldSize().width() > 0
             and event.oldSize().width() != event.size().width()
         )
+        if width_changed:
+            self._capture_scroll_anchor()
+        super().resizeEvent(event)
         if not width_changed:
             return
         block_count = self.document().blockCount()
@@ -274,11 +321,15 @@ class CtrlWheelZoomTextEdit(TextEdit):
             if block_count > self._FONT_ZOOM_HEAVY_BLOCK_THRESHOLD:
                 self.setUpdatesEnabled(False)
             self._wrap_debounce_timer.start()
+        else:
+            QTimer.singleShot(0, self._apply_scroll_anchor)
 
     def _restore_line_wrap(self) -> None:
-        if self.lineWrapMode() != TextEdit.LineWrapMode.WidgetWidth:
-            self.setUpdatesEnabled(True)
-            self.setLineWrapMode(TextEdit.LineWrapMode.WidgetWidth)
+        if self.lineWrapMode() == TextEdit.LineWrapMode.WidgetWidth:
+            return
+        self.setUpdatesEnabled(True)
+        self.setLineWrapMode(TextEdit.LineWrapMode.WidgetWidth)
+        QTimer.singleShot(0, self._apply_scroll_anchor)
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
@@ -325,10 +376,9 @@ class CtrlWheelZoomTextEdit(TextEdit):
         document = self.document()
         heavy = document.blockCount() > self._FONT_ZOOM_HEAVY_BLOCK_THRESHOLD
 
-        scroll_bar = self.verticalScrollBar()
-        saved_scroll = scroll_bar.value() if scroll_bar is not None else 0
         restore_wrap = False
         if heavy:
+            self._capture_scroll_anchor()
             if self.lineWrapMode() == TextEdit.LineWrapMode.WidgetWidth:
                 self.setLineWrapMode(TextEdit.LineWrapMode.NoWrap)
                 restore_wrap = True
@@ -362,11 +412,11 @@ class CtrlWheelZoomTextEdit(TextEdit):
             self.setCurrentCharFormat(current_format)
         finally:
             if heavy:
-                if scroll_bar is not None:
-                    scroll_bar.setValue(saved_scroll)
                 self.setUpdatesEnabled(True)
                 if restore_wrap:
                     self._wrap_debounce_timer.start()
+                else:
+                    QTimer.singleShot(0, self._apply_scroll_anchor)
             else:
                 self.viewport().update()
 
@@ -459,6 +509,8 @@ class McuSimulatePage(QWidget):
         # 承载全部文字；绝不再用省略号隐藏内容。
         self._attr_wrapped_column_maximums = {2: 260, 3: 320}
         self._attr_wrapped_column_ratios = {2: 0.26, 3: 0.30}
+        self._action_event_wrapped_column_maximums = {3: 280, 4: 220, 5: 260}
+        self._action_event_wrapped_column_ratios = {3: 0.32, 4: 0.28, 5: 0.30}
         self._pending_attr_remeasure_columns: set[int] = set()
         self._attr_column_remeasure_timer = QTimer(self)
         self._attr_column_remeasure_timer.setSingleShot(True)
@@ -508,6 +560,11 @@ class McuSimulatePage(QWidget):
         self.attr_visible_toggle.setChecked(False)
         self.attr_visible_toggle.toggled.connect(self._set_attr_panel_visible)
 
+        self.action_event_visible_toggle = ToggleButton("动作/事件", operation)
+        self.action_event_visible_toggle.setChecked(False)
+        self.action_event_visible_toggle.setEnabled(False)
+        self.action_event_visible_toggle.toggled.connect(self._set_action_event_panel_visible)
+
         self.preset_visible_toggle = ToggleButton("预置命令", operation)
         self.preset_visible_toggle.setChecked(False)
         self.preset_visible_toggle.toggled.connect(self._set_preset_panel_visible)
@@ -515,6 +572,7 @@ class McuSimulatePage(QWidget):
             self.import_json_button,
             self.manage_json_button,
             self.attr_visible_toggle,
+            self.action_event_visible_toggle,
             self.preset_visible_toggle,
         ):
             button.setSizePolicy(
@@ -550,6 +608,7 @@ class McuSimulatePage(QWidget):
             self.import_json_button,
             self.manage_json_button,
             self.attr_visible_toggle,
+            self.action_event_visible_toggle,
             self.preset_visible_toggle,
         )
         self._relayout_operation_bar()
@@ -625,19 +684,28 @@ class McuSimulatePage(QWidget):
         )
         data_layout.addWidget(self.data_text, 1)
 
+        self.attr_side_panel = QWidget(self.content_splitter)
+        self.attr_side_layout = QVBoxLayout(self.attr_side_panel)
+        self.attr_side_layout.setContentsMargins(0, 0, 0, 0)
+        self.attr_side_layout.setSpacing(6)
+
         self.attr_card = self._build_attr_card()
+        self.action_event_card = self._build_action_event_card()
+        self.attr_side_layout.addWidget(self.attr_card, 1)
+        self.attr_side_layout.addWidget(self.action_event_card, 1)
+
         self.preset_card = self._build_preset_card()
         self.data_card.setMinimumWidth(320)
-        self.attr_card.setMinimumWidth(260)
+        self.attr_side_panel.setMinimumWidth(260)
         self.preset_card.setMinimumWidth(260)
         # In the narrow-screen vertical arrangement each panel keeps enough
         # height for its toolbar/header; the table/text body then scrolls.
         self.data_card.setMinimumHeight(120)
-        self.attr_card.setMinimumHeight(96)
+        self.attr_side_panel.setMinimumHeight(96)
         self.preset_card.setMinimumHeight(96)
 
         self.content_splitter.addWidget(self.data_card)
-        self.content_splitter.addWidget(self.attr_card)
+        self.content_splitter.addWidget(self.attr_side_panel)
         self.content_splitter.addWidget(self.preset_card)
         # 只让数据窗口吸收窗口缩放，侧栏保持各自宽度，避免调好的尺寸被重置。
         self.content_splitter.setStretchFactor(0, 1)
@@ -652,8 +720,9 @@ class McuSimulatePage(QWidget):
         root.addWidget(self.content_splitter, 1)
 
         # 同步按钮初始开关状态到对应面板（setChecked 不会触发 toggled 信号）
-        self._set_attr_panel_visible(self.attr_visible_toggle.isChecked())
+        self._sync_attr_side_panel()
         self._set_preset_panel_visible(self.preset_visible_toggle.isChecked())
+        self._update_action_event_availability()
         self.apply_dpi_metrics()
 
     def apply_dpi_metrics(self, point_size: int | None = None) -> None:
@@ -683,7 +752,7 @@ class McuSimulatePage(QWidget):
             self._enum_button_height = max(28, metrics.height() + 10)
             self._preset_row_height = max(34, metrics.height() + 14)
 
-            for table in (self.attr_table, self.poweron_table, self.autoreply_table):
+            for table in (self.attr_table, self.action_event_table, self.poweron_table, self.autoreply_table):
                 apply_table_font(table, font, minimum_padding=16)
 
             header = self.attr_table.horizontalHeader()
@@ -721,7 +790,7 @@ class McuSimulatePage(QWidget):
             self._schedule_attr_row_resize(0)
             QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)
             self._apply_preset_table_widths()
-            self.attr_card.setMinimumWidth(min(self._attr_ideal_width(), 320))
+            self.attr_side_panel.setMinimumWidth(min(self._attr_ideal_width(), 320))
             self.preset_card.setMinimumWidth(min(self._preset_ideal_width(), 320))
 
             # Preserve the user's independent data-window setting after the
@@ -779,7 +848,8 @@ class McuSimulatePage(QWidget):
             layout.addWidget(self.import_json_button, 0, 4)
             layout.addWidget(self.manage_json_button, 0, 5)
             layout.addWidget(self.attr_visible_toggle, 0, 6)
-            layout.addWidget(self.preset_visible_toggle, 0, 7)
+            layout.addWidget(self.action_event_visible_toggle, 0, 7)
+            layout.addWidget(self.preset_visible_toggle, 0, 8)
             layout.setColumnStretch(3, 1)
         elif width >= medium_needed:
             layout.addWidget(self.page_title_label, 0, 0)
@@ -789,7 +859,8 @@ class McuSimulatePage(QWidget):
             layout.addWidget(self.import_json_button, 1, 3)
             layout.addWidget(self.manage_json_button, 1, 4)
             layout.addWidget(self.attr_visible_toggle, 1, 5)
-            layout.addWidget(self.preset_visible_toggle, 1, 6)
+            layout.addWidget(self.action_event_visible_toggle, 1, 6)
+            layout.addWidget(self.preset_visible_toggle, 1, 7)
             layout.setColumnStretch(3, 1)
         else:
             layout.addWidget(self.page_title_label, 0, 0)
@@ -799,12 +870,14 @@ class McuSimulatePage(QWidget):
             layout.addWidget(self.import_json_button, 1, 2)
             layout.addWidget(self.manage_json_button, 1, 3)
             layout.addWidget(self.attr_visible_toggle, 1, 4)
-            layout.addWidget(self.preset_visible_toggle, 1, 5)
+            layout.addWidget(self.action_event_visible_toggle, 1, 5)
+            layout.addWidget(self.preset_visible_toggle, 1, 6)
             layout.setColumnStretch(3, 1)
         for button in (
             self.import_json_button,
             self.manage_json_button,
             self.attr_visible_toggle,
+            self.action_event_visible_toggle,
             self.preset_visible_toggle,
         ):
             layout.setAlignment(
@@ -925,7 +998,7 @@ class McuSimulatePage(QWidget):
         splitter = getattr(self, "content_splitter", None)
         if splitter is None:
             return
-        attr_on = getattr(self, "attr_card", None) is not None and not self.attr_card.isHidden()
+        attr_on = getattr(self, "attr_side_panel", None) is not None and not self.attr_side_panel.isHidden()
         preset_on = getattr(self, "preset_card", None) is not None and not self.preset_card.isHidden()
         # Side-by-side cards need more logical width than is available on many
         # 1366×768 / 125–150% desktops.  Stack them vertically rather than
@@ -1009,8 +1082,224 @@ QTableView#AttributeTable::item:selected {{
         self.attr_table.setItemDelegateForColumn(3, self._attr_wrap_delegate)
         for column, minimum in self._attr_column_minimums.items():
             self.attr_table.setColumnWidth(column, minimum)
+
         layout.addWidget(self.attr_table, 1)
         return card
+
+    def _build_action_event_card(self) -> CardWidget:
+        card = CardWidget(self.attr_side_panel)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(6)
+        self.action_event_title_label = StrongBodyLabel("动作/事件", card)
+        layout.addWidget(self.action_event_title_label)
+        self.action_event_empty_label = BodyLabel(
+            "当前产品 JSON 未包含动作/事件定义。",
+            card,
+        )
+        self.action_event_empty_label.setWordWrap(True)
+        self.action_event_empty_label.hide()
+        self.action_event_table = self._build_action_event_table(card)
+        layout.addWidget(self.action_event_empty_label)
+        layout.addWidget(self.action_event_table, 1)
+        card.hide()
+        return card
+
+    def _build_action_event_table(self, parent: QWidget) -> CellWidgetAlignedTable:
+        table = CellWidgetAlignedTable(parent)
+        table.setColumnCount(7)
+        table.setHorizontalHeaderLabels([
+            "下发ID", "所属服务", "类型", "名称", "入参", "出参/上报参数", "操作",
+        ])
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        header = table.horizontalHeader()
+        for column in range(table.columnCount()):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+        table.setColumnWidth(0, 100)
+        table.setColumnWidth(1, 96)
+        table.setColumnWidth(2, 72)
+        table.setColumnWidth(3, 160)
+        table.setColumnWidth(4, 140)
+        table.setColumnWidth(5, 180)
+        table.setColumnWidth(6, 96)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        table.setWordWrap(True)
+        table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self._event_param_inputs: dict[tuple[int, int, str], list[LineEdit]] = {}
+        self._action_event_column_minimums = {
+            0: 100, 1: 96, 2: 72, 3: 160, 4: 140, 5: 180, 6: 96,
+        }
+        self._action_event_wrapped_column_maximums = {3: 280, 4: 220, 5: 260}
+        self._action_event_wrapped_column_ratios = {3: 0.32, 4: 0.28, 5: 0.30}
+        self._action_event_wrap_delegate = WrappedAttributeTextDelegate(
+            table, base_delegate=table.itemDelegate()
+        )
+        table.setProperty("smstPreserveWrappedRowHeight", True)
+        for column in range(6):
+            table.setItemDelegateForColumn(column, self._action_event_wrap_delegate)
+        return table
+
+    def _product_action_event_entries(self) -> tuple[list[dict], list[dict]]:
+        cfg = self._mw.get_cfg() or {}
+        actions = list(cfg.get("actions") or [])
+        events = list(cfg.get("events") or [])
+        if actions or events:
+            return actions, events
+        raw = cfg.get("source_function_json")
+        if not raw:
+            return [], []
+        try:
+            from protocol_parser.product_importer import parse_function_json
+
+            bundle = parse_function_json(raw)
+            return list(bundle.get("actions") or []), list(bundle.get("events") or [])
+        except Exception:
+            return [], []
+
+    def refresh_action_event_table(self) -> None:
+        table = getattr(self, "action_event_table", None)
+        if table is None:
+            return
+        actions, events = self._product_action_event_entries()
+        rows: list[dict] = []
+        for entry in actions:
+            item = dict(entry)
+            item["kind"] = "action"
+            rows.append(item)
+        for entry in events:
+            item = dict(entry)
+            item["kind"] = "event"
+            rows.append(item)
+        rows.sort(key=lambda item: (
+            0 if item.get("kind") == "action" else 1,
+            int(item.get("service_siid") or 0),
+            int(item.get("service_iid") or 0),
+        ))
+        self._event_param_inputs.clear()
+        table.setRowCount(len(rows))
+        empty_label = getattr(self, "action_event_empty_label", None)
+        if empty_label is not None:
+            empty_label.setVisible(not rows)
+            table.setVisible(bool(rows))
+        center = self._mw.get_attr_center()
+        for row, entry in enumerate(rows):
+            serial_id = int(entry.get("serial_id") or 0) & 0xFF
+            kind = str(entry.get("kind") or "action")
+            entry_key = action_event_entry_key(entry)
+            table.setItem(row, 0, self._readonly_item(f"{serial_id} (0x{serial_id:02X})"))
+            table.setItem(row, 1, self._readonly_item(entry.get("service") or "—"))
+            table.setItem(row, 2, self._readonly_item("action" if kind == "action" else "event"))
+            name_item = self._readonly_item(entry.get("cn_name") or entry.get("name") or "—")
+            name_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            table.setItem(row, 3, name_item)
+            in_item = self._readonly_item(format_param_summary(entry.get("in_params") or []))
+            in_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            table.setItem(row, 4, in_item)
+            if kind == "event":
+                param_cell, editors = self._build_event_param_cell(entry, center)
+                self._event_param_inputs[entry_key] = editors
+                table.setCellWidget(row, 5, param_cell)
+                report_button = PrimaryPushButton("mcu上报")
+                report_button.clicked.connect(
+                    lambda _checked=False, item=entry: self._on_event_report(item)
+                )
+                op_cell = QWidget()
+                op_layout = QHBoxLayout(op_cell)
+                op_layout.setContentsMargins(4, 0, 4, 0)
+                op_layout.addWidget(report_button)
+                table.setCellWidget(row, 6, op_cell)
+            else:
+                out_item = self._readonly_item(format_param_summary(entry.get("out_params") or []))
+                out_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                table.setItem(row, 5, out_item)
+                table.setItem(row, 6, self._readonly_item("仅展示"))
+            table.setRowHeight(row, 44 if kind == "event" and entry.get("out_params") else 36)
+        apply_table_font(
+            table,
+            make_ui_font(self._side_font_point_size),
+            minimum_padding=16,
+        )
+        self._remeasure_action_event_columns()
+        self._resize_action_event_rows_to_wrapped_content()
+        self._update_action_event_availability()
+
+    def _build_event_param_cell(self, entry: dict, center) -> tuple[QWidget, list[LineEdit]]:
+        cell = QWidget()
+        layout = QVBoxLayout(cell)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(4)
+        editors: list[LineEdit] = []
+        out_params = list(entry.get("out_params") or [])
+        if not out_params:
+            layout.addWidget(BodyLabel("无参数", cell))
+            return cell, editors
+        for index, param in enumerate(out_params):
+            row = QHBoxLayout()
+            label = BodyLabel(str(param.get("cn_name") or param.get("name") or f"参数{index}"), cell)
+            label.setMinimumWidth(72)
+            editor = LineEdit(cell)
+            attrid = int(param.get("attrid") or 0) & 0xFF
+            typeid = _coerce_typeid(param.get("typeid"), 2)
+            default = param.get("default", 0)
+            attr_entry = center.get_entry(attrid)
+            if attr_entry is not None:
+                _, current, _ = center.get_attr_value(attrid)
+                default = current
+                typeid = attr_entry.typeid
+            if typeid == 0:
+                editor.setText("1" if bool(default) else "0")
+            else:
+                editor.setText(str(default))
+            editors.append(editor)
+            row.addWidget(label)
+            row.addWidget(editor, 1)
+            layout.addLayout(row)
+        return cell, editors
+
+    def _on_event_report(self, entry: dict) -> None:
+        event_id = int(entry.get("serial_id") or 0) & 0xFF
+        if not self._mw.guard_click(f"event_report_{event_id}_{int(entry.get('service_iid') or 0)}"):
+            return
+        actions, events = self._product_action_event_entries()
+        entry_key = action_event_entry_key(entry)
+        matched = next(
+            (item for item in events if action_event_entry_key(item) == entry_key),
+            None,
+        )
+        if matched is None:
+            matched = next(
+                (item for item in events if int(item.get("serial_id") or 0) & 0xFF == event_id),
+                None,
+            )
+        if matched is None:
+            StyledMessageBox.warning(self, "提示", f"未找到事件 {event_id} (0x{event_id:02X})")
+            return
+        center = self._mw.get_attr_center()
+        engine = self._mw.get_cmd_engine()
+        out_params = list(matched.get("out_params") or [])
+        editors = self._event_param_inputs.get(entry_key, [])
+        payload: list[tuple[int, Any, int]] = []
+        try:
+            for index, param in enumerate(out_params):
+                attrid = int(param.get("attrid") or 0) & 0xFF
+                typeid = _coerce_typeid(param.get("typeid"), 2)
+                text = editors[index].text().strip() if index < len(editors) else str(param.get("default", 0))
+                entry = center.get_entry(attrid)
+                if entry is not None:
+                    typeid = entry.typeid
+                value = _convert_value(text, typeid)
+                if entry is not None:
+                    value = center.validate_attr_value(attrid, value)
+                payload.append((attrid, value, typeid))
+            frame = engine.build_event_report(int(event_id) & 0xFF, payload)
+            label = str(matched.get("cn_name") or matched.get("name") or f"事件{event_id}")
+            self._mw.send_generated_frame(frame, label)
+        except (ValueError, TypeError, UnicodeError, OverflowError) as exc:
+            StyledMessageBox.warning(self, "事件参数不符合要求", str(exc))
+        except Exception as exc:
+            self._mw.report_error("事件上报失败", exc)
 
     def _on_select_all_toggled(self, checked: bool) -> None:
         """全选/取消全选实时属性，不发送任何数据。"""
@@ -1152,15 +1441,55 @@ QTableView#AttributeTable::item:selected {{
         return page
 
     def _set_attr_panel_visible(self, visible: bool) -> None:
-        """显示或隐藏实时属性面板。
+        """显示或隐藏实时属性面板。"""
+        self._sync_attr_side_panel()
 
-        使用控件自身的显隐状态控制右侧栏，随后重新分配三栏宽度。
-        这样关闭后再次点击按钮，可以可靠恢复对应面板。
-        """
-        card = getattr(self, "attr_card", None)
-        if card is not None:
-            card.setVisible(bool(visible))
+    def _set_action_event_panel_visible(self, visible: bool) -> None:
+        """显示或隐藏动作/事件面板。"""
+        toggle = getattr(self, "action_event_visible_toggle", None)
+        if toggle is not None and not toggle.isEnabled() and visible:
+            toggle.blockSignals(True)
+            toggle.setChecked(False)
+            toggle.blockSignals(False)
+            return
+        self._sync_attr_side_panel()
+
+    def _sync_attr_side_panel(self) -> None:
+        """同步侧栏中实时属性与动作/事件两个区域的显隐。"""
+        attr_toggle = getattr(self, "attr_visible_toggle", None)
+        action_toggle = getattr(self, "action_event_visible_toggle", None)
+        attr_card = getattr(self, "attr_card", None)
+        action_card = getattr(self, "action_event_card", None)
+        side_panel = getattr(self, "attr_side_panel", None)
+        side_layout = getattr(self, "attr_side_layout", None)
+        if attr_card is None or action_card is None or side_panel is None or side_layout is None:
+            return
+
+        attr_on = bool(attr_toggle.isChecked()) if attr_toggle is not None else False
+        action_on = bool(
+            action_toggle.isChecked() and action_toggle.isEnabled()
+        ) if action_toggle is not None else False
+
+        attr_card.setVisible(attr_on)
+        action_card.setVisible(action_on)
+        side_panel.setVisible(attr_on or action_on)
+        side_layout.setStretch(0, 1 if attr_on else 0)
+        side_layout.setStretch(1, 1 if action_on else 0)
         self._schedule_lower_panel_rebalance()
+
+    def _update_action_event_availability(self) -> None:
+        """根据当前产品是否含动作/事件定义，更新按钮可用状态。"""
+        toggle = getattr(self, "action_event_visible_toggle", None)
+        if toggle is None:
+            return
+        actions, events = self._product_action_event_entries()
+        available = bool(actions or events)
+        toggle.setEnabled(available)
+        if not available:
+            toggle.blockSignals(True)
+            toggle.setChecked(False)
+            toggle.blockSignals(False)
+        self._sync_attr_side_panel()
 
     def _set_preset_panel_visible(self, visible: bool) -> None:
         """显示或隐藏预置命令面板。"""
@@ -1178,14 +1507,14 @@ QTableView#AttributeTable::item:selected {{
         if getattr(self, "_rebalancing", False):
             return
         splitter = getattr(self, "content_splitter", None)
-        attr_card = getattr(self, "attr_card", None)
+        attr_side_panel = getattr(self, "attr_side_panel", None)
         preset_card = getattr(self, "preset_card", None)
-        if splitter is None or attr_card is None or preset_card is None:
+        if splitter is None or attr_side_panel is None or preset_card is None:
             return
         sizes = splitter.sizes()
         if len(sizes) < 3:
             return
-        if not attr_card.isHidden() and sizes[1] > 0:
+        if not attr_side_panel.isHidden() and sizes[1] > 0:
             self._panel_width_mem["attr"] = sizes[1]
         if not preset_card.isHidden() and sizes[2] > 0:
             self._panel_width_mem["preset"] = sizes[2]
@@ -1197,6 +1526,7 @@ QTableView#AttributeTable::item:selected {{
         按新滚动偏移刷新,这里用 visualRect 强制对齐,防止复选框/按钮漂移。
         """
         for table in (getattr(self, "attr_table", None),
+                      getattr(self, "action_event_table", None),
                       getattr(self, "poweron_table", None),
                       getattr(self, "autoreply_table", None)):
             if table is None:
@@ -1250,6 +1580,96 @@ QTableView#AttributeTable::item:selected {{
                 adaptive_cap = min(adaptive_cap, max(minimum, int(viewport_width * ratio)))
             return max(minimum, min(adaptive_cap, measured))
         return measured
+
+    def _measure_action_event_column_width(self, column: int) -> int:
+        table = getattr(self, "action_event_table", None)
+        if table is None or column < 0 or column >= table.columnCount():
+            return 0
+        font = make_ui_font(self._side_font_point_size)
+        metrics = QFontMetrics(font)
+        header_item = table.horizontalHeaderItem(column)
+        header_text = header_item.text() if header_item is not None else ""
+        width = metrics.horizontalAdvance(str(header_text or ""))
+        contains_widget = False
+        for row in range(table.rowCount()):
+            item = table.item(row, column)
+            if item is not None:
+                width = max(width, metrics.horizontalAdvance(str(item.text() or "")))
+            cell = table.cellWidget(row, column)
+            if cell is not None:
+                contains_widget = True
+                layout = cell.layout()
+                if layout is not None:
+                    layout.activate()
+                width = max(
+                    width,
+                    int(cell.sizeHint().width()),
+                    int(cell.minimumSizeHint().width()),
+                )
+        padding = 16 if contains_widget else 28
+        minimum = int(getattr(self, "_action_event_column_minimums", {}).get(column, 46))
+        measured = max(minimum, width + padding)
+        maximums = getattr(self, "_action_event_wrapped_column_maximums", {})
+        maximum = maximums.get(column)
+        if maximum is not None:
+            viewport_width = int(table.viewport().width())
+            ratio = float(getattr(self, "_action_event_wrapped_column_ratios", {}).get(column, 0.28))
+            adaptive_cap = int(maximum)
+            if viewport_width > 1:
+                adaptive_cap = min(adaptive_cap, max(minimum, int(viewport_width * ratio)))
+            return max(minimum, min(adaptive_cap, measured))
+        return measured
+
+    def _remeasure_action_event_columns(self, columns: list[int] | None = None) -> None:
+        table = getattr(self, "action_event_table", None)
+        if table is None:
+            return
+        selected = list(range(table.columnCount())) if columns is None else sorted({int(v) for v in columns})
+        header = table.horizontalHeader()
+        table.setUpdatesEnabled(False)
+        try:
+            for column in selected:
+                if column < 0 or column >= table.columnCount():
+                    continue
+                header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+                table.setColumnWidth(column, self._measure_action_event_column_width(column))
+        finally:
+            table.setUpdatesEnabled(True)
+            table.viewport().update()
+            QTimer.singleShot(0, self._fix_cell_widget_positions)
+
+    def _resize_action_event_rows_to_wrapped_content(self) -> None:
+        table = getattr(self, "action_event_table", None)
+        if table is None:
+            return
+        wrap_columns = {0, 1, 2, 3, 4, 5}
+        for row in range(table.rowCount()):
+            row_height = 36
+            for column in wrap_columns:
+                item = table.item(row, column)
+                if item is None:
+                    continue
+                col_width = max(24, table.columnWidth(column) - 16)
+                text_height = self._wrapped_table_text_height(table, item.text(), col_width)
+                row_height = max(row_height, text_height + 16)
+            widget = table.cellWidget(row, 5)
+            if widget is not None:
+                row_height = max(row_height, int(widget.sizeHint().height()) + 8)
+            table.setRowHeight(row, row_height)
+
+    def _wrapped_table_text_height(self, table: TableWidget, text: object, width: int) -> int:
+        document = QTextDocument()
+        document.setDefaultFont(table.font())
+        document.setDocumentMargin(0.0)
+        option = document.defaultTextOption()
+        option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        document.setDefaultTextOption(option)
+        document.setPlainText(str(text or ""))
+        document.setTextWidth(max(24, int(width)))
+        document.adjustSize()
+        layout_height = float(document.documentLayout().documentSize().height())
+        size_height = float(document.size().height())
+        return max(0, int(max(layout_height, size_height) + 0.999))
 
     def _wrapped_attr_text_height(self, text: object, width: int) -> int:
         """返回按当前表格字体和列宽完整换行后的文本高度。
@@ -1380,8 +1800,8 @@ QTableView#AttributeTable::item:selected {{
             remembered_width = self._panel_width_mem.get("attr")
             if remembered_width is not None and remembered_width > ideal_width:
                 self._panel_width_mem["attr"] = ideal_width
-        if getattr(self, "attr_card", None) is not None:
-            self.attr_card.setMinimumWidth(min(self._attr_ideal_width(), 320))
+        if getattr(self, "attr_side_panel", None) is not None:
+            self.attr_side_panel.setMinimumWidth(min(self._attr_ideal_width(), 320))
 
     def _schedule_attr_column_remeasure(self, *columns: int) -> None:
         """以 250 ms 防抖合并高频列宽更新。"""
@@ -1488,12 +1908,12 @@ QTableView#AttributeTable::item:selected {{
         """
         splitter = getattr(self, "content_splitter", None)
         data_card = getattr(self, "data_card", None)
-        attr_card = getattr(self, "attr_card", None)
+        attr_side_panel = getattr(self, "attr_side_panel", None)
         preset_card = getattr(self, "preset_card", None)
         if (
             splitter is None
             or data_card is None
-            or attr_card is None
+            or attr_side_panel is None
             or preset_card is None
         ):
             return
@@ -1505,7 +1925,7 @@ QTableView#AttributeTable::item:selected {{
             return
 
         # isHidden() 只反映控件自身是否被显式隐藏，不受父容器可见性影响。
-        attr_on = not attr_card.isHidden()
+        attr_on = not attr_side_panel.isHidden()
         preset_on = not preset_card.isHidden()
         self._update_content_orientation()
 
@@ -1539,7 +1959,7 @@ QTableView#AttributeTable::item:selected {{
 
         total = max(1, splitter.contentsRect().width() - splitter.handleWidth() * 2)
         min_data = 440
-        attr_card.setMinimumWidth(min(self._attr_ideal_width(), 320))
+        attr_side_panel.setMinimumWidth(min(self._attr_ideal_width(), 320))
         preset_card.setMinimumWidth(min(self._preset_ideal_width(), 320))
 
         # 实时属性：优先记忆宽度，其次理想宽度（自适应展开全部列）。
@@ -1600,6 +2020,7 @@ QTableView#AttributeTable::item:selected {{
         # 表格侧栏宽度改变后同步重算受控换行列与行高
         # （内部已含防抖行高补测，无需额外 singleShot）。
         self._remeasure_attr_columns((2, 3))
+        self._remeasure_action_event_columns()
         QTimer.singleShot(0, self._rebalance_lower_panels)
 
 
@@ -2004,6 +2425,7 @@ QTableView#AttributeTable::item:selected {{
             and len(self._attr_row_by_id) == len(entries)
         ):
             self.refresh_current_values()
+            self.refresh_action_event_table()
             return
         self._attr_table_structure_key = structure_key
 
@@ -2101,6 +2523,7 @@ QTableView#AttributeTable::item:selected {{
         # 防抖测量，保证枚举按钮组和“输入框+上报”完整显示。
         self._schedule_attr_column_remeasure()
         self._schedule_lower_panel_rebalance()
+        self.refresh_action_event_table()
 
     # ------------------------------------------------------------------
     # Product import / switching
@@ -2313,7 +2736,8 @@ QTableView#AttributeTable::item:selected {{
 
         try:
             while True:
-                attributes = parse_function_json(dialog.json_text)
+                bundle = parse_function_json(dialog.json_text)
+                attributes = bundle["attributes"]
                 localize_attributes(attributes)
                 product_name = dialog.product_name or dialog.model or dialog.pid or "未命名产品"
                 product_name = str(product_name).strip()
@@ -2342,6 +2766,8 @@ QTableView#AttributeTable::item:selected {{
                     pid=dialog.pid or source_pid,
                     model=dialog.model or source_model,
                     attributes=attributes,
+                    actions=bundle.get("actions"),
+                    events=bundle.get("events"),
                     # Base.version is the authoritative 3-byte prefix of the 0x21
                     # reply.  The dialog value remains a fallback for JSON formats
                     # that do not carry device-information metadata.

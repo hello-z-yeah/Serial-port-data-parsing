@@ -50,7 +50,7 @@ def test_command_display_recovers_product_semantics_from_wire_id():
     raw = bytes.fromhex("A5 A5 03 01 00 04 5B 02 0C 01 BC")
     text = format_frame_display(result, raw, 1.0, attr_center=center)
     assert "消息id:91" in text
-    assert "照明开启" in text
+    assert "照明：开启" in text
 
 
 def test_status_report_display_uses_enum_business_label():
@@ -64,4 +64,4 @@ def test_status_report_display_uses_enum_business_label():
     raw = bytes.fromhex("A5 A5 03 10 00 03 02 0D 02 71")
     text = format_frame_display(result, raw, 1.0, is_tx=True, attr_center=center)
     assert "状态上报" in text
-    assert "风挡高" in text
+    assert "风挡：高" in text

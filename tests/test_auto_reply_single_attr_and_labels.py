@@ -6,14 +6,14 @@ from protocol_parser.attr_center import AttrStateCenter
 from protocol_parser.auto_cmd import AutoCmdEngine
 from protocol_parser.auto_reply import AutoReplyEngine
 from protocol_parser.parser import load_protocol, merge_protocol, parse_frame, split_frame
-from protocol_parser.product_importer import build_product_cfg, parse_function_json
+from protocol_parser.product_importer import build_product_cfg, parse_function_attributes
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _make_cfg() -> dict:
-    attrs = parse_function_json([
+    attrs = parse_function_attributes([
         {
             "attrid": "0x01",
             "name": "power",
@@ -49,7 +49,7 @@ def _make_cfg() -> dict:
 
 
 def test_attrs_export_labels_use_attribute_key_and_name():
-    attrs = parse_function_json({
+    attrs = parse_function_attributes({
         "Base": {},
         "Attrs": [
             {

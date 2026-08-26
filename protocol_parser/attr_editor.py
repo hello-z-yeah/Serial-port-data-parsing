@@ -351,6 +351,58 @@ def attribute_group_key(attr: dict) -> str:
     return source
 
 
+def _attr_sort_key_for_display(key: str) -> int:
+    try:
+        return int(key, 0)
+    except Exception:
+        return 9999
+
+
+def compute_wire_attrid_display(
+    cfg: dict,
+    attr_state: dict[str, dict],
+) -> tuple[dict[str, str], bool]:
+    """Compute attrID column text: wire serialId for MIOT, internal key otherwise."""
+    from .dev_info_encoder import build_snapshot_attrid_map
+
+    selected_keys = sorted(
+        [key for key, attr in attr_state.items() if attr.get("selected", True)],
+        key=_attr_sort_key_for_display,
+    )
+    display: dict[str, str] = {}
+    if not selected_keys:
+        for key in attr_state:
+            display[key] = "—"
+        return display, False
+
+    temp_attrs = {key: dict(attr_state[key]) for key in selected_keys}
+    temp_cfg = {
+        "attributes": temp_attrs,
+        "source_function_json": cfg.get("source_function_json"),
+    }
+    wire_map, active = build_snapshot_attrid_map(temp_cfg)
+
+    for key, attr in attr_state.items():
+        if not attr.get("selected", True):
+            display[key] = "—"
+            continue
+        try:
+            internal = (
+                int(str(key), 16)
+                if str(key).lower().startswith("0x")
+                else int(key)
+            ) & 0xFF
+        except (TypeError, ValueError):
+            display[key] = str(key)
+            continue
+        if active:
+            wire = int(wire_map.get(internal, internal)) & 0xFF
+            display[key] = f"0x{wire:02X}"
+        else:
+            display[key] = f"0x{internal:02X}"
+    return display, active
+
+
 class AttributeEditorDialog(QDialog):
     """属性表选择/编辑对话框。
 
@@ -411,6 +463,10 @@ class AttributeEditorDialog(QDialog):
                 "source_data_type": attr.get("source_data_type"),
                 "source_attribute_key": attr.get("source_attribute_key"),
                 "source_attribute_name": attr.get("source_attribute_name"),
+                "source_siid": attr.get("source_siid"),
+                "source_piid": attr.get("source_piid"),
+                "source_type_urn": attr.get("source_type_urn"),
+                "wire_value_format": attr.get("wire_value_format"),
                 "selected": (
                     True
                     if self._initial_selected_attrids is None
@@ -423,7 +479,8 @@ class AttributeEditorDialog(QDialog):
         self._attr_row_map: dict[str, int] = {}
         self._updating_group_checkbox = False
         self._column_headers: list[str] = []
-
+        self._wire_attrid_display: dict[str, str] = {}
+        self._wire_attrid_active = False
         self._build_ui()
         self._refresh_table()
         apply_adaptive_geometry(self, include_tables=False)
@@ -810,6 +867,35 @@ class AttributeEditorDialog(QDialog):
             self.table.setItem(row, column, item)
         self.table.setRowHeight(row, _GROUP_COLUMN_HEADER_HEIGHT)
 
+    def _wire_attrid_tooltips(self) -> dict[str, str]:
+        tooltips: dict[str, str] = {}
+        for key, attr in self._attr_state.items():
+            display = self._wire_attrid_display.get(key, key)
+            if not attr.get("selected", True):
+                tooltips[key] = f"未选中（内部 ID {key}）"
+            elif self._wire_attrid_active and display.upper() != str(key).upper():
+                tooltips[key] = f"线协议 ID {display}（内部存储 {key}）"
+            else:
+                tooltips[key] = f"属性 ID {display}"
+        return tooltips
+
+    def _recompute_wire_attrid_display(self) -> None:
+        self._wire_attrid_display, self._wire_attrid_active = compute_wire_attrid_display(
+            self.cfg,
+            self._attr_state,
+        )
+
+    def _refresh_attrid_column(self) -> None:
+        self._recompute_wire_attrid_display()
+        tooltips = self._wire_attrid_tooltips()
+        for key, row in self._attr_row_map.items():
+            item = self.table.item(row, COL_ATTRID)
+            if item is None:
+                continue
+            text = self._wire_attrid_display.get(key, key)
+            item.setText(text)
+            item.setToolTip(tooltips.get(key, text))
+
     def _insert_attr_row(self, row: int, key: str) -> None:
         attr = self._attr_state[key]
         self.table.insertRow(row)
@@ -826,7 +912,8 @@ class AttributeEditorDialog(QDialog):
         layout.addStretch()
         self.table.setCellWidget(row, COL_SELECTED, cell)
 
-        item_id = QTableWidgetItem(key)
+        display_id = self._wire_attrid_display.get(key, key)
+        item_id = QTableWidgetItem(display_id)
         item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
         item_id.setData(Qt.UserRole, key)
         self.table.setItem(row, COL_ATTRID, item_id)
@@ -860,6 +947,7 @@ class AttributeEditorDialog(QDialog):
     def _refresh_table(self) -> None:
         self._close_active_cell_editor()
         self._cleanup_stale_cell_editors()
+        self._recompute_wire_attrid_display()
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         self._group_checkboxes.clear()
@@ -886,10 +974,17 @@ class AttributeEditorDialog(QDialog):
         self._apply_column_widths()
         self.table.blockSignals(False)
         group_count = len(ordered_groups)
+        hint = (
+            "attrID 为线协议序号（0x21/0x24/0x10 使用，从 0x00 起按勾选顺序编号）。"
+            if self._wire_attrid_active
+            else ""
+        )
         self.info_label.setText(
             f"共 {len(self._attr_state)} 个属性，{group_count} 个分组。"
             "勾选要保留的属性，点击分组标题可全选该组，双击单元格修改内容。"
+            + (f" {hint}" if hint else "")
         )
+        self._refresh_attrid_column()
 
     def _toggle_group_selection(self, group_key: str, member_keys: list[str]) -> None:
         """Select all when any member is unchecked; otherwise clear the whole group."""
@@ -912,6 +1007,7 @@ class AttributeEditorDialog(QDialog):
             self._updating_group_checkbox = True
             self._sync_group_checkbox_state(checkbox, member_keys)
             self._updating_group_checkbox = False
+        self._refresh_attrid_column()
 
     def _toggle_group_collapsed(self, group_key: str) -> None:
         if group_key in self._collapsed_groups:
@@ -937,6 +1033,7 @@ class AttributeEditorDialog(QDialog):
             return
         attr["selected"] = bool(checked)
         self._sync_group_checkbox_for_key(attribute_group_key(attr))
+        self._refresh_attrid_column()
 
     def _on_cell_changed(self, row: int, col: int) -> None:
         key = self._row_key(row)
@@ -1238,6 +1335,10 @@ class AttributeEditorDialog(QDialog):
                 "source_data_type",
                 "source_attribute_key",
                 "source_attribute_name",
+                "source_siid",
+                "source_piid",
+                "source_type_urn",
+                "wire_value_format",
             ):
                 if attr.get(passthrough_key) is not None:
                     new_attr[passthrough_key] = attr.get(passthrough_key)

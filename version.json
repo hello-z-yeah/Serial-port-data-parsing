@@ -1,8 +1,8 @@
 {
-  "version": "3.4.3",
-  "tag_name": "3.4.3",
-  "asset_name": "SerialXSetup3.4.3_x64.exe",
-  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.4.3/SerialXSetup3.4.3_x64.exe",
+  "version": "3.4.5",
+  "tag_name": "3.4.5",
+  "asset_name": "SerialXSetup3.4.5_x64.exe",
+  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.4.5/SerialXSetup3.4.5_x64.exe",
   "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "notes": "Improve dialog layouts, attribute editor grouping, and monitor/add-port button consistency"
+  "notes": "Import and display product actions/events; MCU event report via 0x11"
 }

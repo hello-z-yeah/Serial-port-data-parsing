@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from protocol_parser.app_info import APP_VERSION
-from protocol_parser.product_importer import parse_function_json
+from protocol_parser.product_importer import parse_function_attributes
 
 ROOT = Path(__file__).resolve().parents[1]
 GUI = (ROOT / "protocol_parser" / "gui.py").read_text(encoding="utf-8")
@@ -11,10 +11,10 @@ DPI = (ROOT / "protocol_parser" / "dpi_font.py").read_text(encoding="utf-8")
 
 
 def test_application_identity_is_v330_everywhere():
-    assert APP_VERSION == "3.4.3"
+    assert APP_VERSION == "3.4.5"
     assert f'#define MyAppVersion       "{APP_VERSION}"' in (ROOT / "installer" / "serial_port_parser.iss").read_text(encoding="utf-8-sig")
     version_info = (ROOT / "resources" / "version_info.txt").read_text(encoding="utf-8")
-    assert "filevers=(3, 4, 3, 0)" in version_info
+    assert "filevers=(3, 4, 4, 0)" in version_info
     assert f"StringStruct('ProductVersion', '{APP_VERSION}')" in version_info
 
 
@@ -38,7 +38,7 @@ def test_wrapped_attribute_rows_preserve_full_height_across_dpi_updates():
 
 
 def test_importer_preserves_or_translates_real_names_instead_of_attr_placeholders():
-    attributes = parse_function_json({
+    attributes = parse_function_attributes({
         "Attrs": [
             {"serialId": 0, "attributeKey": "memory-location", "dataRwx": "w", "type": 2},
             {"serialId": 1, "display_name": "Motor Control", "dataRwx": "w", "type": 2},
@@ -53,7 +53,7 @@ def test_importer_preserves_or_translates_real_names_instead_of_attr_placeholder
 
 def test_importer_maps_float_to_fixed_point_by_range_step_and_sign():
     # 有符号、一位小数 -> F1_I16
-    attrs = parse_function_json({
+    attrs = parse_function_attributes({
         "services": [{
             "iid": 2,
             "description": "Environment",
@@ -71,7 +71,7 @@ def test_importer_maps_float_to_fixed_point_by_range_step_and_sign():
     assert temp_attr["typeid"] == 19
 
     # 无符号、一位小数 -> F1_U16
-    attrs = parse_function_json({
+    attrs = parse_function_attributes({
         "services": [{
             "iid": 1,
             "properties": [{
@@ -85,7 +85,7 @@ def test_importer_maps_float_to_fixed_point_by_range_step_and_sign():
     assert list(attrs.values())[0]["typeid"] == 15
 
     # 有符号、两位小数 -> F2_I16
-    attrs = parse_function_json({
+    attrs = parse_function_attributes({
         "services": [{
             "iid": 1,
             "properties": [{
@@ -99,7 +99,7 @@ def test_importer_maps_float_to_fixed_point_by_range_step_and_sign():
     assert list(attrs.values())[0]["typeid"] == 20
 
     # 无符号、两位小数 -> F2_U16
-    attrs = parse_function_json({
+    attrs = parse_function_attributes({
         "services": [{
             "iid": 1,
             "properties": [{

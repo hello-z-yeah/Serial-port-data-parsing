@@ -25,7 +25,10 @@ def _typeid_name(typeid: int) -> str:
 def _convert_value(value_text: str, typeid: int) -> Any:
     text = str(value_text).strip()
     if typeid == 0:
-        return text.lower() in ("1", "true", "on", "yes", "打开", "是")
+        lowered = text.lower()
+        if lowered in ("0", "false", "off", "no", "关闭", "否"):
+            return False
+        return lowered in ("1", "true", "on", "yes", "打开", "是")
     if typeid in (1, 2, 3, 4, 5, 6, 7, 8, 15, 16, 17, 18, 19, 20, 21, 22):
         if not text:
             raise AttributeValidationError("请输入属性值")
@@ -215,8 +218,12 @@ def _format_attr_semantics(
                 label = "开启" if bool(value) else "关闭"
 
         shown = label or str(value)
-        # 避免枚举文本本身已经包含属性名时重复显示，例如“照明照明开启”。
-        semantic = shown if shown.startswith(name) else f"{name}{shown}"
+        if label:
+            semantic = f"{name}：{label}"
+        elif shown.startswith(name):
+            semantic = shown
+        else:
+            semantic = f"{name}：{shown}"
         unit = str(getattr(entry, "unit", "") or "").strip()
         if unit and not label and not snapshot_style:
             semantic += f" {unit}"

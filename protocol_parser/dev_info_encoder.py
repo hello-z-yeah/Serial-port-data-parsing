@@ -259,6 +259,72 @@ def build_snapshot_attrid_map(cfg: dict) -> tuple[dict[int, int], bool]:
 
     return {attrid: index for index, attrid in enumerate(internal_ids)}, True
 
+
+def _uses_xjiang_action_event_mapping(cfg: dict) -> bool:
+    """MIOT/xjiang 产品在 0x21 属性映射表末尾追加动作/事件扩展项。"""
+    for bucket in ("actions", "events"):
+        for item in cfg.get(bucket) or []:
+            if not isinstance(item, dict):
+                continue
+            if int(item.get("service_siid") or 0) > 0:
+                return True
+    return False
+
+
+def _build_action_event_mapping(cfg: dict) -> bytes:
+    """构建 xjiang-spec 动作/事件 6 字节映射项。
+
+    格式与参考调试助手一致::
+
+        siid(1) + kind(1) + iid(2, 低字节在前) + 0x0E(1) + dev_index(1)
+
+    ``dev_index`` 从 0x14(20) 起按 actions → events 顺序递增；
+    与 0x11/0x12 线协议中的 ``iid + 20`` 编号空间不同。
+    """
+    actions = [item for item in (cfg.get("actions") or []) if isinstance(item, dict)]
+    events = [item for item in (cfg.get("events") or []) if isinstance(item, dict)]
+    if not actions and not events:
+        return b""
+
+    out = bytearray()
+    dev_index = 0x14
+    for item in actions:
+        siid = int(item.get("service_siid") or 0) & 0xFF
+        iid = int(item.get("service_iid") or 0) & 0xFFFF
+        out.extend((
+            siid,
+            0x01,
+            (iid >> 8) & 0xFF,
+            iid & 0xFF,
+            0x0E,
+            dev_index & 0xFF,
+        ))
+        dev_index += 1
+    for item in events:
+        siid = int(item.get("service_siid") or 0) & 0xFF
+        iid = int(item.get("service_iid") or 0) & 0xFFFF
+        out.extend((
+            siid,
+            0x02,
+            (iid >> 8) & 0xFF,
+            iid & 0xFF,
+            0x0E,
+            dev_index & 0xFF,
+        ))
+        dev_index += 1
+    return bytes(out)
+
+
+def _coerce_mapping_typeid(meta: dict) -> int:
+    raw = meta.get("typeid")
+    if raw is None or raw == "":
+        return 2
+    try:
+        return int(raw) & 0xFF
+    except (TypeError, ValueError):
+        return 2
+
+
 def _build_attr_mapping(cfg: dict) -> bytes:
     """构建设备信息中的 0xF3 属性映射表。
 
@@ -282,10 +348,7 @@ def _build_attr_mapping(cfg: dict) -> bytes:
     resolved: list[tuple[int, int, int]] = []
     all_have_source_ids = bool(attributes)
     for raw_key, meta in attributes:
-        try:
-            typeid = int(meta.get("typeid", 2)) & 0xFF
-        except (TypeError, ValueError):
-            typeid = 2
+        typeid = _coerce_mapping_typeid(meta)
 
         source_ids = _explicit_source_ids(meta)
         if source_ids is None:
@@ -306,6 +369,8 @@ def _build_attr_mapping(cfg: dict) -> bytes:
                 (piid >> 8) & 0xFF,
                 piid & 0xFF,
             ))
+        if _uses_xjiang_action_event_mapping(cfg):
+            out.extend(_build_action_event_mapping(cfg))
         return bytes(out)
 
     # 非米家/旧格式兼容：typeid + attrid + access_flag。

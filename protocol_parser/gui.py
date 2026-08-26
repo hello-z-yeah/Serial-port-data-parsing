@@ -3284,6 +3284,10 @@ class ProtocolParserApp(FluentWindow):
                     candidate_cfg["source_function_json"] = user_cfg.get(
                         "source_function_json"
                     )
+                if "actions" in user_cfg:
+                    candidate_cfg["actions"] = user_cfg.get("actions")
+                if "events" in user_cfg:
+                    candidate_cfg["events"] = user_cfg.get("events")
                 if "device_info_expand_rules" in user_cfg:
                     candidate_cfg["device_info_expand_rules"] = user_cfg.get(
                         "device_info_expand_rules"

@@ -31,7 +31,7 @@ def test_attribute_column_width_is_content_measured_with_scroll_fallback():
     assert "cell.sizeHint().width()" in source
     assert "cell.minimumSizeHint().width()" in source
     assert "self.attr_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)" in source
-    assert "self.attr_card.setMinimumWidth(min(self._attr_ideal_width(), 320))" in source
+    assert "self.attr_side_panel.setMinimumWidth(min(self._attr_ideal_width(), 320))" in source
 
 
 def test_current_value_column_remeasure_is_debounced():

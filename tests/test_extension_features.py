@@ -14,6 +14,7 @@ from protocol_parser.product_importer import (
     build_product_cfg,
     localized_attribute_name,
     parse_function_json,
+    parse_function_attributes,
 )
 
 
@@ -21,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def make_cfg():
-    attrs = parse_function_json([
+    attrs = parse_function_attributes([
         {"attrid": "0x01", "name": "power", "cn_name": "开关", "typeid": 0, "access": "读写"},
         {"attrid": "0x02", "name": "temperature", "cn_name": "温度", "typeid": 2, "access": "只读"},
     ])
@@ -37,13 +38,13 @@ def make_cfg():
 class ImporterTests(unittest.TestCase):
     def test_three_json_shapes(self):
         services = {"services": [{"iid": 2, "properties": [{"iid": 1, "name": "power", "format": "bool", "access": ["read", "write"]}]}]}
-        self.assertTrue(parse_function_json(services))
-        self.assertIn("0x01", parse_function_json({"0x01": {"name": "x", "typeid": 2}}))
-        self.assertIn("0x02", parse_function_json([{"attrid": "0x02", "name": "y"}]))
+        self.assertTrue(parse_function_json(services)["attributes"])
+        self.assertIn("0x01", parse_function_json({"0x01": {"name": "x", "typeid": 2}})["attributes"])
+        self.assertIn("0x02", parse_function_json([{"attrid": "0x02", "name": "y"}])["attributes"])
 
 
     def test_hyphenated_value_list_and_range_are_imported(self):
-        attrs = parse_function_json({
+        attrs = parse_function_attributes({
             "services": [{
                 "iid": 2,
                 "description": "Heater",
@@ -70,7 +71,7 @@ class ImporterTests(unittest.TestCase):
             localized_attribute_name("Device Information-Device Model"),
             "设备信息-设备型号",
         )
-        attrs = parse_function_json({
+        attrs = parse_function_attributes({
             "services": [{
                 "iid": 2,
                 "description": "Light",

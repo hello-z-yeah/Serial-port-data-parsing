@@ -37,12 +37,7 @@ class AutoCmdEngine:
         such as 0x41/0x51 produces a structurally valid but incompatible frame.
         """
         targets = attrids if attrids is not None else self._ac.get_readable_attrs()
-        wire_map, uses_miot_serial_ids = build_snapshot_attrid_map(self.cfg)
-        default_string = str(
-            (self.cfg.get("product_info") or {}).get(
-                "snapshot_string_default", "helloworld"
-            )
-        )
+        wire_map, _uses_miot_serial_ids = build_snapshot_attrid_map(self.cfg)
 
         items: list[tuple[int, Any, int]] = []
         for internal_attrid in targets:
@@ -52,15 +47,8 @@ class AutoCmdEngine:
                 continue
             wire_attrid = wire_map.get(attrid, attrid)
 
-            # The simulator needs a concrete payload for unset STRING values.
-            # MIOT snapshot examples use "helloworld"; users can override the
-            # value in the live attribute table, or configure
-            # product_info.snapshot_string_default for another product.
-            if uses_miot_serial_ids and typeid == 11 and value in (None, ""):
-                value = default_string
-
             try:
-                value = self._ac.validate_attr_value(attrid, value)
+                value = self._ac.get_snapshot_value_for_encode(attrid)
             except ValueError:
                 # 老产品文件可能保存了越界 nowValue。属性中心加载时通常已经
                 # 修正；这里再做最后一道保护，避免生成业务值非法的快照帧。
@@ -79,7 +67,6 @@ class AutoCmdEngine:
         action_id: int = 0,
         out_params: Any = None,
     ) -> bytes:
-        wire_map, _ = build_snapshot_attrid_map(self.cfg)
         actions: list[tuple[int, Any, int]] = []
         if isinstance(out_params, dict):
             for raw_id, value in out_params.items():
@@ -91,7 +78,7 @@ class AutoCmdEngine:
                 if entry is None:
                     continue
                 value = self._ac.validate_attr_value(attrid, value)
-                actions.append((wire_map.get(attrid, attrid), value, entry.typeid))
+                actions.append((int(attrid) & 0xFF, value, entry.typeid))
         elif isinstance(out_params, list):
             for item in out_params:
                 if not isinstance(item, (list, tuple)) or len(item) < 3:
@@ -105,20 +92,52 @@ class AutoCmdEngine:
                 if entry is not None:
                     value = self._ac.validate_attr_value(attrid, value)
                     typeid = entry.typeid
-                    wire_attrid = wire_map.get(attrid, attrid)
                 else:
                     try:
                         typeid = int(raw_typeid)
                     except (TypeError, ValueError):
                         typeid = 2
-                    wire_attrid = attrid & 0xFF
-                actions.append((wire_attrid, value, typeid))
+                # 0x12 动作出参使用 JSON 中的属性线协议 id，不走 snapshot 映射。
+                actions.append((int(attrid) & 0xFF, value, typeid))
         return encode_frame(
             0x12, self.cfg, direction="response",
             fields={
                 "msg_id": int(msg_id) & 0xFF,
                 "action_id": int(action_id) & 0xFF,
                 "actions": actions,
+            },
+        )
+
+    def build_event_report(
+        self,
+        event_id: int,
+        params: list[tuple[int, Any, int]] | None = None,
+    ) -> bytes:
+        """MCU 主动上报设备事件 0x11。"""
+        items: list[tuple[int, Any, int]] = []
+        for raw_id, value, typeid in params or []:
+            try:
+                attrid = int(str(raw_id), 16) if str(raw_id).lower().startswith("0x") else int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            entry = self._ac.get_entry(attrid)
+            if entry is not None:
+                value = self._ac.validate_attr_value(attrid, value)
+                typeid = entry.typeid
+            else:
+                try:
+                    typeid = int(typeid)
+                except (TypeError, ValueError):
+                    typeid = 2
+            # 0x11 事件出参使用 JSON 中的属性线协议 id，不走 snapshot 映射。
+            items.append((int(attrid) & 0xFF, value, typeid))
+        return encode_frame(
+            0x11,
+            self.cfg,
+            direction="request",
+            fields={
+                "event_id": int(event_id) & 0xFF,
+                "attrs": items,
             },
         )
 

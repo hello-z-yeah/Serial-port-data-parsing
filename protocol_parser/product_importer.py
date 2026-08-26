@@ -15,6 +15,8 @@ from typing import Any
 
 MAX_FUNCTION_JSON_CHARS = 8 * 1024 * 1024
 
+WIRE_VALUE_FORMAT_XJIANG_VARINT = "xjiang_varint"
+
 
 FORMAT_TO_TYPEID = {
     "bool": 0,
@@ -607,6 +609,29 @@ def extract_range_value(meta: dict) -> Any:
     return ""
 
 
+def _resolve_xjiang_urn_typeid(meta: dict) -> int | None:
+    """从 xjiang-spec URN 推导 0x21 映射表使用的 typeid（15–22、14 等）。"""
+    urn = str(meta.get("type") or "").lower()
+    if "xjiang-spec" not in urn:
+        return None
+    markers = (
+        ("float-two-int-c", 22),
+        ("float-one-int-c", 21),
+        ("float-two-int-b", 20),
+        ("float-one-int-b", 19),
+        ("float-two-uint-c", 18),
+        ("float-one-uint-c", 17),
+        ("float-two-uint-b", 16),
+        ("float-one-uint-b", 15),
+        (":property:array:", 14),
+        (":property:int-d:", 14),
+    )
+    for needle, typeid in markers:
+        if needle in urn:
+            return typeid
+    return None
+
+
 def _resolve_float_typeid(meta: dict) -> int | None:
     """根据 value-range 的 step 和最小值推导 float 对应的定点整型 typeid。
 
@@ -644,15 +669,31 @@ def _resolve_float_typeid(meta: dict) -> int | None:
         step = 0.1
 
     signed = minimum is not None and minimum < 0
+    abs_max = None
+    if minimum is not None and isinstance(range_value, (list, tuple)) and len(range_value) >= 2:
+        try:
+            maximum = float(range_value[1])
+            abs_max = max(abs(minimum), abs(maximum))
+        except (TypeError, ValueError):
+            abs_max = None
+
+    wide = abs_max is not None and abs_max > 65535
+    medium = abs_max is not None and abs_max > 327.67
+
     if step == 0.01:
-        return 20 if signed else 16
-    # 默认按一位小数处理
-    return 19 if signed else 15
+        if signed:
+            return 22 if medium else 20
+        return 18 if wide else 16
+    if signed:
+        return 21 if medium else 19
+    return 17 if wide else 15
 
 
 def _normalize_attr_entry(meta: dict, *, fallback_name: str = "") -> dict:
     fmt = str(meta.get("format") or meta.get("type") or "").strip().lower()
     typeid_raw = meta.get("typeid")
+    if typeid_raw is None:
+        typeid_raw = _resolve_xjiang_urn_typeid(meta)
     if typeid_raw is None:
         typeid_raw = _resolve_float_typeid(meta)
     if typeid_raw is None:
@@ -686,6 +727,12 @@ def _normalize_attr_entry(meta: dict, *, fallback_name: str = "") -> dict:
         source_value = str(meta.get(source_key) or "").strip()
         if source_value:
             entry[source_key] = source_value
+    for source_key in ("source_siid", "source_piid"):
+        if source_key in meta and meta.get(source_key) not in (None, ""):
+            try:
+                entry[source_key] = int(meta.get(source_key))
+            except (TypeError, ValueError):
+                pass
 
     range_value = extract_range_value(meta)
     if isinstance(range_value, (list, tuple)) and len(range_value) >= 2:
@@ -717,21 +764,74 @@ def _normalize_attr_entry(meta: dict, *, fallback_name: str = "") -> dict:
     for key in ("length_width", "scale"):
         if key in meta:
             entry[key] = meta[key]
+    type_urn = str(meta.get("type") or "").strip()
+    if type_urn:
+        entry["source_type_urn"] = type_urn
     return entry
 
 
-def parse_function_json(raw_json: str | dict | list, platform: str = "xiaomi") -> dict:
-    """解析功能定义 JSON，返回标准 ``attributes`` 字典。
+def _mark_wire_value_format(meta: dict, *, xjiang_product: bool = False) -> None:
+    """Persist the on-wire encoding style for ambiguous typeid=14 attributes."""
+    if not isinstance(meta, dict):
+        return
+    try:
+        typeid = int(meta.get("typeid", 2))
+    except (TypeError, ValueError):
+        return
+    if typeid != 14:
+        return
+    if meta.get("wire_value_format") == WIRE_VALUE_FORMAT_XJIANG_VARINT:
+        return
 
-    支持：
-    1. 米家 ``services -> properties`` 格式；
-    2. ``{"0x00": {...}}`` 属性字典；
-    3. ``[{"attrid": "0x00", ...}]`` 属性数组。
-    """
+    urn = str(meta.get("source_type_urn") or meta.get("type") or "").lower()
+    dtype = str(meta.get("source_data_type") or meta.get("format") or "").lower()
+
+    if ":property:int-d:" in urn or dtype in ("int-d", "int_d", "intd"):
+        meta["wire_value_format"] = WIRE_VALUE_FORMAT_XJIANG_VARINT
+        return
+    if ":property:array:" in urn:
+        meta["wire_value_format"] = WIRE_VALUE_FORMAT_XJIANG_VARINT
+        return
+    if xjiang_product and dtype == "array":
+        meta["wire_value_format"] = WIRE_VALUE_FORMAT_XJIANG_VARINT
+
+
+def _apply_xjiang_wire_formats(attributes: dict[str, dict]) -> None:
+    """Apply xjiang varint markers after the full attribute set is known."""
+    has_xjiang = False
+    for raw_key, meta in attributes.items():
+        if str(raw_key).startswith("__") or not isinstance(meta, dict):
+            continue
+        urn = str(meta.get("source_type_urn") or meta.get("type") or "").lower()
+        dtype = str(meta.get("source_data_type") or meta.get("format") or "").lower()
+        if (
+            "xjiang-spec" in urn
+            or dtype in ("int-d", "int_d", "intd")
+            or meta.get("wire_value_format") == WIRE_VALUE_FORMAT_XJIANG_VARINT
+        ):
+            has_xjiang = True
+            break
+    for raw_key, meta in attributes.items():
+        if str(raw_key).startswith("__") or not isinstance(meta, dict):
+            continue
+        _mark_wire_value_format(meta, xjiang_product=has_xjiang)
+
+
+def parse_function_attributes(raw_json: str | dict | list, platform: str = "xiaomi") -> dict[str, dict]:
+    """Backward-compatible helper returning only the attributes map."""
+    return parse_function_json(raw_json, platform=platform)["attributes"]
+
+
+def parse_function_json(raw_json: str | dict | list, platform: str = "xiaomi") -> dict:
+    """解析功能定义 JSON，返回 attributes/actions/events 结构。"""
     del platform  # 预留将来平台映射扩展
     data = _load_json_value(raw_json)
     attributes: dict[str, dict] = {}
 
+    # 支持：
+    # 1. 米家 services -> properties/actions/events；
+    # 2. {"0x00": {...}} 属性字典；
+    # 3. [{"attrid": "0x00", ...}] 属性数组；
     if isinstance(data, dict) and isinstance(data.get("services"), list):
         used_ids: set[int] = set()
         for service in data["services"]:
@@ -753,6 +853,8 @@ def parse_function_json(raw_json: str | dict | list, platform: str = "xiaomi") -
                     attrid += 1
                 used_ids.add(attrid)
                 meta = dict(prop)
+                meta["source_siid"] = siid
+                meta["source_piid"] = piid
                 raw_prop_name = str(meta.get("description") or meta.get("name") or piid)
                 prop_name = str(meta.get("comment") or raw_prop_name)
                 meta.setdefault(
@@ -890,7 +992,20 @@ def parse_function_json(raw_json: str | dict | list, platform: str = "xiaomi") -
     real_attrs = [k for k in attributes if k != "__length_width__"]
     if not real_attrs:
         raise ProductConfigError("功能定义中没有可导入的属性")
-    return localize_attributes(attributes)
+
+    actions, events = [], []
+    if isinstance(data, dict):
+        from .action_event_importer import parse_action_event_entries
+
+        actions, events = parse_action_event_entries(data, attributes)
+
+    localized = localize_attributes(attributes)
+    _apply_xjiang_wire_formats(localized)
+    return {
+        "attributes": localized,
+        "actions": actions,
+        "events": events,
+    }
 
 
 def parse_expand_rules(hex_str: str) -> dict:
@@ -958,6 +1073,8 @@ def build_product_cfg(
     pid: str,
     model: str,
     attributes: dict,
+    actions: list | None = None,
+    events: list | None = None,
     mcu_version: str = "1.0.0",
     description: str = "",
 ) -> dict:
@@ -987,6 +1104,8 @@ def build_product_cfg(
         "enums": {},
         "commands": [],
         "attributes": attributes,
+        "actions": list(actions or []),
+        "events": list(events or []),
         "product_info": {
             "pid": str(pid or ""),
             "model": str(model or ""),

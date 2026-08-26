@@ -1,0 +1,47 @@
+{
+  "Base": {
+    "version": [1, 0, 0],
+    "expandRules": "06 F7 00 00 00 01 0B F5 00 0A 74 65 73 74 2E 6D 6F 64 65 6C"
+  },
+  "Attrs": [
+    {
+      "serialId": 0,
+      "attributeKey": "power",
+      "attributeName": "power",
+      "dataRwx": "rw",
+      "type": 0,
+      "nowValue": 1
+    },
+    {
+      "serialId": 1,
+      "attributeKey": "level",
+      "attributeName": "level",
+      "dataRwx": "rw",
+      "type": 2,
+      "dataValue": "{\"min\":0,\"max\":10,\"step\":1}",
+      "nowValue": 3
+    }
+  ],
+  "ActionEvent": [
+    {
+      "serialId": 16,
+      "type": "action",
+      "name": "set-level",
+      "comment": "设置档位",
+      "inParams": [
+        {"serialId": 1, "name": "level", "type": 2}
+      ],
+      "outParams": []
+    },
+    {
+      "serialId": 2,
+      "type": "event",
+      "name": "level-changed",
+      "comment": "档位变化",
+      "inParams": [],
+      "outParams": [
+        {"serialId": 1, "name": "level", "type": 2, "value": 5}
+      ]
+    }
+  ]
+}

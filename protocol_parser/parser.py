@@ -244,6 +244,55 @@ VARLEN_TYPEIDS = frozenset({11, 14, 24})
 GROUP_TYPEID = 23
 GROUP_HEADER_SIZE = 5
 
+# xjiang-spec 的 int-d / array 在线协议复用 typeid=14，但 value 是最小必要
+# 字节的大端无符号整数，不是 NUL 分隔字符串数组。
+XJIANG_VARINT_SNAPSHOT_DEFAULT = 123456
+WIRE_VALUE_FORMAT_XJIANG_VARINT = "xjiang_varint"
+
+
+def is_xjiang_varint_meta(meta: dict | None) -> bool:
+    """Return True when typeid=14 should use xjiang int-d/array varint wire bytes."""
+    if not isinstance(meta, dict):
+        return False
+    if meta.get("wire_value_format") == WIRE_VALUE_FORMAT_XJIANG_VARINT:
+        return True
+    dtype = str(meta.get("source_data_type") or meta.get("format") or "").lower()
+    if int(meta.get("typeid", -1)) == 14 and dtype in ("int-d", "int_d", "intd"):
+        return True
+    urn = str(meta.get("source_type_urn") or meta.get("type") or "").lower()
+    return "xjiang-spec" in urn and (
+        ":property:int-d:" in urn or ":property:array:" in urn
+    )
+
+
+def encode_xjiang_varint(value: Any) -> bytes:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return b"\x00"
+        if text.lower().startswith("0x"):
+            return bytes.fromhex(text.replace(" ", "").replace("0x", ""))
+        number = int(text, 10)
+    elif isinstance(value, float) and value.is_integer():
+        number = int(value)
+    else:
+        number = int(value)
+    if number <= 0:
+        return b"\x00" if number == 0 else number.to_bytes(
+            max(1, (number.bit_length() + 7) // 8), "big", signed=True
+        )
+    nbytes = max(1, (number.bit_length() + 7) // 8)
+    return int(number).to_bytes(nbytes, "big", signed=False)
+
+
+def decode_xjiang_varint(chunk: bytes) -> tuple[int, str, int]:
+    if not chunk:
+        return 0, "0", 0
+    value = int.from_bytes(chunk, "big", signed=False)
+    return value, str(value), value
+
 # ---------- 配置加载 ----------
 
 def load_protocol(path: str | Path) -> dict:
@@ -390,6 +439,18 @@ def merge_protocol(base: dict, override: dict) -> dict:
             else:
                 base_enums[enum_name] = enum_map
         result["enums"] = base_enums
+
+    # 产品侧动作/事件及 JSON 导入元数据（merge 后仍需用于自动回复与解析展示）
+    for key in (
+        "actions",
+        "events",
+        "product_info",
+        "source_function_json",
+        "device_info_expand_rules",
+        "import_source",
+    ):
+        if key in override:
+            result[key] = copy.deepcopy(override[key])
 
     return result
 
@@ -874,6 +935,10 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             raise AttrValueParseError("Data 过短，无法读取消息 id + 行为 id")
         msg_id = data[0]
         action_id = data[1]
+        from .action_event_importer import lookup_action_event_label
+
+        action_label = lookup_action_event_label(cfg, "action", action_id)
+        action_text = f"{action_id} ({action_label})" if action_label else str(action_id)
         results = [
             FieldResult(
                 name="消息id", type="uint8", value=msg_id, text=str(msg_id),
@@ -881,7 +946,7 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
             ),
             FieldResult(
                 name="行为 Action ID", type="uint8", value=action_id,
-                text=str(action_id), offset=1, length=1, raw=data[1:2],
+                text=action_text, offset=1, length=1, raw=data[1:2],
             ),
         ]
         if len(data) > 2:
@@ -891,9 +956,13 @@ def _parse_format(data: bytes, fmt: str, data_def: dict, cfg: dict) -> list[Fiel
         if not data:
             raise AttrValueParseError("Data 为空，无法读取事件 id")
         event_id = data[0]
+        from .action_event_importer import lookup_action_event_label
+
+        event_label = lookup_action_event_label(cfg, "event", event_id)
+        event_text = f"{event_id} ({event_label})" if event_label else str(event_id)
         results = [FieldResult(
             name="事件 Event ID", type="uint8", value=event_id,
-            text=str(event_id), offset=0, length=1, raw=data[:1],
+            text=event_text, offset=0, length=1, raw=data[:1],
         )]
         if len(data) > 1:
             results.extend(_parse_attr_list(data[1:], cfg, force_report=True))
@@ -1306,7 +1375,7 @@ def _parse_attr_list(data: bytes, cfg: dict, force_report: bool = True) -> list[
         #      例：照明打开 / 模式吹风 / 吹风档位高档 / 设定温度30 / 摆风关闭
         #   B. 没有中文属性名 → value_label 原样
         if cn_name:
-            text = f"{cn_name}{value_label}"
+            text = f"{cn_name}：{value_label}" if value_label != cn_name else cn_name
         else:
             text = value_label
 
@@ -1507,6 +1576,8 @@ def _decode_attr_value(
             s = ""
         return s, repr(s) if s else to_hex(chunk), s
     if ctype == "array":
+        if is_xjiang_varint_meta(attr_meta):
+            return decode_xjiang_varint(chunk)
         # 数组：以 0x00 分隔的字符串
         parts = chunk.split(b"\x00")
         items = [p.decode("ascii", errors="replace") for p in parts if p]
@@ -2184,7 +2255,10 @@ def _encode_attr_list(cfg: dict, items: list) -> bytes:
         attrid_i = _encode_attrid_int(attrid)
         attr_meta = _lookup_attr(cfg, attrid_i)
 
-        val_raw = _encode_scalar_value(cfg, value, typeid_i, for_attr=True)
+        if typeid_i == 14 and is_xjiang_varint_meta(attr_meta):
+            val_raw = encode_xjiang_varint(value)
+        else:
+            val_raw = _encode_scalar_value(cfg, value, typeid_i, for_attr=True)
 
         # 顺序与解析端完全一致：typeid → attrid
         out.append(typeid_i & 0xFF)
@@ -2313,12 +2387,23 @@ def _encode_cmd_data_by_format(cfg: dict, fmt: str, fields: dict) -> bytes:
             return _encode_raw_bytes(fields.get("raw") or fields.get("data", b""))
 
         # --- attr_list / msg_id_then_attr / errcode_then_attr / event：通用 attr ---
-        if fmt in ("attr_list", "event"):
+        if fmt in ("attr_list",):
             if isinstance(fields, dict):
                 items = fields.get("attrs") or fields.get("items") or []
             else:
                 items = fields or []
             return _encode_attr_list(cfg, list(items) if items else [])
+
+        if fmt == "event":
+            if isinstance(fields, dict):
+                event_id = fields.get("event_id", fields.get("eventId", fields.get("id", 0))) or 0
+                items = fields.get("attrs") or fields.get("items") or []
+            else:
+                event_id, items = 0, fields if isinstance(fields, (list, tuple)) else []
+            buf = bytearray()
+            buf += _encode_int(event_id, 1, "big", False)
+            buf += _encode_attr_list(cfg, list(items) if items else [])
+            return bytes(buf)
 
         if fmt == "msg_id":
             return b"\x00"

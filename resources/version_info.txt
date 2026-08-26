@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(3, 4, 3, 0),
-    prodvers=(3, 4, 3, 0),
+    filevers=(3, 4, 4, 0),
+    prodvers=(3, 4, 4, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'SerialX'),
           StringStruct('FileDescription', 'SerialX'),
-          StringStruct('FileVersion', '3.4.3'),
+          StringStruct('FileVersion', '3.4.5'),
           StringStruct('InternalName', 'SerialX'),
           StringStruct('LegalCopyright', 'Copyright (c) SerialX'),
           StringStruct('OriginalFilename', 'SerialX.exe'),
           StringStruct('ProductName', 'SerialX'),
-          StringStruct('ProductVersion', '3.4.3')
+          StringStruct('ProductVersion', '3.4.5')
         ]
       )
     ]),
