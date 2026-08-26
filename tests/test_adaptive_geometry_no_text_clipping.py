@@ -150,4 +150,4 @@ def test_tables_and_dialogs_keep_full_text_accessible():
     assert "item.setToolTip(text)" in mcu
     assert "ScrollBarAsNeeded" in editor
     assert "item.setToolTip(item.text())" in editor
-    assert "fit_window_to_screen" in widgets
+    assert "fit_dialog_to_content" in widgets

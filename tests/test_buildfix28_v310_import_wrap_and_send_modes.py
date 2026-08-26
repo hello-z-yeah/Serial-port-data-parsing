@@ -14,7 +14,7 @@ def test_application_identity_is_v330_everywhere():
     assert APP_VERSION == "3.4.3"
     assert f'#define MyAppVersion       "{APP_VERSION}"' in (ROOT / "installer" / "serial_port_parser.iss").read_text(encoding="utf-8-sig")
     version_info = (ROOT / "resources" / "version_info.txt").read_text(encoding="utf-8")
-    assert "filevers=(3, 4, 2, 0)" in version_info
+    assert "filevers=(3, 4, 3, 0)" in version_info
     assert f"StringStruct('ProductVersion', '{APP_VERSION}')" in version_info
 
 
@@ -116,6 +116,7 @@ def test_importer_maps_float_to_fixed_point_by_range_step_and_sign():
 def test_send_panel_and_command_library_carry_independent_display_formats():
     assert 'metadata={"display_format": "HEX", "send_source": "send_panel"}' in GUI
     assert 'metadata={"display_format": "ASCII", "send_source": "send_panel"}' in GUI
+    assert 'metadata={"display_format": "HEX", "send_source": "send_panel_protocol"}' in GUI
     assert 'metadata={"display_format": "HEX", "send_source": "command_library"}' in GUI
     assert 'metadata={"display_format": "ASCII", "send_source": "command_library"}' in GUI
     assert "item.get(\"type\") or (\"HEX\" if self._cmdlib_mode == \"hex\" else \"ASCII\")" in GUI

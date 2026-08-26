@@ -17,9 +17,9 @@ from qfluentwidgets import BodyLabel, CheckBox, PrimaryPushButton, PushButton
 from protocol_parser.dpi_font import (
     UI_FONT_BASE_POINT_SIZE,
     fit_dialog_to_content,
+    fit_text_control,
 )
 from protocol_parser.log_text_style import make_crisp_ui_font
-from protocol_parser.gui_layout_helpers import fit_button_to_text
 from protocol_parser.widgets import CellWidgetAlignedTable, apply_fluent_dialog_style
 
 class CycleOrderTable(CellWidgetAlignedTable):
@@ -196,7 +196,7 @@ class CycleConfigDialog(QDialog):
         ]:
             b = PushButton(text)
             b.setFont(self._cycle_font)
-            fit_button_to_text(b, horizontal_padding=22, vertical_padding=10, minimum_height=30)
+            fit_text_control(b, point_size=UI_FONT_BASE_POINT_SIZE)
             b.clicked.connect(slot)
             side.addWidget(b)
         side.addStretch()
@@ -207,12 +207,12 @@ class CycleConfigDialog(QDialog):
         bf.addStretch()
         btn_save = PrimaryPushButton("保存")
         btn_save.setFont(self._cycle_font)
-        fit_button_to_text(btn_save, horizontal_padding=22, vertical_padding=10, minimum_height=30)
+        fit_text_control(btn_save, point_size=UI_FONT_BASE_POINT_SIZE)
         btn_save.clicked.connect(self._on_save)
         bf.addWidget(btn_save)
         btn_cancel = PushButton("取消")
         btn_cancel.setFont(self._cycle_font)
-        fit_button_to_text(btn_cancel, horizontal_padding=22, vertical_padding=10, minimum_height=30)
+        fit_text_control(btn_cancel, point_size=UI_FONT_BASE_POINT_SIZE)
         btn_cancel.clicked.connect(self.reject)
         bf.addWidget(btn_cancel)
         layout.addLayout(bf)

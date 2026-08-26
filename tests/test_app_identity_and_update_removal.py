@@ -64,6 +64,7 @@ def test_gui_source_freezes_monitor_mode_and_uses_incremental_updates() -> None:
     assert "self._schedule_attr_refresh(changed)" in gui
     assert "parse_queue_size=512" in gui
     assert "self._mcu_display_batcher.add(segments)" in gui
+    assert "attr_center=self.get_attr_center()" in gui
     assert "if cmd_int == 0x01:" in gui
     assert "result = SimpleNamespace(" in gui
     assert "self._auto_reply.last_applied_attrids" in gui

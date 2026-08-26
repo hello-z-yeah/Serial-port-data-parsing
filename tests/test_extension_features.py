@@ -114,7 +114,7 @@ class McuDisplayTests(unittest.TestCase):
         center.load_product(cfg)
         frame = AutoCmdEngine(center).build_heartbeat_resp(True)
         result = parse_frame(frame, cfg, direction="response")
-        text = format_frame_display(result, frame, 1.0, is_tx=True)
+        text = format_frame_display(result, frame, 1.0, is_tx=True, attr_center=center)
         self.assertIn("回复心跳", text)
         self.assertIn("MCU→模组", text)
 

@@ -3829,6 +3829,15 @@ class ProtocolParserApp(FluentWindow):
             except Exception as e:
                 _log_error_to_disk(e)
 
+        def _mcu_pending_display_chars() -> int:
+            page = self.mcu_page
+            if page is None:
+                return 0
+            try:
+                return int(getattr(page, "_pending_data_chars", 0) or 0)
+            except Exception:
+                return 0
+
         def on_mcu_frame(result, frame, ts):
             if generation != self._collector_generation or not mcu_session:
                 return
@@ -3841,8 +3850,8 @@ class ProtocolParserApp(FluentWindow):
                     ts,
                     is_tx=False,
                     auto_reply=False,
-                    attr_center=None,
-                    pending_data_chars=0,
+                    attr_center=self.get_attr_center(),
+                    pending_data_chars=_mcu_pending_display_chars(),
                 )
                 if segments:
                     self._mcu_display_batcher.add(segments)
@@ -3916,8 +3925,8 @@ class ProtocolParserApp(FluentWindow):
                         ts,
                         is_tx=True,
                         auto_reply=is_auto_reply_tx,
-                        attr_center=None,
-                        pending_data_chars=0,
+                        attr_center=self.get_attr_center(),
+                        pending_data_chars=_mcu_pending_display_chars(),
                     )
                     self._mcu_display_batcher.add(segments)
                 self.bridge.tx_signal.emit(data_sent, ts, meta)
@@ -4827,14 +4836,13 @@ class ProtocolParserApp(FluentWindow):
             self.btn_save_raw.update()
 
     def _set_storage_format_controls_enabled(self, enabled: bool) -> None:
+        """Keep HEX/ASCII display toggle usable while monitoring or storing."""
+        del enabled
         button = getattr(self, "btn_hex", None)
         if button is None:
             return
-        button.setEnabled(bool(enabled))
-        if enabled:
-            apply_tooltip(button, "蓝色：HEX格式；白色：ASCII格式")
-        else:
-            apply_tooltip(button, "原始数据存储期间显示/写入格式已锁定；停止存储后可切换")
+        button.setEnabled(True)
+        apply_tooltip(button, "蓝色：HEX格式；白色：ASCII格式")
 
     def _toggle_save_raw(self) -> None:
         self.save_raw_enabled = not self.save_raw_enabled

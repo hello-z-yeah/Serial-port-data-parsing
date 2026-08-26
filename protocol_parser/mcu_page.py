@@ -1671,27 +1671,6 @@ QTableView#AttributeTable::item:selected {{
     def clear_output(self) -> None:
         self._clear_data()
 
-
-    def on_data(
-        self,
-        result,
-        raw,
-        ts: float,
-        is_tx: bool = False,
-        auto_reply: bool | None = None,
-    ) -> None:
-        """Queue formatted text; a 40 ms timer performs one document update."""
-        segments = build_display_segments(
-            result,
-            raw,
-            ts,
-            is_tx=is_tx,
-            auto_reply=bool(auto_reply),
-            attr_center=self._mw.get_attr_center(),
-            pending_data_chars=self._pending_data_chars,
-        )
-        self.enqueue_segments_batch([segments])
-
     def enqueue_segments_batch(self, batches: list[list[tuple]]) -> None:
         """Append preformatted MCU segments produced off the hot GUI path."""
         if not batches:
