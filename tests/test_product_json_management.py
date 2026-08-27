@@ -70,6 +70,9 @@ def test_broken_json_remains_selectable_for_deletion(tmp_path: Path):
 def test_mcu_page_uses_selected_product_and_preserves_active_context():
     source = Path("protocol_parser/mcu_page.py").read_text(encoding="utf-8")
     assert "ProductJsonManageDialog" in source
+    assert "ProductSelectDialog" in source
+    assert "self.product_name_label = BodyLabel" in source
+    assert "self.select_product_button = PushButton(\"选择产品\"" in source
     assert "_edit_selected_product(selected_name, source_path, active_name)" in source
     assert "_delete_selected_product(selected_name, source_path, active_name)" in source
     assert "activate_after_save=selected_is_active" in source
@@ -81,7 +84,7 @@ def test_mcu_page_uses_selected_product_and_preserves_active_context():
 def test_management_dialog_exposes_product_selector_and_separate_actions():
     source = Path("protocol_parser/product_manage_dialog.py").read_text(encoding="utf-8")
     assert "选择要修改或删除的产品 JSON" in source
-    assert "self.product_combo = MatchedPopupComboBox" in source
+    assert "self.product_combo = MatchedPopupComboBox(card)" in source
     assert "修改所选产品" in source
     assert "删除所选产品" in source
 
@@ -98,7 +101,20 @@ def test_delete_marks_bundled_filename_before_protocol_refresh():
     assert block.index(marker_call) < block.index(unlink_call) < block.index(reload_call)
 
 
+def test_mcu_page_load_failure_clears_selection():
+    source = Path("protocol_parser/mcu_page.py").read_text(encoding="utf-8")
+    assert "if not self._mw.load_product_cfg(name):" in source
+    assert "self._active_product_name = \"\"" in source
+    assert "self._mw.set_status(f\"产品“{current}”加载失败，请重新选择\")" in source
+
+
 def test_renamed_bundled_product_suppresses_old_filename_and_save_restores_new():
     source = Path("protocol_parser/mcu_page.py").read_text(encoding="utf-8")
     assert "clear_product_json_deleted(save_path.name)" in source
     assert "mark_product_json_deleted(old_source_path.name)" in source
+
+
+def test_product_select_dialog_disambiguates_duplicate_names():
+    source = Path("protocol_parser/product_select_dialog.py").read_text(encoding="utf-8")
+    assert "_record_by_label" in source
+    assert "product_record_display_label" in source

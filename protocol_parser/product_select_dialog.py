@@ -1,7 +1,5 @@
-"""Dialog for selecting a product JSON before editing or deleting it."""
+"""Dialog for choosing the active JSON product on the MCU simulate page."""
 from __future__ import annotations
-
-from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QWidget, QSizePolicy
@@ -13,21 +11,18 @@ from qfluentwidgets import (
     StrongBodyLabel,
 )
 
+from .combo_font import MatchedPopupComboBox
+from .dpi_font import fit_dialog_to_content
 from .product_management import (
     ProductJsonRecord,
     product_name_counts,
     product_record_display_label,
 )
-from .combo_font import MatchedPopupComboBox
 from .widgets import apply_fluent_dialog_style
-from .dpi_font import fit_dialog_to_content
 
 
-class ProductJsonManageDialog(QDialog):
-    """Choose any imported JSON product, independently of the active product."""
-
-    ACTION_EDIT = "edit"
-    ACTION_DELETE = "delete"
+class ProductSelectDialog(QDialog):
+    """Pick one imported JSON product to load on the MCU simulate page."""
 
     def __init__(
         self,
@@ -38,7 +33,7 @@ class ProductJsonManageDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         apply_fluent_dialog_style(self)
-        self.setWindowTitle("产品JSON管理")
+        self.setWindowTitle("选择产品")
         self.setMinimumSize(520, 280)
 
         self._records = list(records)
@@ -47,9 +42,7 @@ class ProductJsonManageDialog(QDialog):
             product_record_display_label(record, self._name_counts): record
             for record in self._records
         }
-        self.requested_action = ""
         self.selected_product = ""
-        self.selected_source_path: Path | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(14, 14, 14, 14)
@@ -60,9 +53,9 @@ class ProductJsonManageDialog(QDialog):
         layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(8)
-        layout.addWidget(StrongBodyLabel("选择要修改或删除的产品 JSON", card))
+        layout.addWidget(StrongBodyLabel("选择模拟 MCU 当前产品", card))
         help_label = BodyLabel(
-            "这里列出全部已导入的 JSON 产品。选择其他产品不会切换模拟 MCU 当前正在使用的产品。",
+            "确定后将加载该产品的实时属性、动作/事件和预置命令。",
             card,
         )
         help_label.setWordWrap(True)
@@ -70,8 +63,7 @@ class ProductJsonManageDialog(QDialog):
 
         product_row = QHBoxLayout()
         product_row.setSpacing(8)
-        product_label = BodyLabel("产品：", card)
-        product_row.addWidget(product_label)
+        product_row.addWidget(BodyLabel("产品：", card))
         self.product_combo = MatchedPopupComboBox(card)
         self.product_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.product_combo.addItems(list(self._record_by_label.keys()))
@@ -93,16 +85,9 @@ class ProductJsonManageDialog(QDialog):
         cancel_button = PushButton("取消", card)
         cancel_button.clicked.connect(self.reject)
         button_row.addWidget(cancel_button)
-        self.delete_button = PushButton("删除所选产品", card)
-        self.delete_button.clicked.connect(
-            lambda _checked=False: self._accept_action(self.ACTION_DELETE)
-        )
-        button_row.addWidget(self.delete_button)
-        self.edit_button = PrimaryPushButton("修改所选产品", card)
-        self.edit_button.clicked.connect(
-            lambda _checked=False: self._accept_action(self.ACTION_EDIT)
-        )
-        button_row.addWidget(self.edit_button)
+        self.ok_button = PrimaryPushButton("确定", card)
+        self.ok_button.clicked.connect(self._accept_selection)
+        button_row.addWidget(self.ok_button)
         layout.addLayout(button_row)
         outer.addWidget(card)
 
@@ -119,9 +104,8 @@ class ProductJsonManageDialog(QDialog):
             self._refresh_details(self.product_combo.currentText())
         else:
             self.product_combo.setEnabled(False)
-            self.edit_button.setEnabled(False)
-            self.delete_button.setEnabled(False)
-            self.file_label.setText("当前没有可管理的产品 JSON。")
+            self.ok_button.setEnabled(False)
+            self.file_label.setText("当前没有可选择的 JSON 产品。")
 
         fit_dialog_to_content(
             self,
@@ -134,16 +118,13 @@ class ProductJsonManageDialog(QDialog):
         record = self._record_by_label.get(str(label or "").strip())
         if record is None:
             self.selected_product = ""
-            self.selected_source_path = None
             self.file_label.setText("")
             self.info_label.setText("")
             self.error_label.setText("")
-            self.edit_button.setEnabled(False)
-            self.delete_button.setEnabled(False)
+            self.ok_button.setEnabled(False)
             return
 
-        self.selected_product = record.name
-        self.selected_source_path = record.source_path
+        self.selected_product = str(label or "").strip()
         self.file_label.setText(f"JSON 文件：{record.filename or record.source_path}")
         detail_parts = [
             f"PID：{record.pid or '未设置'}",
@@ -155,11 +136,9 @@ class ProductJsonManageDialog(QDialog):
         self.error_label.setText(
             f"读取提示：{record.load_error}" if record.load_error else ""
         )
-        self.edit_button.setEnabled(not bool(record.load_error))
-        self.delete_button.setEnabled(True)
+        self.ok_button.setEnabled(not bool(record.load_error))
 
-    def _accept_action(self, action: str) -> None:
-        if not self.selected_product or self.selected_source_path is None:
+    def _accept_selection(self) -> None:
+        if not self.selected_product:
             return
-        self.requested_action = str(action)
         self.accept()

@@ -27,6 +27,23 @@ LEVEL_STYLES = {
 }
 
 
+def sanitize_raw_ascii_line(text: str) -> str:
+    """Render decoded UTF-8 text for Raw-ASCII log lines.
+
+    Printable Unicode (including CJK) is shown as-is; only C0/C1 control
+    characters other than tab are replaced with dots.
+    """
+    out: list[str] = []
+    for ch in text:
+        if ch == "\t":
+            out.append(ch)
+        elif ord(ch) < 32 or ord(ch) == 127:
+            out.append(".")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def build_receive_color_segments(
     text: str,
     color: str | None = None,
@@ -218,9 +235,7 @@ def format_receive_raw_items(
     for index, raw_line in enumerate(lines):
         if not raw_line and index != 0:
             continue
-        printable = "".join(
-            ch if (32 <= ord(ch) < 127 or ch == "\t") else "." for ch in raw_line
-        )
+        printable = sanitize_raw_ascii_line(raw_line)
         if index == 0:
             parts.append(f"[{ts_str}] [RX] Raw-ASCII {printable}\n")
         else:

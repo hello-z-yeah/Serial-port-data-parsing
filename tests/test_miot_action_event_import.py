@@ -85,7 +85,7 @@ def test_bardis_action_resp_and_dev_info_mapping():
     cfg = merge_protocol(load_protocol(ROOT / "product" / "v3_serial.json"), user)
 
     data = build_dev_info_data(cfg)
-    assert bytes.fromhex("03 01 00 01 0e 14") in data
+    assert bytes.fromhex("03 01 00 01 0e 14") not in data
 
     center = AttrStateCenter()
     center.load_product(cfg)

@@ -29,15 +29,53 @@ def _convert_value(value_text: str, typeid: int) -> Any:
         if lowered in ("0", "false", "off", "no", "关闭", "否"):
             return False
         return lowered in ("1", "true", "on", "yes", "打开", "是")
-    if typeid in (1, 2, 3, 4, 5, 6, 7, 8, 15, 16, 17, 18, 19, 20, 21, 22):
+    if typeid in (1, 2, 3, 4, 5, 6, 7, 8):
         if not text:
             raise AttributeValidationError("请输入属性值")
         return int(text, 0)
+    if typeid in (9, 10, 15, 16, 17, 18, 19, 20, 21, 22):
+        if not text:
+            raise AttributeValidationError("请输入属性值")
+        return float(text)
     if typeid in (14, 23, 24):
         if not text:
             raise AttributeValidationError("请输入 JSON 值")
         return json.loads(text)
     return text
+
+
+def format_attr_display_value(value: Any, typeid: int) -> str:
+    """Format an attribute value for the MCU realtime table."""
+    from protocol_parser.parser import _format_value
+
+    if typeid == 14:
+        if isinstance(value, (list, tuple, dict)):
+            return json.dumps(value, ensure_ascii=False)
+    return _format_value(value)
+
+
+def format_attr_range_display(entry: object, constraints: dict[str, Any] | None = None) -> str:
+    """Build a human-readable range hint for the realtime property table."""
+    constraints = constraints or {}
+    range_str = str(getattr(entry, "range_str", "") or "").strip()
+    if range_str:
+        unit = str(getattr(entry, "unit", "") or "").strip()
+        return f"{range_str} {unit}".strip()
+    minimum = constraints.get("minimum")
+    maximum = constraints.get("maximum")
+    step = constraints.get("step")
+    if minimum not in (None, "") and maximum not in (None, ""):
+        text = f"{minimum}~{maximum}"
+        if step not in (None, "", 1, 1.0, "1"):
+            text += f" step={step}"
+        unit = str(getattr(entry, "unit", "") or "").strip()
+        if unit:
+            text += f" {unit}"
+        return text
+    enum_map = getattr(entry, "enum", None) or {}
+    if enum_map:
+        return " / ".join(f"{key}:{label}" for key, label in enum_map.items())
+    return "-"
 
 
 def format_attr_validation_message(

@@ -1,10 +1,58 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
-from protocol_parser.dev_info_encoder import build_dev_info_data
-from protocol_parser.product_importer import parse_function_json
+from protocol_parser.dev_info_encoder import build_dev_info_data, encode_dev_info_frame
+from protocol_parser.parser import load_protocol, merge_protocol, split_frame
+from protocol_parser.product_importer import build_product_cfg, parse_function_json
 from protocol_parser.ui_helpers import _format_attr_semantics
+
+ROOT = Path(__file__).resolve().parents[1]
+WB28_FIXTURE = ROOT / "tests" / "fixtures" / "wb28_miot_product.json"
+
+REFERENCE_DEV_INFO_DATA = bytes.fromhex(
+    "01 00 00 06 F7 00 00 2D E3 0B F5 00 13 "
+    "78 6A 69 61 6E 67 2E 63 75 72 74 61 69 6E 2E 77 62 32 38 "
+    "0E F3 00 8A "
+    "00 00 03 00 00 01 02 01 03 00 00 02 01 02 03 00 00 03 02 03 03 00 00 04 03 04 03 00 00 05 04 05 03 00 00 06 05 06 03 00 00 07 06 07 03 00 00 08 0B 08 03 00 00 09 0E 09 03 00 00 0A 0F 0A 03 00 00 0B 10 0B 03 00 00 0C 11 0C 03 00 00 0D 12 0D 03 00 00 0E 13 0E 03 00 00 0F 14 0F 03 00 00 10 15 10 03 00 00 11 16 11 03 00 00 12 0E 12 03 00 00 13 0E 13 03 01 00 01 0E 14 03 01 00 02 0E 15 03 02 00 01 0E 16 03 02 00 02"
+)
+
+
+def _full_data_service_props():
+    base = [
+        ("bool", 1, 0, None),
+        ("uint8", 2, 2, None),
+        ("int8", 3, 1, None),
+        ("uint8", 4, 2, None),
+        ("int16", 5, 3, None),
+        ("uint16", 6, 4, None),
+        ("int32", 7, 5, None),
+        ("uint32", 8, 6, None),
+        ("string", 9, 11, None),
+        ("int64", 10, 14, "urn:xjiang-spec:property:int-d:0000000a:xjiang-wb28:1"),
+        ("float", 11, 15, "urn:xjiang-spec:property:float-one-uint-b:0000000b:xjiang-wb28:1"),
+        ("float", 12, 16, "urn:xjiang-spec:property:float-two-uint-b:0000000c:xjiang-wb28:1"),
+        ("float", 13, 17, "urn:xjiang-spec:property:float-one-uint-c:0000000d:xjiang-wb28:1"),
+        ("float", 14, 18, "urn:xjiang-spec:property:float-two-uint-c:0000000e:xjiang-wb28:1"),
+        ("float", 15, 19, "urn:xjiang-spec:property:float-one-int-b:0000000f:xjiang-wb28:1"),
+        ("float", 16, 20, "urn:xjiang-spec:property:float-two-int-b:00000010:xjiang-wb28:1"),
+        ("float", 17, 21, "urn:xjiang-spec:property:float-one-int-c:00000011:xjiang-wb28:1"),
+        ("float", 18, 22, "urn:xjiang-spec:property:float-two-int-c:00000012:xjiang-wb28:1"),
+        ("int64", 19, 14, "urn:xjiang-spec:property:array:00000013:xjiang-wb28:1"),
+    ]
+    props = []
+    for fmt, iid, _typeid, urn in base:
+        item = {
+            "format": fmt,
+            "access": ["read", "notify", "write"],
+            "iid": iid,
+            "comment": f"p{iid}",
+        }
+        if urn:
+            item["type"] = urn
+        props.append(item)
+    return props
 
 
 def _data_service_props():
@@ -55,6 +103,49 @@ def test_wb28_xjiang_typeids_match_reference_mapping():
     assert by_piid[17] == 0x15
     assert by_piid[18] == 0x16
     assert by_piid[19] == 0x0E
+
+
+def test_wb28_dev_info_matches_reference_expand_rules():
+    wb28 = parse_function_json(WB28_FIXTURE.read_text(encoding="utf-8"))
+    bundle = parse_function_json({
+        "services": [{
+            "iid": 3,
+            "type": "urn:xjiang-spec:service:data:00007801:xjiang-wb28:1",
+            "comment": "数据类型",
+            "properties": _full_data_service_props(),
+            "actions": [
+                {"in": [], "out": [], "iid": 1,
+                 "type": "urn:xjiang-spec:action:action-unparam:00002801:xjiang-wb28:1", "comment": "方法下发不带参"},
+                {"in": [1], "out": [1], "iid": 2,
+                 "type": "urn:xjiang-spec:action:action-param:00002802:xjiang-wb28:1", "comment": "方法下发带参"},
+            ],
+            "events": [
+                {"arguments": [], "iid": 1,
+                 "type": "urn:xjiang-spec:event:event-unparam:00005001:xjiang-wb28:1", "comment": "事件上报不带参"},
+                {"arguments": [4, 1], "iid": 2,
+                 "type": "urn:xjiang-spec:event:event-param:00005002:xjiang-wb28:1", "comment": "事件上报带参"},
+            ],
+        }],
+    })
+    user = build_product_cfg(
+        product_name="wb28",
+        pid="11747",
+        model="xjiang.curtain.wb28",
+        attributes=bundle["attributes"],
+        actions=bundle["actions"],
+        events=bundle["events"],
+        mcu_version="1.0.0",
+    )
+    user["source_function_json"] = WB28_FIXTURE.read_text(encoding="utf-8")
+    user["product_info"]["device_info_version"] = [0, 0, 9]
+    cfg = merge_protocol(load_protocol(ROOT / "product" / "v3_serial.json"), user)
+    data = build_dev_info_data(cfg)
+    assert data == REFERENCE_DEV_INFO_DATA, data.hex(" ")
+
+    frame = encode_dev_info_frame(cfg)
+    split = split_frame(frame, cfg)
+    assert split.cmd_code == 0x21
+    assert len(split.data) == len(REFERENCE_DEV_INFO_DATA)
 
 
 def test_snapshot_display_separates_attr_name_and_value():

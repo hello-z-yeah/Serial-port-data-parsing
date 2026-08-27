@@ -93,8 +93,11 @@ from protocol_parser.paths import (  # noqa: E402
 )
 from protocol_parser.theme import ThemeManager, PALETTE  # noqa: E402
 from protocol_parser.log_text_style import (  # noqa: E402
+    SEND_TEXT_EDIT_QSS as _SEND_TEXT_EDIT_QSS,
     TEXT_EDIT_FRAME_QSS as _TEXT_EDIT_FRAME_QSS,
     apply_log_text_edit_style,
+    apply_send_text_edit_style,
+    strip_send_editor_rich_text,
     make_crisp_ui_font as _make_crisp_ui_font,
     reapply_log_text_font,
     register_bundled_log_font as _register_bundled_font,
@@ -122,6 +125,7 @@ from protocol_parser.display_format import (  # noqa: E402
     format_receive_frame_item,
     format_receive_frame_line,
     format_receive_raw_items,
+    sanitize_raw_ascii_line,
 )
 from protocol_parser.display_batch import DisplayBatcher, SegmentBatchAccumulator  # noqa: E402
 from protocol_parser.gui_combos import (  # noqa: E402
@@ -927,7 +931,9 @@ class ProtocolParserApp(FluentWindow):
                 if source_kind != "json":
                     source_kind = "word"
                 all_products.append((name, str(file_path), source_kind))
-        return all_products
+        from protocol_parser.product_management import disambiguate_product_catalog
+
+        return disambiguate_product_catalog(all_products)
 
     def _load_protocols_async(self) -> None:
         if self._protocol_load_inflight:
@@ -1046,7 +1052,7 @@ class ProtocolParserApp(FluentWindow):
             self.monitor_page.record_text.setAccessibleName("监听命中记录")
         if self.mcu_page is not None:
             self.mcu_page.setAccessibleName("模拟 MCU 工具页面")
-            self.mcu_page.product_combo.setAccessibleName("模拟 MCU 产品")
+            self.mcu_page.product_name_label.setAccessibleName("模拟 MCU 当前产品")
             self.mcu_page.data_text.setAccessibleName("模拟 MCU 实时数据")
 
     def _shortcut_stop_monitor(self) -> None:
@@ -2730,7 +2736,7 @@ class ProtocolParserApp(FluentWindow):
         editor_min_height = 72
         self.fields_edit = TextEdit()
         self.fields_edit.setObjectName("SendProtocolText")
-        self.fields_edit.setStyleSheet(_TEXT_EDIT_FRAME_QSS)
+        apply_send_text_edit_style(self.fields_edit)
         self.fields_edit.setPlaceholderText('协议字段 JSON，例如 {"value": 1}')
         self.fields_edit.setMinimumHeight(editor_min_height)
         self.fields_edit.setMaximumHeight(120)
@@ -2743,7 +2749,7 @@ class ProtocolParserApp(FluentWindow):
             ToolTipFilter(self.raw_edit, showDelay=300, position=ToolTipPosition.BOTTOM)
         )
         self.raw_edit.setObjectName("SendRawText")
-        self.raw_edit.setStyleSheet(_TEXT_EDIT_FRAME_QSS)
+        apply_send_text_edit_style(self.raw_edit)
         self.raw_edit.setPlaceholderText("HEX 或 ASCII 原始数据")
         self.raw_edit.setMinimumHeight(editor_min_height)
         self.raw_edit.setMaximumHeight(120)
@@ -3328,7 +3334,7 @@ class ProtocolParserApp(FluentWindow):
         # 产品时把页签2的产品选择和属性内容强制同步过去。
         if self.mcu_page is not None:
             try:
-                if self.mcu_page.product_combo.currentText() == product_name:
+                if self.mcu_page.active_product_name() == product_name:
                     self.mcu_page.refresh_attr_table()
                     self.mcu_page.refresh_current_values()
             except Exception:
@@ -3368,14 +3374,20 @@ class ProtocolParserApp(FluentWindow):
         user_cfg = dlg.result
         user_cfg["import_source"] = "word"
         protocol_name = user_cfg.get("product", Path(path).stem)
-        save_path = get_protocol_dir() / f"{protocol_name}.json"
+        from protocol_parser.product_importer import safe_protocol_filename
+
+        save_path = get_protocol_dir() / safe_protocol_filename(str(protocol_name))
         with open(save_path, "w", encoding="utf-8") as f:
             json.dump(user_cfg, f, ensure_ascii=False, indent=2)
         self._load_protocols()
         # 选中新导入的协议
+        saved_name = str(save_path.stem)
         idx = self.product_combo.findText(protocol_name)
+        if idx < 0:
+            idx = self.product_combo.findText(saved_name)
         if idx >= 0:
             self.product_combo.setCurrentIndex(idx)
+            protocol_name = self.product_combo.currentText()
         self._set_status(f"已导入: {protocol_name}")
 
     def _edit_or_delete_word_protocol(self) -> None:
@@ -4544,7 +4556,7 @@ class ProtocolParserApp(FluentWindow):
                 for i, raw_line in enumerate(lines):
                     if not raw_line and i != 0:
                         continue
-                    printable = "".join(ch if (32 <= ord(ch) < 127 or ch == "\t") else "." for ch in raw_line)
+                    printable = sanitize_raw_ascii_line(raw_line)
                     if i == 0:
                         parts.append(f"[{ts_str}] [TX] Raw-ASCII {printable}\n")
                     else:
@@ -4605,6 +4617,10 @@ class ProtocolParserApp(FluentWindow):
         self.btn_mode_ascii.setChecked(mode == "raw_ascii")
         self.fields_edit.setVisible(mode == "protocol")
         self.raw_edit.setVisible(mode != "protocol")
+        if mode == "protocol":
+            strip_send_editor_rich_text(self.fields_edit)
+        else:
+            strip_send_editor_rich_text(self.raw_edit)
 
     def _encode_current_protocol(self) -> bytes:
         if not self.cfg:
@@ -4666,25 +4682,25 @@ class ProtocolParserApp(FluentWindow):
         if editor is None:
             return
         if self.send_mode != "raw_hex":
-            editor.setStyleSheet(_TEXT_EDIT_FRAME_QSS)
+            editor.setStyleSheet(_SEND_TEXT_EDIT_QSS)
             editor.setToolTip("")
             return
         text = editor.toPlainText().strip()
         if not text:
-            editor.setStyleSheet(_TEXT_EDIT_FRAME_QSS)
+            editor.setStyleSheet(_SEND_TEXT_EDIT_QSS)
             editor.setToolTip("")
             return
         try:
             parse_hex_input(text)
         except ProtocolError as exc:
             editor.setStyleSheet(
-                _TEXT_EDIT_FRAME_QSS
+                _SEND_TEXT_EDIT_QSS
                 + f"\nQTextEdit#SendRawText {{ border: 1px solid {PALETTE['error']}; }}"
             )
             editor.setToolTip(str(exc))
             self._set_status(f"HEX 输入有误：{exc}")
         else:
-            editor.setStyleSheet(_TEXT_EDIT_FRAME_QSS)
+            editor.setStyleSheet(_SEND_TEXT_EDIT_QSS)
             editor.setToolTip("")
 
     def _set_tx_append_crlf(self, checked: bool) -> None:

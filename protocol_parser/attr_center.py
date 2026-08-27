@@ -360,6 +360,15 @@ class AttrStateCenter:
                             f"属性 0x{entry.attrid:02X}（{entry.cn_name or entry.name}）"
                             " 未设置 int-d/array 初始值，0x24 快照将使用默认整数"
                         )
+                for attrid in self._attr_order:
+                    entry = self._attrs[attrid]
+                    if not entry.initial_value_from_product:
+                        try:
+                            entry.current_value = self._snapshot_value_for_encode_locked(
+                                entry
+                            )
+                        except ValueError:
+                            pass
                 # 最后一次性发布 cfg，避免无锁读取者看到“新 cfg + 旧属性表”。
                 self.cfg = target_cfg
                 self.load_warnings = warnings
@@ -573,64 +582,133 @@ class AttrStateCenter:
                 return candidate
         return {}
 
+    def _range_compatible_demo_value(self, entry: AttrEntry) -> Any | None:
+        """Pick a non-zero in-range demo value for snapshot/UI when still at type default 0."""
+        minimum, maximum, step, _string_length = self._range_parts(entry)
+
+        if entry.typeid in (15, 16, 17, 18):
+            try:
+                step_f = float(step) if step not in (None, "") else 0.1
+            except (TypeError, ValueError):
+                step_f = 0.1
+            prefer = 121.0 if step_f >= 0.05 else 12.10
+            try:
+                lo = float(minimum) if minimum not in (None, "") else None
+                hi = float(maximum) if maximum not in (None, "") else None
+            except (TypeError, ValueError):
+                lo = hi = None
+            if lo is not None and hi is not None:
+                if lo <= prefer <= hi:
+                    return prefer
+                if lo >= 0 and lo < hi:
+                    return lo + min((hi - lo) / 10.0, hi - lo)
+                return lo
+            return prefer
+
+        if entry.typeid not in INTEGER_TYPE_BOUNDS:
+            return None
+
+        try:
+            type_lo, type_hi = INTEGER_TYPE_BOUNDS[entry.typeid]
+            lo = int(math.ceil(float(minimum))) if minimum not in (None, "") else type_lo
+            hi = int(math.floor(float(maximum))) if maximum not in (None, "") else type_hi
+        except (TypeError, ValueError, OverflowError):
+            lo, hi = INTEGER_TYPE_BOUNDS.get(entry.typeid, (0, 255))
+
+        if entry.enum:
+            for raw, _ in sorted(entry.enum.items(), key=self._enum_sort_key):
+                try:
+                    candidate = int(str(raw), 0)
+                except (TypeError, ValueError):
+                    continue
+                if candidate != 0 and lo <= candidate <= hi:
+                    return candidate
+
+        if lo >= 0:
+            span = hi - lo
+            if span > 255:
+                return lo + max(1, span // 10)
+            for prefer in (128, 121, 1):
+                if lo <= prefer <= hi:
+                    return prefer
+            if span > 0:
+                return lo + max(1, span // 10)
+        return None
+
+    def _snapshot_value_for_encode_locked(self, entry: AttrEntry) -> Any:
+        """Return the wire-ready value for 0x24/0x10 when current state is still default."""
+        attrid = entry.attrid
+        meta = self._meta_for_attrid(entry.attrid)
+        value = entry.current_value
+
+        if entry.typeid == 14 and entry.uses_xjiang_varint:
+            if value in (None, "", []):
+                if entry.initial_value_from_product:
+                    initial = meta.get("initial_value")
+                    if initial not in (None, "", []):
+                        return self.validate_attr_value(attrid, initial)
+                return self.validate_attr_value(attrid, XJIANG_VARINT_SNAPSHOT_DEFAULT)
+
+        if entry.typeid in (1, 3, 5, 7) and value == 0 and not entry.initial_value_from_product:
+            minimum, _, _, _ = self._range_parts(entry)
+            if minimum in (None, ""):
+                low, _high = INTEGER_TYPE_BOUNDS.get(entry.typeid, (None, None))
+                if low is not None and low < 0:
+                    return self.validate_attr_value(attrid, low)
+            else:
+                try:
+                    if float(minimum) < 0:
+                        return self.validate_attr_value(
+                            attrid, math.ceil(float(minimum))
+                        )
+                except (TypeError, ValueError, OverflowError):
+                    pass
+
+        if entry.typeid == 11 and value in (None, ""):
+            if entry.initial_value_from_product:
+                initial = meta.get("initial_value")
+                if initial not in (None, ""):
+                    return self.validate_attr_value(attrid, initial)
+            default_string = str(
+                (self.cfg.get("product_info") or {}).get(
+                    "snapshot_string_default", "helloworld"
+                )
+            )
+            return self.validate_attr_value(attrid, default_string)
+
+        if (
+            entry.typeid in (19, 20, 21, 22)
+            and value == 0
+            and not entry.initial_value_from_product
+        ):
+            minimum, _, _, _ = self._range_parts(entry)
+            if minimum not in (None, ""):
+                try:
+                    if float(minimum) < 0:
+                        return self.validate_attr_value(attrid, float(minimum))
+                except (TypeError, ValueError, OverflowError):
+                    pass
+
+        if (
+            value in (0, 0.0)
+            and not entry.initial_value_from_product
+        ):
+            demo = self._range_compatible_demo_value(entry)
+            if demo is not None:
+                try:
+                    return self.validate_attr_value(attrid, demo)
+                except ValueError:
+                    pass
+
+        return self.validate_attr_value(attrid, value)
+
     def get_snapshot_value_for_encode(self, attrid: int) -> Any:
         """Return the value that should be encoded into an auto-reply 0x24 snapshot."""
         with self._lock:
             entry = self._attrs.get(int(attrid))
             if entry is None:
                 raise AttributeValidationError(f"未知属性 0x{int(attrid) & 0xFF:02X}")
-            meta = self._meta_for_attrid(entry.attrid)
-            value = entry.current_value
-
-            if entry.typeid == 14 and entry.uses_xjiang_varint:
-                if value in (None, "", []):
-                    if entry.initial_value_from_product:
-                        initial = meta.get("initial_value")
-                        if initial not in (None, "", []):
-                            return self.validate_attr_value(attrid, initial)
-                    return self.validate_attr_value(attrid, XJIANG_VARINT_SNAPSHOT_DEFAULT)
-
-            if entry.typeid in (1, 3, 5, 7) and value == 0 and not entry.initial_value_from_product:
-                minimum, _, _, _ = self._range_parts(entry)
-                if minimum in (None, ""):
-                    low, _high = INTEGER_TYPE_BOUNDS.get(entry.typeid, (None, None))
-                    if low is not None and low < 0:
-                        return self.validate_attr_value(attrid, low)
-                else:
-                    try:
-                        if float(minimum) < 0:
-                            return self.validate_attr_value(
-                                attrid, math.ceil(float(minimum))
-                            )
-                    except (TypeError, ValueError, OverflowError):
-                        pass
-
-            if entry.typeid == 11 and value in (None, ""):
-                if entry.initial_value_from_product:
-                    initial = meta.get("initial_value")
-                    if initial not in (None, ""):
-                        return self.validate_attr_value(attrid, initial)
-                default_string = str(
-                    (self.cfg.get("product_info") or {}).get(
-                        "snapshot_string_default", "helloworld"
-                    )
-                )
-                return self.validate_attr_value(attrid, default_string)
-
-            if (
-                entry.typeid in (19, 20, 21, 22)
-                and value == 0
-                and not entry.initial_value_from_product
-            ):
-                minimum, _, _, _ = self._range_parts(entry)
-                if minimum not in (None, ""):
-                    try:
-                        if float(minimum) < 0:
-                            return self.validate_attr_value(attrid, float(minimum))
-                    except (TypeError, ValueError, OverflowError):
-                        pass
-
-            return self.validate_attr_value(attrid, value)
+            return self._snapshot_value_for_encode_locked(entry)
 
     def validate_attr_value(self, attrid: int, value: Any) -> Any:
         """Coerce and validate a value against type/enum/range metadata.

@@ -126,7 +126,7 @@ def test_command_permissions_and_single_attribute_sync():
     marks.clear()
     dispatch(reply, cfg, engine.build_cmd_send(2, 0x02, 8))
     assert [split_frame(x, cfg).cmd_code for x in collector.sent] == [0x01]
-    assert center.get_attr_value(0x02)[1] == 0
+    assert center.get_attr_value(0x02)[1] == 128
 
     collector.sent.clear()
     dispatch(reply, cfg, engine.build_cmd_send(3, 0x03, 9))

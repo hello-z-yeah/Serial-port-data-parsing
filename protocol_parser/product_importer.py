@@ -767,6 +767,12 @@ def _normalize_attr_entry(meta: dict, *, fallback_name: str = "") -> dict:
     type_urn = str(meta.get("type") or "").strip()
     if type_urn:
         entry["source_type_urn"] = type_urn
+    raw_wire = meta.get("snapshot_wire_id")
+    if raw_wire not in (None, ""):
+        try:
+            entry["snapshot_wire_id"] = int(raw_wire) & 0xFF
+        except (TypeError, ValueError):
+            pass
     return entry
 
 

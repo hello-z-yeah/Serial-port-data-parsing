@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QVBoxLayout,
     QWidget,
+    QLabel,
 )
 from qfluentwidgets import (
     BodyLabel,
@@ -153,7 +154,8 @@ class MonitorToolPage(QWidget):
         switch_layout = QHBoxLayout(switch_card)
         switch_layout.setContentsMargins(12, 7, 12, 7)
         switch_layout.setSpacing(8)
-        switch_layout.addWidget(StrongBodyLabel("监听工具", switch_card))
+        self.page_title_label = StrongBodyLabel("监听工具", switch_card)
+        switch_layout.addWidget(self.page_title_label)
         switch_layout.addStretch(1)
 
         self.btn_settings = PushButton("设置监听", switch_card)

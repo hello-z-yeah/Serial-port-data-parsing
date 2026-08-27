@@ -118,6 +118,55 @@ def _wire_attrid(siid: int, piid: int) -> int:
     return ((int(siid) * 16 + int(piid)) + 0x20) & 0xFF
 
 
+def _resolve_internal_attrid(
+    *,
+    siid: int,
+    piid: int,
+    attributes: dict[str, dict],
+) -> int:
+    for raw_key, meta in attributes.items():
+        if not isinstance(meta, dict):
+            continue
+        if int(meta.get("source_siid", -1)) == int(siid) and int(meta.get("source_piid", -1)) == int(piid):
+            try:
+                return (
+                    int(str(raw_key), 16)
+                    if str(raw_key).lower().startswith("0x")
+                    else int(raw_key)
+                ) & 0xFF
+            except (TypeError, ValueError):
+                break
+    return _wire_attrid(siid, piid)
+
+
+def _resolve_snapshot_wire_id(
+    *,
+    siid: int,
+    piid: int,
+    attributes: dict[str, dict],
+) -> int | None:
+    for raw_key, meta in attributes.items():
+        if not isinstance(meta, dict):
+            continue
+        if int(meta.get("source_siid", -1)) == int(siid) and int(meta.get("source_piid", -1)) == int(piid):
+            raw_wire = meta.get("snapshot_wire_id")
+            if raw_wire not in (None, ""):
+                try:
+                    return int(raw_wire) & 0xFF
+                except (TypeError, ValueError):
+                    pass
+            try:
+                internal = (
+                    int(str(raw_key), 16)
+                    if str(raw_key).lower().startswith("0x")
+                    else int(raw_key)
+                ) & 0xFF
+            except (TypeError, ValueError):
+                return None
+            return internal
+    return None
+
+
 def _lookup_property_meta(
     *,
     siid: int,
@@ -179,15 +228,19 @@ def _parse_param_list(
             if piid is None:
                 continue
             meta = _lookup_property_meta(siid=siid, piid=piid, attributes=attributes, service=service)
-            wire_id = _wire_attrid(siid, piid)
-            parsed.append({
-                "attrid": wire_id,
+            internal_id = _resolve_internal_attrid(siid=siid, piid=piid, attributes=attributes)
+            wire_id = _resolve_snapshot_wire_id(siid=siid, piid=piid, attributes=attributes)
+            entry: dict[str, Any] = {
+                "attrid": internal_id,
                 "piid": int(piid) & 0xFF,
                 "name": str(meta.get("name") or f"参数{piid}"),
                 "cn_name": str(meta.get("cn_name") or meta.get("name") or f"参数{piid}"),
                 "typeid": _coerce_typeid(meta.get("typeid"), 2),
                 "default": meta.get("initial_value", 0),
-            })
+            }
+            if wire_id is not None:
+                entry["wire_attrid"] = int(wire_id) & 0xFF
+            parsed.append(entry)
             continue
         if not isinstance(item, dict):
             continue
@@ -196,10 +249,12 @@ def _parse_param_list(
         if piid is None:
             piid = index
         if siid:
-            attrid = _wire_attrid(siid, piid)
+            internal_id = _resolve_internal_attrid(siid=siid, piid=piid, attributes=attributes)
+            wire_id = _resolve_snapshot_wire_id(siid=siid, piid=piid, attributes=attributes)
         else:
-            attrid = piid
-        attr_key = _normalize_attr_key(attrid)
+            internal_id = piid
+            wire_id = piid
+        attr_key = _normalize_attr_key(internal_id)
         attr_meta = attributes.get(attr_key, {})
         try:
             typeid = _coerce_typeid(item.get("type", item.get("typeid", attr_meta.get("typeid"))), 2)
@@ -217,7 +272,8 @@ def _parse_param_list(
         cn_name = localized_attribute_name(name, fallback=name)
         default_value = item.get("value", item.get("default", item.get("nowValue", attr_meta.get("initial_value", 0))))
         parsed.append({
-            "attrid": int(attrid) & 0xFF,
+            "attrid": int(internal_id) & 0xFF,
+            **({"wire_attrid": int(wire_id) & 0xFF} if wire_id is not None else {}),
             "piid": int(piid) & 0xFF,
             "name": name,
             "cn_name": cn_name,
@@ -375,10 +431,11 @@ def format_param_summary(params: list[dict]) -> str:
         return "—"
     parts: list[str] = []
     for index, param in enumerate(params):
-        attrid = int(param.get("attrid") or 0) & 0xFF
+        wire_id = int(param.get("wire_attrid", param.get("attrid")) or 0) & 0xFF
+        internal_id = int(param.get("attrid") or 0) & 0xFF
         typeid = _coerce_typeid(param.get("typeid"), 2)
         label = str(param.get("cn_name") or param.get("name") or f"参数{index}")
-        parts.append(f"[{index}] {label} (0x{attrid:02X}, type {typeid})")
+        parts.append(f"[{index}] {label} (wire 0x{wire_id:02X}, type {typeid})")
     return "\n".join(parts)
 
 
@@ -390,19 +447,61 @@ def action_event_entry_key(entry: dict) -> tuple[int, int, str]:
     )
 
 
+def entries_with_wire_id(entries: list | None, wire_id: int) -> list[dict]:
+    """Return all action/event entries that share one on-wire serial id."""
+    resolved = int(wire_id) & 0xFF
+    matched: list[dict] = []
+    for item in entries or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            if int(item.get("serial_id", -1)) & 0xFF == resolved:
+                matched.append(item)
+        except (TypeError, ValueError):
+            continue
+    return matched
+
+
+def resolve_action_event_entry(
+    entries: list | None,
+    *,
+    wire_id: int | None = None,
+    entry: dict | None = None,
+    allow_ambiguous: bool = False,
+) -> dict | None:
+    """Resolve one action/event entry without serial-only guessing when ambiguous."""
+    if entry is not None and isinstance(entry, dict):
+        key = action_event_entry_key(entry)
+        for item in entries or []:
+            if isinstance(item, dict) and action_event_entry_key(item) == key:
+                return item
+        return entry
+    if wire_id is None:
+        return None
+    matches = entries_with_wire_id(entries, wire_id)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1 and allow_ambiguous:
+        return matches[0]
+    return None
+
+
 def lookup_action_event_label(cfg: dict | None, kind: str, wire_id: int) -> str:
     """按线协议 id 查找已导入动作/事件的中文名。"""
     if not isinstance(cfg, dict):
         return ""
     bucket = "events" if str(kind or "").lower() == "event" else "actions"
-    wire_id = int(wire_id) & 0xFF
-    for item in cfg.get(bucket) or []:
-        if not isinstance(item, dict):
-            continue
-        try:
-            serial_id = int(item.get("serial_id", -1)) & 0xFF
-        except (TypeError, ValueError):
-            continue
-        if serial_id == wire_id:
-            return str(item.get("cn_name") or item.get("name") or "").strip()
-    return ""
+    matches = entries_with_wire_id(cfg.get(bucket) or [], wire_id)
+    if not matches:
+        return ""
+    labels = [
+        str(item.get("cn_name") or item.get("name") or "").strip()
+        for item in matches
+        if isinstance(item, dict)
+    ]
+    labels = list(dict.fromkeys(label for label in labels if label))
+    if not labels:
+        return ""
+    if len(labels) == 1:
+        return labels[0]
+    return " / ".join(labels)

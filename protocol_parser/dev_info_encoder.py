@@ -65,6 +65,24 @@ def _version_bytes(cfg: dict) -> bytes:
         values.append(value)
     while len(values) < 3:
         values.append(0)
+    # xjiang 产品 0x21 前缀使用 MCU 固件版本（通常 1.0.0 → 01 00 00），
+    # 不是平台 JSON schema 版本 0.0.9。已错误保存为 [0,0,9] 的配置自动纠正。
+    if (
+        list(values) == [0, 0, 9]
+        and _uses_xjiang_action_event_mapping(cfg)
+    ):
+        mcu_raw = info.get("mcu_version")
+        if isinstance(mcu_raw, (list, tuple)) and len(mcu_raw) >= 3:
+            try:
+                values = [int(mcu_raw[0]), int(mcu_raw[1]), int(mcu_raw[2])]
+            except (TypeError, ValueError):
+                pass
+        elif mcu_raw not in (None, "", []):
+            parts = str(mcu_raw).split(".")
+            try:
+                values = [int(parts[i]) if i < len(parts) else 0 for i in range(3)]
+            except (TypeError, ValueError):
+                pass
     return bytes(values)
 
 
@@ -261,25 +279,38 @@ def build_snapshot_attrid_map(cfg: dict) -> tuple[dict[int, int], bool]:
 
 
 def _uses_xjiang_action_event_mapping(cfg: dict) -> bool:
-    """MIOT/xjiang 产品在 0x21 属性映射表末尾追加动作/事件扩展项。"""
-    for bucket in ("actions", "events"):
-        for item in cfg.get(bucket) or []:
-            if not isinstance(item, dict):
+    """仅在 xjiang-spec 服务声明了 actions/events 时追加 0x21 扩展映射。"""
+    source = _load_source_json(cfg)
+    if not isinstance(source, dict):
+        return False
+    for service in source.get("services") or []:
+        if not isinstance(service, dict):
+            continue
+        service_type = str(service.get("type") or "").lower()
+        has_xjiang_service = "xjiang-spec" in service_type
+        for bucket in ("actions", "events"):
+            items = service.get(bucket) or []
+            if not items:
                 continue
-            if int(item.get("service_siid") or 0) > 0:
+            if has_xjiang_service:
                 return True
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if "xjiang-spec" in str(item.get("type") or "").lower():
+                    return True
     return False
 
 
-def _build_action_event_mapping(cfg: dict) -> bytes:
+def _build_action_event_mapping(cfg: dict, *, property_count: int) -> bytes:
     """构建 xjiang-spec 动作/事件 6 字节映射项。
 
     格式与参考调试助手一致::
 
-        siid(1) + kind(1) + iid(2, 低字节在前) + 0x0E(1) + dev_index(1)
+        0x0E(1) + dev_index(1) + siid(1) + kind(1) + iid(2, 低字节在前)
 
-    ``dev_index`` 从 0x14(20) 起按 actions → events 顺序递增；
-    与 0x11/0x12 线协议中的 ``iid + 20`` 编号空间不同。
+    ``dev_index`` 从属性映射条目数起算（首条动作/事件 = property_count），
+    按 actions → events 顺序递增；与 0x11/0x12 线协议 ``iid + 20`` 编号无关。
     """
     actions = [item for item in (cfg.get("actions") or []) if isinstance(item, dict)]
     events = [item for item in (cfg.get("events") or []) if isinstance(item, dict)]
@@ -287,31 +318,31 @@ def _build_action_event_mapping(cfg: dict) -> bytes:
         return b""
 
     out = bytearray()
-    dev_index = 0x14
+    dev_index = int(property_count) & 0xFF
     for item in actions:
         siid = int(item.get("service_siid") or 0) & 0xFF
         iid = int(item.get("service_iid") or 0) & 0xFFFF
         out.extend((
+            0x0E,
+            dev_index,
             siid,
             0x01,
             (iid >> 8) & 0xFF,
             iid & 0xFF,
-            0x0E,
-            dev_index & 0xFF,
         ))
-        dev_index += 1
+        dev_index = (dev_index + 1) & 0xFF
     for item in events:
         siid = int(item.get("service_siid") or 0) & 0xFF
         iid = int(item.get("service_iid") or 0) & 0xFFFF
         out.extend((
+            0x0E,
+            dev_index,
             siid,
             0x02,
             (iid >> 8) & 0xFF,
             iid & 0xFF,
-            0x0E,
-            dev_index & 0xFF,
         ))
-        dev_index += 1
+        dev_index = (dev_index + 1) & 0xFF
     return bytes(out)
 
 
@@ -370,7 +401,7 @@ def _build_attr_mapping(cfg: dict) -> bytes:
                 piid & 0xFF,
             ))
         if _uses_xjiang_action_event_mapping(cfg):
-            out.extend(_build_action_event_mapping(cfg))
+            out.extend(_build_action_event_mapping(cfg, property_count=len(resolved)))
         return bytes(out)
 
     # 非米家/旧格式兼容：typeid + attrid + access_flag。

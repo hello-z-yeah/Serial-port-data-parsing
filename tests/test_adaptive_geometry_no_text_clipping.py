@@ -44,7 +44,7 @@ def test_long_control_rows_reflow_instead_of_squeezing_captions():
 
 
 def test_mcu_page_title_and_current_product_share_same_row():
-    """模拟MCU工具页：'模拟MCU工具' 粗体标题必须和 '当前产品' 下拉在同一行。
+    """模拟MCU工具页：'模拟MCU工具' 粗体标题必须和 '当前产品' 文本在同一行。
 
     验证 _relayout_operation_bar 在宽屏模式下：
     1. page_title_label (模拟MCU工具) 与 product_label (当前产品) 都在 row 0

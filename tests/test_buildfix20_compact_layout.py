@@ -35,7 +35,7 @@ def test_mcu_responsive_grids_clear_stale_stretch_coefficients():
 def test_realtime_attribute_id_and_action_columns_are_readable():
     source = MCU.read_text(encoding="utf-8")
     assert "0: 48, 1: 88, 2: 150, 3: 190" in source
-    assert "self._attr_wrapped_column_maximums = {2: 260, 3: 320}" in source
+    assert "self._attr_wrapped_column_maximums = {2: 260, 3: 320, 6: 220}" in source
     assert "def _measure_attr_column_width" in source
     assert "header_view.setSectionsMovable(False)" in source
     assert "header_view.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)" in source

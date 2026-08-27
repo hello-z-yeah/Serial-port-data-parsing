@@ -13,12 +13,11 @@ from protocol_parser.parser import (
 from protocol_parser.product_importer import build_product_cfg, parse_function_json
 
 REFERENCE_SNAPSHOT = (
-    "A5 A5 03 24 00 64 00 00 00 02 01 00 01 02 80 02 03 00 03 04 80 00 "
-    "04 05 00 00 05 06 80 00 00 00 06 07 00 00 00 00 0B 08 00 0A "
-    "68 65 6C 6C 6F 77 6F 72 6C 64 0E 09 00 03 01 E2 40 0F 0A 00 00 "
-    "10 0B 00 00 11 0C 00 00 00 00 12 0D 00 00 00 00 13 0E 80 00 14 "
-    "0F 80 00 15 10 80 00 00 00 16 11 80 00 00 00 0E 12 00 03 01 E2 "
-    "40 64"
+    "A5 A5 03 24 00 64 00 00 00 02 01 80 01 02 80 02 03 80 03 04 80 00 "
+    "04 05 19 99 05 06 80 00 00 00 06 07 19 99 99 99 0B 08 00 0A "
+    "68 65 6C 6C 6F 77 6F 72 6C 64 0E 09 00 03 01 E2 40 0F 0A 04 BA 10 0B 04 BA "
+    "11 0C 00 00 04 BA 12 0D 00 00 04 BA 13 0E 80 00 14 0F 80 00 15 10 80 00 00 00 "
+    "16 11 80 00 00 00 0E 12 00 03 01 E2 40 F2"
 )
 
 
@@ -150,6 +149,48 @@ def test_xjiang_data_types_snapshot_matches_reference_tool():
 
     frame = AutoCmdEngine(center).build_snapshot_resp()
     assert to_hex(frame) == REFERENCE_SNAPSHOT
+
+
+def test_xjiang_batch_report_matches_snapshot_payload():
+    cfg = _build_cfg()
+    center = AttrStateCenter()
+    center.load_product(cfg)
+    engine = AutoCmdEngine(center)
+
+    snapshot = engine.build_snapshot_resp()
+    report = engine.build_attr_report()
+    from protocol_parser.parser import split_frame
+
+    assert split_frame(snapshot, cfg).data == split_frame(report, cfg).data
+
+
+def test_load_product_applies_snapshot_defaults_to_current_values():
+    cfg = _build_cfg()
+    center = AttrStateCenter()
+    center.load_product(cfg)
+    entry = next(
+        item for item in center.get_all_attrs()
+        if item.typeid == 11
+    )
+    assert entry.current_value == "helloworld"
+    array_entry = next(
+        item for item in center.get_all_attrs()
+        if item.typeid == 14 and item.uses_xjiang_varint
+    )
+    assert array_entry.current_value == XJIANG_VARINT_SNAPSHOT_DEFAULT
+
+    uint32_entry = next(item for item in center.get_all_attrs() if item.cn_name == "uint-c")
+    assert uint32_entry.current_value == 429496729
+
+    float_entry = next(item for item in center.get_all_attrs() if item.cn_name == "float-one-uint-b")
+    assert float_entry.current_value == 121
+
+
+def test_scaled_value_input_accepts_decimals():
+    from protocol_parser.ui_helpers import _convert_value
+
+    assert _convert_value("12.5", 15) == 12.5
+    assert _convert_value("-3276.8", 19) == -3276.8
 
 
 def test_attrs_export_int_d_and_array_get_xjiang_varint_markers():

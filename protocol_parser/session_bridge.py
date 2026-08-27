@@ -29,7 +29,12 @@ def _text(widget: Any, default: str = "") -> str:
 def snapshot_from_app(app: Any) -> SessionSnapshot:
     product_name = str(getattr(app, "product_var", "") or "")
     product_sources = getattr(app, "_product_sources", {})
-    product_source = str(product_sources.get(product_name, "") or "")
+    product_kinds = getattr(app, "_product_kinds", {}) or {}
+    if str(product_kinds.get(product_name) or "").strip().lower() == "json":
+        product_name = ""
+        product_source = ""
+    else:
+        product_source = str(product_sources.get(product_name, "") or "")
     monitor_page = getattr(app, "monitor_page", None)
     extras: dict[str, Any] = {}
     exporter = getattr(monitor_page, "export_settings", None)
@@ -111,14 +116,33 @@ def apply_snapshot_to_app(app: Any, snapshot: SessionSnapshot) -> None:
         stopbits_combo.setCurrentText(f"{snapshot.stopbits:g}")
 
     if snapshot.product_name:
-        loader = getattr(app, "load_product_cfg", None)
-        if not callable(loader):
-            loader = getattr(app, "_load_product_cfg", None)
-        if callable(loader):
-            try:
-                loader(snapshot.product_name)
-            except Exception:
-                pass
+        product_name = str(snapshot.product_name or "").strip()
+        kinds = getattr(app, "_product_kinds", {}) or {}
+        if product_name and kinds.get(product_name, "word") != "json":
+            loader = getattr(app, "load_product_cfg", None)
+            if not callable(loader):
+                loader = getattr(app, "_load_product_cfg", None)
+            if callable(loader):
+                try:
+                    if not loader(product_name):
+                        status = getattr(app, "_set_status", None)
+                        if callable(status):
+                            status(f"上次 Word 协议“{product_name}”恢复失败")
+                except Exception as exc:
+                    reporter = getattr(app, "report_error", None)
+                    if callable(reporter):
+                        reporter("会话恢复失败", exc)
+                    else:
+                        status = getattr(app, "_set_status", None)
+                        if callable(status):
+                            status(f"上次 Word 协议“{product_name}”恢复失败")
+
+    mcu_page = getattr(app, "mcu_page", None)
+    if mcu_page is not None:
+        try:
+            mcu_page.sync_products(preferred="")
+        except Exception:
+            pass
 
     hex_button = getattr(app, "btn_hex", None)
     if hex_button is not None:

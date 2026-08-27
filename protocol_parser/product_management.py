@@ -1,6 +1,7 @@
 """Pure helpers for listing and inspecting imported product JSON files."""
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -90,3 +91,55 @@ def collect_product_json_records(
 
     records.sort(key=lambda item: (item.name.casefold(), item.filename.casefold()))
     return records
+
+
+def disambiguate_product_catalog(
+    products: list[tuple[str, str, str]],
+) -> list[tuple[str, str, str]]:
+    """Make duplicate JSON product names unique by appending the filename."""
+    json_names = [name for name, _, kind in products if kind == "json"]
+    duplicate_names = {
+        name for name, count in Counter(json_names).items() if count > 1
+    }
+    if not duplicate_names:
+        return list(products)
+
+    used_labels: set[str] = set()
+    disambiguated: list[tuple[str, str, str]] = []
+    for name, source, kind in products:
+        if kind != "json" or name not in duplicate_names:
+            label = name
+        else:
+            label = f"{name} ({Path(source).name})"
+        if label in used_labels:
+            stem = Path(source).stem
+            suffix = 2
+            while True:
+                candidate = f"{name} ({stem}-{suffix}.json)"
+                if candidate not in used_labels:
+                    label = candidate
+                    break
+                suffix += 1
+        used_labels.add(label)
+        disambiguated.append((label, source, kind))
+    return disambiguated
+
+
+def product_record_display_label(
+    record: ProductJsonRecord,
+    name_counts: Mapping[str, int] | None = None,
+) -> str:
+    """Return a combo label; append filename when the product name repeats."""
+    counts = name_counts or {}
+    if counts.get(record.name, 0) > 1:
+        filename = record.filename or record.source_path.name
+        if filename:
+            return f"{record.name} ({filename})"
+    return record.name
+
+
+def product_name_counts(records: list[ProductJsonRecord]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        counts[record.name] = counts.get(record.name, 0) + 1
+    return counts

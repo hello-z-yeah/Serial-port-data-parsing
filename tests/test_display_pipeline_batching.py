@@ -6,6 +6,7 @@ from protocol_parser.display_format import (
     format_receive_frame_line,
     format_receive_raw_items,
     normalize_monitor_display_line,
+    sanitize_raw_ascii_line,
 )
 from protocol_parser import ParseResult
 
@@ -83,6 +84,20 @@ def test_normalize_monitor_display_line_strips_rx_prefix():
     line = normalize_monitor_display_line("[12:00:00.000] [RX] Raw-ASCII hello\n")
     assert line == "[12:00:00.000] hello\n"
     assert "[RX]" not in line
+
+
+def test_sanitize_raw_ascii_line_preserves_cjk_and_replaces_controls():
+    assert sanitize_raw_ascii_line('AT+RF_W="产测热点"') == 'AT+RF_W="产测热点"'
+    assert sanitize_raw_ascii_line("hello\tworld") == "hello\tworld"
+    assert sanitize_raw_ascii_line("a\x00b\x7fc") == "a.b.c"
+
+
+def test_format_receive_raw_items_ascii_mode_shows_cjk():
+    payload = 'AT+RF_W="产测热点"'.encode("utf-8")
+    items = format_receive_raw_items(payload, 2.0, hex_format=False)
+    assert len(items) == 1
+    assert "产测热点" in items[0]["text"]
+    assert "...." not in items[0]["text"]
 
 
 def test_format_receive_raw_items_ascii_mode_has_segments():

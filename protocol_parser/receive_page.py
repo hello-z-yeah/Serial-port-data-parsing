@@ -43,7 +43,8 @@ class ReceiveAnalysisPage(QWidget):
         self.switch_layout = switch_layout
         switch_layout.setContentsMargins(12, 7, 12, 7)
         switch_layout.setSpacing(8)
-        switch_layout.addWidget(StrongBodyLabel("串口接收分析", switch_card))
+        self.page_title_label = StrongBodyLabel("串口接收分析", switch_card)
+        switch_layout.addWidget(self.page_title_label)
         switch_layout.addStretch(1)
 
         self.cmdlib_toggle = ToggleButton("指令库", switch_card)

@@ -410,17 +410,13 @@ class AutoReplyEngine:
                 attributes = cfg.get("attributes") or {}
                 actions, _ = parse_action_event_entries(source, attributes)
 
-        target = None
-        for item in actions if isinstance(actions, list) else []:
-            if not isinstance(item, dict):
-                continue
-            try:
-                resolved = int(item.get("serial_id", -1)) & 0xFF
-            except (TypeError, ValueError):
-                continue
-            if resolved == (action_id & 0xFF):
-                target = item
-                break
+        from protocol_parser.action_event_importer import resolve_action_event_entry
+
+        target = resolve_action_event_entry(
+            actions if isinstance(actions, list) else [],
+            wire_id=action_id,
+            allow_ambiguous=True,
+        )
         if not isinstance(target, dict):
             return []
         outputs = target.get("out_params") or []

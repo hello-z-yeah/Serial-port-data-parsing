@@ -12,6 +12,11 @@ class AutoCmdEngine:
     def __init__(self, attr_center) -> None:
         self._ac = attr_center
 
+    def _wire_attrid_for_payload(self, internal_attrid: int) -> int:
+        """Map GUI/internal attrid to the on-wire id used by 0x10/0x11/0x12/0x24."""
+        wire_map, _ = build_snapshot_attrid_map(self.cfg)
+        return wire_map.get(int(internal_attrid) & 0xFF, int(internal_attrid) & 0xFF)
+
     @property
     def cfg(self) -> dict:
         cfg = self._ac.cfg
@@ -78,7 +83,8 @@ class AutoCmdEngine:
                 if entry is None:
                     continue
                 value = self._ac.validate_attr_value(attrid, value)
-                actions.append((int(attrid) & 0xFF, value, entry.typeid))
+                wire_attrid = self._wire_attrid_for_payload(attrid)
+                actions.append((wire_attrid, value, entry.typeid))
         elif isinstance(out_params, list):
             for item in out_params:
                 if not isinstance(item, (list, tuple)) or len(item) < 3:
@@ -97,8 +103,8 @@ class AutoCmdEngine:
                         typeid = int(raw_typeid)
                     except (TypeError, ValueError):
                         typeid = 2
-                # 0x12 动作出参使用 JSON 中的属性线协议 id，不走 snapshot 映射。
-                actions.append((int(attrid) & 0xFF, value, typeid))
+                wire_attrid = self._wire_attrid_for_payload(attrid)
+                actions.append((wire_attrid, value, typeid))
         return encode_frame(
             0x12, self.cfg, direction="response",
             fields={
@@ -129,8 +135,9 @@ class AutoCmdEngine:
                     typeid = int(typeid)
                 except (TypeError, ValueError):
                     typeid = 2
-            # 0x11 事件出参使用 JSON 中的属性线协议 id，不走 snapshot 映射。
-            items.append((int(attrid) & 0xFF, value, typeid))
+            wire_attrid = self._wire_attrid_for_payload(attrid)
+            items.append((wire_attrid, value, typeid))
+        items.sort(key=lambda item: item[0])
         return encode_frame(
             0x11,
             self.cfg,

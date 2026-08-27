@@ -67,7 +67,7 @@ def test_wb28_event_frames_match_reference_wire_ids():
     split = split_frame(frame, cfg)
     assert split.cmd_code == 0x11
     assert split.data[0] == 22
-    assert split.data[1:] == bytes.fromhex("02 54 00 00 51 00")
+    assert split.data[1:] == bytes.fromhex("00 02 00 02 03 00")
 
 
 def test_wb28_merge_protocol_preserves_actions_events():
@@ -111,14 +111,17 @@ def test_wb28_dev_info_includes_action_event_mapping():
         events=bundle["events"],
     )
     user["source_function_json"] = FIXTURE.read_text(encoding="utf-8")
-    user["product_info"]["mcu_version"] = [0, 0, 9]
+    user["product_info"]["mcu_version"] = [1, 0, 0]
+    user["product_info"]["device_info_version"] = [0, 0, 9]
     cfg = merge_protocol(load_protocol(ROOT / "product" / "v3_serial.json"), user)
     data = build_dev_info_data(cfg)
+    assert data[:3] == bytes([1, 0, 0])
+    # 仅 2 个 data 属性时 dev_index 从 2 起：0x02..0x05
     tail = bytes.fromhex(
-        "03 01 00 01 0E 14 "
-        "03 01 00 02 0E 15 "
-        "03 02 00 01 0E 16 "
-        "03 02 00 02 0E 17"
+        "0e 02 03 01 00 01 "
+        "0e 03 03 01 00 02 "
+        "0e 04 03 02 00 01 "
+        "0e 05 03 02 00 02"
     )
     assert data.endswith(tail), data.hex(" ")
     cfg = _wb28_cfg()
@@ -157,4 +160,4 @@ def test_wb28_dev_info_includes_action_event_mapping():
         for child in (field.get("children") or [])
         if isinstance(child, dict)
     ]
-    assert any(child.get("attrid") == "0x51" for child in children)
+    assert any(child.get("attrid") == "0x02" for child in children)

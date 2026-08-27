@@ -14,7 +14,7 @@ from typing import Any, Callable
 from PySide6.QtCore import Qt, QTimer, QEvent, QSize, QRectF, QPointF
 from PySide6.QtGui import (
     QFont, QFontMetrics, QTextCursor, QTextCharFormat, QColor, QIntValidator,
-    QTextDocument, QTextOption, QPalette, QPainter, QTextFormat,
+    QDoubleValidator, QTextDocument, QTextOption, QPalette, QPainter, QTextFormat,
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter,
@@ -30,17 +30,18 @@ from qfluentwidgets import (
 from protocol_parser.action_event_importer import (
     action_event_entry_key,
     format_param_summary,
+    resolve_action_event_entry,
     _coerce_typeid,
 )
 
 from protocol_parser.ui_helpers import (
     _convert_value, _typeid_name, format_frame_display,
-    format_attr_validation_message,
+    format_attr_validation_message, format_attr_display_value,
+    format_attr_range_display,
 )
 from protocol_parser.app_host import AppHostProtocol
 from protocol_parser.product_importer import localized_attribute_name
-from protocol_parser.exceptions import ProductConfigError
-from protocol_parser.combo_font import MatchedPopupComboBox
+from protocol_parser.exceptions import ProductConfigError, AttributeValidationError
 from protocol_parser.widgets import StyledMessageBox, apply_fluent_dialog_style, CellWidgetAlignedTable, apply_tooltip
 from protocol_parser.theme import PALETTE
 from protocol_parser.ui_corners import CORNER_RADIUS_PX
@@ -474,7 +475,7 @@ class McuSimulatePage(QWidget):
         self.setObjectName("mcuSimulateToolPage")
         self._mw: AppHostProtocol = main_window  # type: ignore[assignment]
         self._auto_scroll = True
-        self._product_syncing = False
+        self._active_product_name = ""
         self._attr_row_by_id: dict[int, int] = {}
         self._attr_send_edits: dict[int, LineEdit] = {}
         self._attr_select_checks: dict[int, CheckBox] = {}
@@ -502,13 +503,13 @@ class McuSimulatePage(QWidget):
         # 250 ms 防抖合并，避免表格持续跳动。
         self._attr_column_minimums = {
             0: 48, 1: 88, 2: 150, 3: 190,
-            4: 74, 5: 88, 6: 100, 7: 190,
+            4: 74, 5: 88, 6: 120, 7: 100, 8: 190,
         }
         # 名称与属性文本采用“内容测量 + 可用宽度上限 + 完整换行”。
         # 宽面板时适度加宽以减少无意义高行，窄面板时保持紧凑并由行高
         # 承载全部文字；绝不再用省略号隐藏内容。
-        self._attr_wrapped_column_maximums = {2: 260, 3: 320}
-        self._attr_wrapped_column_ratios = {2: 0.26, 3: 0.30}
+        self._attr_wrapped_column_maximums = {2: 260, 3: 320, 6: 220}
+        self._attr_wrapped_column_ratios = {2: 0.26, 3: 0.30, 6: 0.22}
         self._action_event_wrapped_column_maximums = {3: 280, 4: 220, 5: 260}
         self._action_event_wrapped_column_ratios = {3: 0.32, 4: 0.28, 5: 0.30}
         self._pending_attr_remeasure_columns: set[int] = set()
@@ -545,11 +546,15 @@ class McuSimulatePage(QWidget):
         # 粗体页标题，与“当前产品”同一行、位于其左侧并留间距分隔。
         self.page_title_label = StrongBodyLabel("模拟MCU工具", operation)
         self.product_label = BodyLabel("当前产品：", operation)
-        self.product_combo = MatchedPopupComboBox(operation)
-        self.product_combo.setMinimumWidth(220)
-        self.product_combo.setMaximumWidth(16_777_215)
-        self.product_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.product_combo.currentTextChanged.connect(self._on_product_changed)
+        self.product_name_label = BodyLabel("未选择", operation)
+        self.product_name_label.setMinimumWidth(160)
+        self.product_name_label.setMaximumWidth(16_777_215)
+        self.product_name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.product_name_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.select_product_button = PushButton("选择产品", operation)
+        self.select_product_button.clicked.connect(self._open_select_product_dialog)
         self.import_json_button = PushButton("导入产品JSON", operation)
         self.import_json_button.clicked.connect(self._import_product_json)
         self.manage_json_button = PushButton("修改/删除产品", operation)
@@ -569,6 +574,7 @@ class McuSimulatePage(QWidget):
         self.preset_visible_toggle.setChecked(False)
         self.preset_visible_toggle.toggled.connect(self._set_preset_panel_visible)
         for button in (
+            self.select_product_button,
             self.import_json_button,
             self.manage_json_button,
             self.attr_visible_toggle,
@@ -604,7 +610,8 @@ class McuSimulatePage(QWidget):
             self.page_title_label,
             self.page_separator,
             self.product_label,
-            self.product_combo,
+            self.product_name_label,
+            self.select_product_button,
             self.import_json_button,
             self.manage_json_button,
             self.attr_visible_toggle,
@@ -746,8 +753,8 @@ class McuSimulatePage(QWidget):
             metrics = QFontMetrics(font)
 
             apply_scoped_font(self, resolved)
-            self.product_combo.setFont(font)
 
+            self._update_product_name_display()
             self._attr_base_row_height = max(38, metrics.height() + 16)
             self._enum_button_height = max(28, metrics.height() + 10)
             self._preset_row_height = max(34, metrics.height() + 14)
@@ -828,7 +835,7 @@ class McuSimulatePage(QWidget):
                 fit_text_control(widget, point_size=self._side_font_point_size)
             except Exception:
                 pass
-        # fit_text_control 会覆盖字体 weight，这里重新确保标题为粗体
+        # fit_text_control 会覆盖字体 weight，这里重新确保标题粗体。
         try:
             title_font = QFont(self.page_title_label.font())
             title_font.setWeight(QFont.Weight.Bold)
@@ -839,41 +846,45 @@ class McuSimulatePage(QWidget):
             max(widget.minimumWidth(), widget.sizeHint().width())
             for widget in widgets
         ) + 56
-        medium_needed = max(660, self.product_combo.minimumWidth() + 320)
+        medium_needed = max(660, self.product_name_label.minimumWidth() + 380)
         if width >= wide_needed:
             layout.addWidget(self.page_title_label, 0, 0)
             layout.addWidget(self.page_separator, 0, 1)
             layout.addWidget(self.product_label, 0, 2)
-            layout.addWidget(self.product_combo, 0, 3)
-            layout.addWidget(self.import_json_button, 0, 4)
-            layout.addWidget(self.manage_json_button, 0, 5)
-            layout.addWidget(self.attr_visible_toggle, 0, 6)
-            layout.addWidget(self.action_event_visible_toggle, 0, 7)
-            layout.addWidget(self.preset_visible_toggle, 0, 8)
+            layout.addWidget(self.product_name_label, 0, 3)
+            layout.addWidget(self.select_product_button, 0, 4)
+            layout.addWidget(self.import_json_button, 0, 5)
+            layout.addWidget(self.manage_json_button, 0, 6)
+            layout.addWidget(self.attr_visible_toggle, 0, 7)
+            layout.addWidget(self.action_event_visible_toggle, 0, 8)
+            layout.addWidget(self.preset_visible_toggle, 0, 9)
             layout.setColumnStretch(3, 1)
         elif width >= medium_needed:
             layout.addWidget(self.page_title_label, 0, 0)
             layout.addWidget(self.page_separator, 0, 1)
             layout.addWidget(self.product_label, 0, 2)
-            layout.addWidget(self.product_combo, 0, 3, 1, 4)
+            layout.addWidget(self.product_name_label, 0, 3, 1, 3)
+            layout.addWidget(self.select_product_button, 1, 3)
+            layout.addWidget(self.import_json_button, 1, 4)
+            layout.addWidget(self.manage_json_button, 1, 5)
+            layout.addWidget(self.attr_visible_toggle, 1, 6)
+            layout.addWidget(self.action_event_visible_toggle, 1, 7)
+            layout.addWidget(self.preset_visible_toggle, 1, 8)
+            layout.setColumnStretch(3, 1)
+        else:
+            layout.addWidget(self.page_title_label, 0, 0)
+            layout.addWidget(self.page_separator, 0, 1)
+            layout.addWidget(self.product_label, 0, 2)
+            layout.addWidget(self.product_name_label, 0, 3, 1, 2)
+            layout.addWidget(self.select_product_button, 1, 2)
             layout.addWidget(self.import_json_button, 1, 3)
             layout.addWidget(self.manage_json_button, 1, 4)
             layout.addWidget(self.attr_visible_toggle, 1, 5)
             layout.addWidget(self.action_event_visible_toggle, 1, 6)
             layout.addWidget(self.preset_visible_toggle, 1, 7)
             layout.setColumnStretch(3, 1)
-        else:
-            layout.addWidget(self.page_title_label, 0, 0)
-            layout.addWidget(self.page_separator, 0, 1)
-            layout.addWidget(self.product_label, 0, 2)
-            layout.addWidget(self.product_combo, 0, 3, 1, 3)
-            layout.addWidget(self.import_json_button, 1, 2)
-            layout.addWidget(self.manage_json_button, 1, 3)
-            layout.addWidget(self.attr_visible_toggle, 1, 4)
-            layout.addWidget(self.action_event_visible_toggle, 1, 5)
-            layout.addWidget(self.preset_visible_toggle, 1, 6)
-            layout.setColumnStretch(3, 1)
         for button in (
+            self.select_product_button,
             self.import_json_button,
             self.manage_json_button,
             self.attr_visible_toggle,
@@ -1036,9 +1047,9 @@ class McuSimulatePage(QWidget):
         layout.addLayout(self.attr_header_layout)
 
         self.attr_table = CellWidgetAlignedTable(card)
-        self.attr_table.setColumnCount(8)
+        self.attr_table.setColumnCount(9)
         self.attr_table.setHorizontalHeaderLabels([
-            "选", "ID", "名称", "属性文本", "权限", "格式", "当前值", "发送",
+            "选", "ID", "名称", "属性文本", "权限", "格式", "范围", "当前值", "发送",
         ])
         self.attr_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.attr_table.setAlternatingRowColors(True)
@@ -1080,6 +1091,7 @@ QTableView#AttributeTable::item:selected {{
         )
         self.attr_table.setItemDelegateForColumn(2, self._attr_wrap_delegate)
         self.attr_table.setItemDelegateForColumn(3, self._attr_wrap_delegate)
+        self.attr_table.setItemDelegateForColumn(6, self._attr_wrap_delegate)
         for column, minimum in self._attr_column_minimums.items():
             self.attr_table.setColumnWidth(column, minimum)
 
@@ -1262,20 +1274,12 @@ QTableView#AttributeTable::item:selected {{
         event_id = int(entry.get("serial_id") or 0) & 0xFF
         if not self._mw.guard_click(f"event_report_{event_id}_{int(entry.get('service_iid') or 0)}"):
             return
-        actions, events = self._product_action_event_entries()
-        entry_key = action_event_entry_key(entry)
-        matched = next(
-            (item for item in events if action_event_entry_key(item) == entry_key),
-            None,
-        )
-        if matched is None:
-            matched = next(
-                (item for item in events if int(item.get("serial_id") or 0) & 0xFF == event_id),
-                None,
-            )
+        _actions, events = self._product_action_event_entries()
+        matched = resolve_action_event_entry(events, entry=entry)
         if matched is None:
             StyledMessageBox.warning(self, "提示", f"未找到事件 {event_id} (0x{event_id:02X})")
             return
+        entry_key = action_event_entry_key(entry)
         center = self._mw.get_attr_center()
         engine = self._mw.get_cmd_engine()
         out_params = list(matched.get("out_params") or [])
@@ -2035,7 +2039,7 @@ QTableView#AttributeTable::item:selected {{
         # HEX/ASCII 与原始/协议解析按钮状态。
 
         # 两页产品协议不共享；切回页签2时恢复页签2当前 JSON 产品。
-        name = str(self.product_combo.currentText() or "").strip()
+        name = str(self._active_product_name or "").strip()
         if name and name != getattr(self._mw, "product_var", ""):
             self._mw.load_product_cfg(name)
             self.refresh_attr_table()
@@ -2045,49 +2049,59 @@ QTableView#AttributeTable::item:selected {{
     # ------------------------------------------------------------------
     # Public interface used by gui.py
     # ------------------------------------------------------------------
+    def active_product_name(self) -> str:
+        return str(self._active_product_name or "").strip()
+
     def sync_products(self, preferred: str | None = None) -> None:
-        """页签2只列出由产品 JSON 导入的产品。"""
+        """页签2只列出由产品 JSON 导入的产品；默认不自动选中任何产品。"""
         sources, kinds = self._mw.get_product_catalog()
         names = [name for name in sources if kinds.get(name) == "json"]
-        current = preferred or self.product_combo.currentText()
-        if current not in names:
-            current = names[0] if names else ""
+        if preferred is not None:
+            current = str(preferred or "").strip()
+        else:
+            current = str(self._active_product_name or "").strip()
+        if current and current not in names:
+            current = ""
 
-        self._product_syncing = True
-        try:
-            self.product_combo.clear()
-            self.product_combo.addItems(names)
-            if current:
-                index = self.product_combo.findText(current)
-                if index >= 0:
-                    self.product_combo.setCurrentIndex(index)
-        finally:
-            self._product_syncing = False
-
+        self._active_product_name = current
+        self._update_product_name_display()
+        self.select_product_button.setEnabled(bool(names))
         self.manage_json_button.setEnabled(bool(names))
 
         if not current:
-            self._attr_table_structure_key = None
-            self.attr_table.clearContents()
-            self.attr_table.setRowCount(0)
-            self.poweron_table.clearContents()
-            self.poweron_table.setRowCount(0)
-            self.autoreply_table.clearContents()
-            self.autoreply_table.setRowCount(0)
-            self._clear_grid()
+            self._clear_product_panels()
             return
 
-        # 仅在页签2当前可见时加载 JSON 产品；隐藏时保留页面1的 Word 配置。
         if self.isVisible():
             try:
                 if getattr(self._mw, "product_var", "") != current:
-                    self._mw.load_product_cfg(current)
-            except Exception:
-                pass
+                    if not self._mw.load_product_cfg(current):
+                        self._active_product_name = ""
+                        self._update_product_name_display()
+                        self._clear_product_panels()
+                        self._mw.set_status(f"产品“{current}”加载失败，请重新选择")
+                        return
+            except Exception as exc:
+                self._active_product_name = ""
+                self._update_product_name_display()
+                self._clear_product_panels()
+                self._mw.report_error("产品加载失败", exc)
+                return
         if getattr(self._mw, "product_var", "") == current:
             self.refresh_attr_table()
             self.refresh_current_values()
             self._refresh_preset_commands()
+
+    def _clear_product_panels(self) -> None:
+        self._attr_table_structure_key = None
+        self.attr_table.clearContents()
+        self.attr_table.setRowCount(0)
+        self.poweron_table.clearContents()
+        self.poweron_table.setRowCount(0)
+        self.autoreply_table.clearContents()
+        self.autoreply_table.setRowCount(0)
+        self._clear_grid()
+        self.refresh_action_event_table()
 
     def clear_output(self) -> None:
         self._clear_data()
@@ -2208,9 +2222,9 @@ QTableView#AttributeTable::item:selected {{
             row = self._attr_row_by_id.get(entry.attrid)
             if row is None:
                 continue
-            item = self.attr_table.item(row, 6)
+            item = self.attr_table.item(row, 7)
             if item is not None:
-                current_text = str(entry.current_value)
+                current_text = format_attr_display_value(entry.current_value, entry.typeid)
                 previous_text = item.text()
                 if previous_text != current_text:
                     if self._attr_value_width_tier(previous_text) != self._attr_value_width_tier(
@@ -2220,7 +2234,7 @@ QTableView#AttributeTable::item:selected {{
                     item.setText(current_text)
                     item.setToolTip(current_text)
         if remeasure_needed:
-            self._schedule_attr_column_remeasure(6)
+            self._schedule_attr_column_remeasure(7)
 
     @staticmethod
     def _attr_value_width_tier(text: str) -> int:
@@ -2251,15 +2265,37 @@ QTableView#AttributeTable::item:selected {{
             6: (0, 4294967295),
             7: (-9223372036854775808, 9223372036854775807),
             8: (0, 18446744073709551615),
-            15: (-128, 127),
-            16: (0, 255),
-            17: (-32768, 32767),
-            18: (0, 65535),
-            19: (-2147483648, 2147483647),
-            20: (0, 4294967295),
-            21: (-9223372036854775808, 9223372036854775807),
-            22: (0, 18446744073709551615),
         }.get(int(typeid))
+
+    def _parse_attr_input_value(self, entry, value_text: str):
+        text = str(value_text or "").strip()
+        if entry.typeid == 14 and entry.uses_xjiang_varint:
+            if not text:
+                raise AttributeValidationError("请输入整数")
+            return int(text, 0)
+        return _convert_value(text, entry.typeid)
+
+    def _resolve_attr_report_value(self, center, entry):
+        edit = self._attr_send_edits.get(entry.attrid)
+        if edit is not None:
+            text = edit.text().strip()
+            if text:
+                return center.validate_attr_value(
+                    entry.attrid,
+                    self._parse_attr_input_value(entry, text),
+                )
+        return center.validate_attr_value(entry.attrid, entry.current_value)
+
+    def _format_send_placeholder(self, entry, constraints: dict) -> str:
+        if entry.typeid == 14 and entry.uses_xjiang_varint:
+            return "整数"
+        if entry.typeid in (9, 10, 15, 16, 17, 18, 19, 20, 21, 22):
+            return format_attr_range_display(entry, constraints)
+        if entry.typeid in (13, 23, 24):
+            return "JSON"
+        if entry.typeid == 11:
+            return "字符串"
+        return "值"
 
     def _build_attr_send_widget(self, entry, old_text: str) -> tuple[QWidget, int]:
         """Create type-aware report controls and return (widget, row_height)."""
@@ -2332,34 +2368,46 @@ QTableView#AttributeTable::item:selected {{
                 product_min = constraints.get("minimum")
                 product_max = constraints.get("maximum")
                 if product_min not in (None, ""):
-                    low = max(low, int(product_min))
+                    low = max(low, int(float(product_min)))
                 if product_max not in (None, ""):
-                    high = min(high, int(product_max))
+                    high = min(high, int(float(product_max)))
                 bounds = (low, high)
             except (TypeError, ValueError):
                 pass
         if bounds is not None:
             send_edit.setPlaceholderText(f"{bounds[0]}-{bounds[1]}")
-            # QIntValidator 的底层范围是 32 位 int。UINT32/INT64/UINT64
-            # 不能强塞进该验证器，否则会错误阻止协议类型本来允许的值；
-            # 这些大整数仍会在发送前由 AttrStateCenter 做严格校验。
             if (
                 -2147483648 <= bounds[0] <= 2147483647
                 and -2147483648 <= bounds[1] <= 2147483647
             ):
                 send_edit.setValidator(QIntValidator(bounds[0], bounds[1], send_edit))
         elif entry.typeid in (9, 10, 15, 16, 17, 18, 19, 20, 21, 22):
-            send_edit.setPlaceholderText(str(entry.range_str or "数值"))
+            send_edit.setPlaceholderText(self._format_send_placeholder(entry, constraints))
+            minimum = constraints.get("minimum")
+            maximum = constraints.get("maximum")
+            try:
+                if minimum not in (None, "") and maximum not in (None, ""):
+                    validator = QDoubleValidator(float(minimum), float(maximum), 6, send_edit)
+                    validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+                    send_edit.setValidator(validator)
+            except (TypeError, ValueError):
+                pass
         elif entry.typeid == 11:
             send_edit.setPlaceholderText("字符串")
             max_length = constraints.get("string_length")
             if isinstance(max_length, int) and max_length > 0:
                 send_edit.setMaxLength(max_length)
+        elif entry.typeid == 14 and entry.uses_xjiang_varint:
+            send_edit.setPlaceholderText("整数")
+            send_edit.setValidator(QIntValidator(-2147483647, 2147483647, send_edit))
         elif entry.typeid in (13, 14, 23, 24):
             send_edit.setPlaceholderText("JSON")
         else:
             send_edit.setPlaceholderText("值")
-        send_edit.setText(old_text)
+        initial_text = str(old_text or "").strip()
+        if not initial_text:
+            initial_text = format_attr_display_value(entry.current_value, entry.typeid)
+        send_edit.setText(initial_text)
         send_button = PushButton("上报", send_cell)
         fit_text_control(send_button, point_size=self._side_font_point_size)
         send_button.clicked.connect(
@@ -2495,14 +2543,26 @@ QTableView#AttributeTable::item:selected {{
                 type_item = self._readonly_item(_typeid_name(entry.typeid))
                 type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.attr_table.setItem(row, 5, type_item)
-                current_item = self._readonly_item(entry.current_value)
+                range_item = self._readonly_item(
+                    format_attr_range_display(
+                        entry,
+                        center.get_value_constraints(entry.attrid),
+                    )
+                )
+                range_item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                )
+                self.attr_table.setItem(row, 6, range_item)
+                current_item = self._readonly_item(
+                    format_attr_display_value(entry.current_value, entry.typeid)
+                )
                 current_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.attr_table.setItem(row, 6, current_item)
+                self.attr_table.setItem(row, 7, current_item)
 
                 send_cell, row_height = self._build_attr_send_widget(
                     entry, old_send.get(entry.attrid, "")
                 )
-                self.attr_table.setCellWidget(row, 7, send_cell)
+                self.attr_table.setCellWidget(row, 8, send_cell)
                 self.attr_table.setRowHeight(row, row_height)
         finally:
             self.attr_table.setUpdatesEnabled(True)
@@ -2528,17 +2588,58 @@ QTableView#AttributeTable::item:selected {{
     # ------------------------------------------------------------------
     # Product import / switching
     # ------------------------------------------------------------------
-    def _on_product_changed(self, name: str) -> None:
-        if self._product_syncing or not name:
-            return
+    def _update_product_name_display(self) -> None:
+        name = str(self._active_product_name or "").strip()
+        if name:
+            self.product_name_label.setText(name)
+            self.product_name_label.setStyleSheet("")
+        else:
+            self.product_name_label.setText("未选择")
+            self.product_name_label.setStyleSheet(f"color: {PALETTE['text_secondary']};")
+
+    def _set_active_product(self, name: str) -> None:
+        name = str(name or "").strip()
         _sources, kinds = self._mw.get_product_catalog()
-        if kinds.get(name) != "json":
+        if name and kinds.get(name) != "json":
             return
-        self._mw.load_product_cfg(name)
+        self._active_product_name = name
+        self._update_product_name_display()
+        if not name:
+            self._clear_product_panels()
+            if self.isVisible():
+                self._mw.clear_mcu_product_state()
+            return
+        if not self._mw.load_product_cfg(name):
+            self._active_product_name = ""
+            self._update_product_name_display()
+            self._clear_product_panels()
+            if self.isVisible():
+                self._mw.clear_mcu_product_state()
+            return
         self.refresh_attr_table()
         self.refresh_current_values()
         self._refresh_preset_commands()
 
+    def _open_select_product_dialog(self) -> None:
+        from protocol_parser.product_select_dialog import ProductSelectDialog
+        from protocol_parser.product_management import collect_product_json_records
+
+        sources, kinds = self._mw.get_product_catalog()
+        records = collect_product_json_records(sources, kinds)
+        if not records:
+            StyledMessageBox.information(self, "提示", "当前没有可选择的 JSON 产品")
+            return
+        dialog = ProductSelectDialog(
+            self,
+            records,
+            current_product=self._active_product_name,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = str(dialog.selected_product or "").strip()
+        if not selected:
+            return
+        self._set_active_product(selected)
 
     def _import_product_json(self) -> None:
         from protocol_parser.product_import_dialog import ProductImportDialog
@@ -2559,7 +2660,7 @@ QTableView#AttributeTable::item:selected {{
             StyledMessageBox.information(self, "提示", "当前没有可管理的产品 JSON")
             return
 
-        active_name = str(self.product_combo.currentText() or "").strip()
+        active_name = self.active_product_name()
         dialog = ProductJsonManageDialog(
             self,
             records,
@@ -2663,8 +2764,8 @@ QTableView#AttributeTable::item:selected {{
         selected_is_active = product_name == active_product
         if selected_is_active:
             detail = (
-                "该产品是模拟 MCU 当前产品。删除后将自动切换到其他可用产品；"
-                "若没有其他产品，当前产品和属性表将被清空。"
+                "该产品是模拟 MCU 当前产品。删除后当前产品将被清空，"
+                "实时属性、动作/事件和预置命令面板也会一并清空。"
             )
         else:
             detail = (
@@ -2699,14 +2800,13 @@ QTableView#AttributeTable::item:selected {{
                 self._mw.set_status(f"已删除产品JSON：{product_name}")
                 return
 
-            self.sync_products()
-            next_name = str(self.product_combo.currentText() or "").strip()
-            if next_name:
-                self._mw.load_product_cfg(next_name)
+            self.sync_products("" if selected_is_active else active_product)
+            if self._active_product_name:
+                self._mw.load_product_cfg(self._active_product_name)
                 self.refresh_attr_table()
                 self.refresh_current_values()
                 self._refresh_preset_commands()
-            else:
+            elif self.isVisible():
                 self._mw.clear_mcu_product_state()
                 self.refresh_attr_table()
                 self._refresh_preset_commands()
@@ -2943,7 +3043,7 @@ QTableView#AttributeTable::item:selected {{
             StyledMessageBox.warning(self, "提示", "只写属性不能由 MCU 主动状态上报")
             return
         try:
-            value = _convert_value(value_text, entry.typeid)
+            value = self._parse_attr_input_value(entry, value_text)
             value = center.validate_attr_value(attrid, value)
             frame = self._mw.get_cmd_engine().build_attr_report([attrid], {attrid: value})
             if self._mw.send_generated_frame(frame, entry.cn_name or entry.name):
@@ -2979,7 +3079,7 @@ QTableView#AttributeTable::item:selected {{
                     continue
                 # 批量发送前再次进行产品级校验，避免历史缓存或外部修改
                 # 留下超范围值后被直接编码并发送。
-                value = center.validate_attr_value(entry.attrid, entry.current_value)
+                value = self._resolve_attr_report_value(center, entry)
                 selected.append((entry.attrid, value))
             if not selected:
                 StyledMessageBox.information(self, "提示", "请至少勾选一个要批量上报的属性")

@@ -24,6 +24,45 @@ QTextEdit:focus {{
 """
 
 
+SEND_TEXT_EDIT_QSS = f"""
+QTextEdit#SendRawText, QTextEdit#SendProtocolText {{
+    color: {PALETTE["text"]};
+    background-color: {PALETTE["card_bg"]};
+    selection-color: {PALETTE["text_on_primary"]};
+    selection-background-color: {PALETTE["primary"]};
+    border: 1px solid {PALETTE["card_border"]};
+    border-radius: {CORNER_RADIUS_PX}px;
+    padding: 6px;
+}}
+QTextEdit#SendRawText:focus, QTextEdit#SendProtocolText:focus {{
+    border: 1px solid {PALETTE["primary"]};
+}}
+"""
+
+
+def apply_send_text_edit_style(text_edit) -> None:
+    """Keep send-panel editors plain-text with light selection colors."""
+    text_edit.setAcceptRichText(False)
+    text_edit.setStyleSheet(SEND_TEXT_EDIT_QSS)
+    text_edit.setProperty("_smst_send_text_base_qss", SEND_TEXT_EDIT_QSS)
+
+
+def strip_send_editor_rich_text(text_edit) -> None:
+    """Drop character-level colors copied from the log into send editors."""
+    plain = text_edit.toPlainText()
+    cursor = text_edit.textCursor()
+    pos = cursor.position()
+    anchor = cursor.anchor()
+    text_edit.setPlainText(plain)
+    cursor = text_edit.textCursor()
+    if anchor != pos:
+        cursor.setPosition(min(anchor, len(plain)))
+        cursor.setPosition(min(pos, len(plain)), cursor.MoveMode.KeepAnchor)
+    else:
+        cursor.setPosition(min(pos, len(plain)))
+    text_edit.setTextCursor(cursor)
+
+
 def make_crisp_ui_font(point_size: int = UI_FONT_BASE_POINT_SIZE) -> QFont:
     return make_ui_font(point_size)
 
