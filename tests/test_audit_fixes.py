@@ -85,3 +85,12 @@ def test_session_snapshot_keeps_word_product():
     snap = snapshot_from_app(app)
     assert snap.product_name == "Word协议A"
     assert snap.product_source == "word.json"
+
+
+def test_mcu_auto_reply_rebinds_after_product_or_toggle():
+    gui = Path("protocol_parser/gui.py").read_text(encoding="utf-8")
+    mcu = Path("protocol_parser/mcu_page.py").read_text(encoding="utf-8")
+    assert "def rebind_mcu_auto_reply_session" in gui
+    assert "self.rebind_mcu_auto_reply_session()" in gui
+    assert "if self._is_mcu_auto_reply_context_active():" in gui
+    assert "self._mw.rebind_mcu_auto_reply_session()" in mcu

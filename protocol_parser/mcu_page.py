@@ -3409,6 +3409,7 @@ QTableView#AttributeTable::item:selected {{
         engine.enable(bool(checked), enable_all_rules=bool(checked))
         if checked:
             self._refresh_autoreply_rules()
+        self._mw.rebind_mcu_auto_reply_session()
         self._mw.set_status("自动回复已开启（全部规则）" if checked else "自动回复已关闭")
 
     def _clear_data(self) -> None:

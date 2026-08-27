@@ -49,10 +49,13 @@ def test_gui_source_freezes_monitor_mode_and_uses_incremental_updates() -> None:
     gui = read("protocol_parser/gui.py")
     mcu_page = read("protocol_parser/mcu_page.py")
 
-    assert "mcu_cfg=self._mcu_cfg if mcu_auto_reply else {}" in gui
+    assert "mcu_cfg=self._mcu_cfg if mcu_session else {}" in gui
     assert "on_mcu_frame=on_mcu_frame if mcu_session else None" in gui
     assert "primary_enabled=not mcu_session" in gui
-    assert "self._auto_reply.set_collector(self.collector if mcu_auto_reply else None)" in gui
+    assert "def rebind_mcu_auto_reply_session" in gui
+    assert "self.rebind_mcu_auto_reply_session()" in gui
+    assert "if self._is_mcu_auto_reply_context_active():" in gui
+    assert "self._mw.rebind_mcu_auto_reply_session()" in mcu_page
     assert "mcu_session = self._monitoring_page == 1" in gui
     assert "receive_display_batch_signal" in gui
     assert "mcu_display_batch_signal" in gui

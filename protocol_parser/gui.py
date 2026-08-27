@@ -2048,6 +2048,17 @@ class ProtocolParserApp(FluentWindow):
         except Exception:
             pass
 
+    def rebind_mcu_auto_reply_session(self) -> None:
+        """Attach MCU auto-reply after product selection or toggle during monitoring."""
+        if not self.is_collecting or self._monitoring_page != 1:
+            return
+        if not self._is_mcu_auto_reply_context_active():
+            self._auto_reply.set_collector(None)
+            return
+        self._sync_mcu_collector_cfg()
+        if self.collector is not None:
+            self._auto_reply.set_collector(self.collector)
+
     def _build_top_bar(self) -> QWidget:
         bar = QWidget()
         self.top_bar_layout = QGridLayout(bar)
@@ -3329,6 +3340,7 @@ class ProtocolParserApp(FluentWindow):
         if str((self.cfg or {}).get("import_source") or "").strip().lower() == "json":
             self._mcu_cfg = self.cfg or {}
             self._sync_mcu_collector_cfg()
+            self.rebind_mcu_auto_reply_session()
 
         # 仅当页签2当前选中的就是该 JSON 产品时刷新页签2，避免页面1切换 Word
         # 产品时把页签2的产品选择和属性内容强制同步过去。
@@ -3814,9 +3826,6 @@ class ProtocolParserApp(FluentWindow):
             self._monitoring_page = 0
         self._reset_inactive_display_buffers()
         mcu_session = self._monitoring_page == 1
-        mcu_auto_reply = bool(
-            mcu_session and self._is_mcu_auto_reply_context_active()
-        )
         self._set_status(f"正在{'重新' if is_reconnect else ''}连接 {port} @ {baudrate}...")
 
         self._display_prefs["hex_format"] = self._session_hex_format()
@@ -3858,7 +3867,7 @@ class ProtocolParserApp(FluentWindow):
             if generation != self._collector_generation or not mcu_session:
                 return
             try:
-                if mcu_auto_reply:
+                if self._is_mcu_auto_reply_context_active():
                     self.bridge.mcu_frame_signal.emit(generation, result, frame, ts)
                 segments = build_display_segments(
                     result,
@@ -3969,7 +3978,7 @@ class ProtocolParserApp(FluentWindow):
                 on_error=on_error,
                 on_connection_error=on_connection_error,
                 on_raw=on_raw,
-                mcu_cfg=self._mcu_cfg if mcu_auto_reply else {},
+                mcu_cfg=self._mcu_cfg if mcu_session else {},
                 mcu_direction="request",
                 on_mcu_frame=on_mcu_frame if mcu_session else None,
                 primary_enabled=not mcu_session,
@@ -3978,7 +3987,7 @@ class ProtocolParserApp(FluentWindow):
                 max_reconnect_attempts=0,
                 parse_queue_size=512,
             )
-            self._auto_reply.set_collector(self.collector if mcu_auto_reply else None)
+            self.rebind_mcu_auto_reply_session()
             self._attr_center.reset_heartbeat_counter()
             self.collector.start()
         except Exception as e:

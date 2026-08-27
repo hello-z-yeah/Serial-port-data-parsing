@@ -1,8 +1,8 @@
 {
-  "version": "3.5.6",
-  "tag_name": "3.5.6",
-  "asset_name": "SerialXSetup3.5.6_x64.exe",
-  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.5.6/SerialXSetup3.5.6_x64.exe",
-  "sha256": "44505dc3e346c63d973d83b1b21d25eccfbe4df2975c2fae2f751420030f36b0",
-  "notes": "Fix send-panel text styling, event report wire-id mapping, and 0x21/0x11 encoding"
+  "version": "3.5.7",
+  "tag_name": "3.5.7",
+  "asset_name": "SerialXSetup3.5.7_x64.exe",
+  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.5.7/SerialXSetup3.5.7_x64.exe",
+  "sha256": "7670c630a5307b948c7ad42121c142246db2f9e1f31d8c705123f33684b3e4ff",
+  "notes": "Fix MCU auto-reply after monitor-first product selection, plus protocol import and session hardening"
 }
