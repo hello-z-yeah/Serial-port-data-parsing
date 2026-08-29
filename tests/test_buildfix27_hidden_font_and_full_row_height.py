@@ -45,7 +45,7 @@ def test_wrapped_attribute_height_uses_exact_document_layout_and_delayed_recheck
 
 def test_name_and_property_columns_are_content_measured_with_adaptive_wrap_width():
     source = _source()
-    assert "self._attr_wrapped_column_maximums = {2: 260, 3: 320, 6: 220}" in source
+    assert "self._attr_wrapped_column_maximums = {1: 260, 2: 120, 5: 220}" in source
     assert "min(adaptive_cap, measured)" in source
     assert "available_width = max(24, table.columnWidth(column) - 36)" in source
     assert "WrappedAttributeTextDelegate" in source

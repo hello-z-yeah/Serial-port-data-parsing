@@ -1,8 +1,8 @@
 {
-  "version": "3.5.7",
-  "tag_name": "3.5.7",
-  "asset_name": "SerialXSetup3.5.7_x64.exe",
-  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.5.7/SerialXSetup3.5.7_x64.exe",
-  "sha256": "7670c630a5307b948c7ad42121c142246db2f9e1f31d8c705123f33684b3e4ff",
+  "version": "3.5.8",
+  "tag_name": "3.5.8",
+  "asset_name": "SerialXSetup3.5.8_x64.exe",
+  "download_url": "https://gitee.com/hou-zeyu15/Serial-port-data-parsing/releases/download/3.5.8/SerialXSetup3.5.8_x64.exe",
+  "sha256": "de7ab741640422e3c767a31bae68598ebea9883f29c87d282786f30004db5be9",
   "notes": "Fix MCU auto-reply after monitor-first product selection, plus protocol import and session hardening"
 }

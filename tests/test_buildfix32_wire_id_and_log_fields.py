@@ -43,7 +43,7 @@ def test_realtime_attr_id_column_displays_wire_id_without_changing_internal_row_
     assert "build_snapshot_attrid_map" in refresh
     assert "wire_id = entry.attrid" in refresh
     assert "canonical_map.get(entry.attrid, entry.attrid)" in refresh
-    assert 'self._readonly_item(f"0x{wire_id:02X}")' in refresh
+    assert 'BodyLabel(f"0x{wire_id:02X}")' in refresh
     # Internal ID remains the logic/index key.
     assert "self._attr_row_by_id[entry.attrid] = row" in refresh
 

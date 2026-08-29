@@ -42,7 +42,7 @@ from protocol_parser.ui_helpers import (
 from protocol_parser.app_host import AppHostProtocol
 from protocol_parser.product_importer import localized_attribute_name
 from protocol_parser.exceptions import ProductConfigError, AttributeValidationError
-from protocol_parser.widgets import StyledMessageBox, apply_fluent_dialog_style, CellWidgetAlignedTable, apply_tooltip
+from protocol_parser.widgets import StyledMessageBox, apply_fluent_dialog_style, CellWidgetAlignedTable, FrozenColumnTable, apply_tooltip
 from protocol_parser.theme import PALETTE
 from protocol_parser.ui_corners import CORNER_RADIUS_PX
 from protocol_parser.dpi_font import (
@@ -502,14 +502,14 @@ class McuSimulatePage(QWidget):
         # BuildFix22: 实时属性列宽完全由内容测量，当前值高频更新时用
         # 250 ms 防抖合并，避免表格持续跳动。
         self._attr_column_minimums = {
-            0: 48, 1: 88, 2: 150, 3: 190,
-            4: 74, 5: 88, 6: 120, 7: 100, 8: 190,
+            0: 120, 1: 150, 2: 80,
+            3: 74, 4: 88, 5: 120, 6: 100, 7: 210,
         }
         # 名称与属性文本采用“内容测量 + 可用宽度上限 + 完整换行”。
         # 宽面板时适度加宽以减少无意义高行，窄面板时保持紧凑并由行高
         # 承载全部文字；绝不再用省略号隐藏内容。
-        self._attr_wrapped_column_maximums = {2: 260, 3: 320, 6: 220}
-        self._attr_wrapped_column_ratios = {2: 0.26, 3: 0.30, 6: 0.22}
+        self._attr_wrapped_column_maximums = {1: 260, 2: 120, 5: 220}
+        self._attr_wrapped_column_ratios = {1: 0.26, 2: 0.15, 5: 0.22}
         self._action_event_wrapped_column_maximums = {3: 280, 4: 220, 5: 260}
         self._action_event_wrapped_column_ratios = {3: 0.32, 4: 0.28, 5: 0.30}
         self._pending_attr_remeasure_columns: set[int] = set()
@@ -1046,10 +1046,10 @@ class McuSimulatePage(QWidget):
         self._relayout_attr_header()
         layout.addLayout(self.attr_header_layout)
 
-        self.attr_table = CellWidgetAlignedTable(card)
-        self.attr_table.setColumnCount(9)
+        self.attr_table = FrozenColumnTable(card, frozen_columns=2)
+        self.attr_table.setColumnCount(8)
         self.attr_table.setHorizontalHeaderLabels([
-            "选", "ID", "名称", "属性文本", "权限", "格式", "范围", "当前值", "发送",
+            "ID", "名称", "属性文本", "权限", "格式", "范围", "当前值", "发送",
         ])
         self.attr_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.attr_table.setAlternatingRowColors(True)
@@ -1089,9 +1089,9 @@ QTableView#AttributeTable::item:selected {{
         self._attr_wrap_delegate = WrappedAttributeTextDelegate(
             self.attr_table, base_delegate=self._attr_base_delegate
         )
+        self.attr_table.setItemDelegateForColumn(1, self._attr_wrap_delegate)
         self.attr_table.setItemDelegateForColumn(2, self._attr_wrap_delegate)
-        self.attr_table.setItemDelegateForColumn(3, self._attr_wrap_delegate)
-        self.attr_table.setItemDelegateForColumn(6, self._attr_wrap_delegate)
+        self.attr_table.setItemDelegateForColumn(5, self._attr_wrap_delegate)
         for column, minimum in self._attr_column_minimums.items():
             self.attr_table.setColumnWidth(column, minimum)
 
@@ -1136,7 +1136,7 @@ QTableView#AttributeTable::item:selected {{
         table.setColumnWidth(4, 140)
         table.setColumnWidth(5, 180)
         table.setColumnWidth(6, 96)
-        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         table.setWordWrap(True)
         table.setTextElideMode(Qt.TextElideMode.ElideNone)
         self._event_param_inputs: dict[tuple[int, int, str], list[LineEdit]] = {}
@@ -1582,7 +1582,10 @@ QTableView#AttributeTable::item:selected {{
             adaptive_cap = int(maximum)
             if viewport_width > 1:
                 adaptive_cap = min(adaptive_cap, max(minimum, int(viewport_width * ratio)))
-            return max(minimum, min(adaptive_cap, measured))
+            measured = max(minimum, min(adaptive_cap, measured))
+        # 发送列（第7列）额外加40像素右边距，避免按钮被竖向滚动条遮挡
+        if column == 7:
+            measured += 40
         return measured
 
     def _measure_action_event_column_width(self, column: int) -> int:
@@ -1629,14 +1632,42 @@ QTableView#AttributeTable::item:selected {{
         if table is None:
             return
         selected = list(range(table.columnCount())) if columns is None else sorted({int(v) for v in columns})
+
+        # 先测量所有待重测列的内容宽度
+        measured: dict[int, int] = {}
+        for column in selected:
+            if 0 <= column < table.columnCount():
+                measured[column] = self._measure_action_event_column_width(column)
+
+        # 仅当重测全部列时，做自适应填充：内容占不满时按比例扩展列宽
+        if measured and len(measured) == table.columnCount():
+            total_content = sum(measured.values())
+            viewport_width = int(table.viewport().width())
+            if total_content > 0 and viewport_width > total_content + 4:
+                extra = viewport_width - total_content
+                # 有最大宽度限制的列不参与扩展，剩余列按当前宽度比例分配额外空间
+                stretchable = [
+                    col for col in measured
+                    if col not in self._action_event_wrapped_column_maximums
+                ]
+                if stretchable:
+                    base_total = sum(measured[col] for col in stretchable)
+                    if base_total > 0:
+                        assigned = 0
+                        for idx, col in enumerate(stretchable):
+                            if idx == len(stretchable) - 1:
+                                add = extra - assigned  # 最后一列取余数，避免舍入误差
+                            else:
+                                add = int(extra * measured[col] / base_total)
+                                assigned += add
+                            measured[col] += add
+
         header = table.horizontalHeader()
         table.setUpdatesEnabled(False)
         try:
-            for column in selected:
-                if column < 0 or column >= table.columnCount():
-                    continue
+            for column, width in measured.items():
                 header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
-                table.setColumnWidth(column, self._measure_action_event_column_width(column))
+                table.setColumnWidth(column, width)
         finally:
             table.setUpdatesEnabled(True)
             table.viewport().update()
@@ -1780,14 +1811,42 @@ QTableView#AttributeTable::item:selected {{
             selected = list(range(table.columnCount()))
         else:
             selected = sorted({int(value) for value in columns})
+
+        # 先测量所有待重测列的内容宽度
+        measured: dict[int, int] = {}
+        for column in selected:
+            if 0 <= column < table.columnCount():
+                measured[column] = self._measure_attr_column_width(column)
+
+        # 仅当重测全部列时，做自适应填充：内容占不满时按比例扩展列宽
+        if measured and len(measured) == table.columnCount():
+            total_content = sum(measured.values())
+            viewport_width = int(table.viewport().width())
+            if total_content > 0 and viewport_width > total_content + 4:
+                extra = viewport_width - total_content
+                # 有最大宽度限制的列不参与扩展，剩余列按当前宽度比例分配额外空间
+                stretchable = [
+                    col for col in measured
+                    if col not in self._attr_wrapped_column_maximums
+                ]
+                if stretchable:
+                    base_total = sum(measured[col] for col in stretchable)
+                    if base_total > 0:
+                        assigned = 0
+                        for idx, col in enumerate(stretchable):
+                            if idx == len(stretchable) - 1:
+                                add = extra - assigned  # 最后一列取余数，避免舍入误差
+                            else:
+                                add = int(extra * measured[col] / base_total)
+                                assigned += add
+                            measured[col] += add
+
         header = table.horizontalHeader()
         table.setUpdatesEnabled(False)
         try:
-            for column in selected:
-                if column < 0 or column >= table.columnCount():
-                    continue
+            for column, width in measured.items():
                 header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
-                table.setColumnWidth(column, self._measure_attr_column_width(column))
+                table.setColumnWidth(column, width)
         finally:
             table.setUpdatesEnabled(True)
             table.viewport().update()
@@ -2222,7 +2281,7 @@ QTableView#AttributeTable::item:selected {{
             row = self._attr_row_by_id.get(entry.attrid)
             if row is None:
                 continue
-            item = self.attr_table.item(row, 7)
+            item = self.attr_table.item(row, 6)
             if item is not None:
                 current_text = format_attr_display_value(entry.current_value, entry.typeid)
                 previous_text = item.text()
@@ -2234,7 +2293,7 @@ QTableView#AttributeTable::item:selected {{
                     item.setText(current_text)
                     item.setToolTip(current_text)
         if remeasure_needed:
-            self._schedule_attr_column_remeasure(7)
+            self._schedule_attr_column_remeasure(6)
 
     @staticmethod
     def _attr_value_width_tier(text: str) -> int:
@@ -2493,21 +2552,25 @@ QTableView#AttributeTable::item:selected {{
                 if not reportable:
                     apply_tooltip(check, "只写属性不能由 MCU 主动状态上报")
                 check.stateChanged.connect(self._on_row_select_changed)
-                check_cell = QWidget(self.attr_table)
-                check_layout = QHBoxLayout(check_cell)
-                check_layout.setContentsMargins(0, 0, 0, 0)
-                check_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                check_layout.addWidget(check)
-                self.attr_table.setCellWidget(row, 0, check_cell)
-                self._attr_select_checks[entry.attrid] = check
 
                 # 显示线协议 serialId（0x00 起顺序），内部 ID 仍用于逻辑。
                 wire_id = entry.attrid
                 if wire_mapping_active and canonical_map:
                     wire_id = int(canonical_map.get(entry.attrid, entry.attrid)) & 0xFF
-                id_item = self._readonly_item(f"0x{wire_id:02X}")
-                id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.attr_table.setItem(row, 1, id_item)
+                id_label = BodyLabel(f"0x{wire_id:02X}")
+                id_label.setObjectName("attrIdLabel")
+                id_label.setToolTip(f"属性 ID 0x{wire_id:02X}")
+
+                # 合并列：多选框在左，ID文本在右
+                id_cell = QWidget(self.attr_table)
+                id_layout = QHBoxLayout(id_cell)
+                id_layout.setContentsMargins(8, 0, 8, 0)
+                id_layout.setSpacing(6)
+                id_layout.addWidget(check)
+                id_layout.addWidget(id_label, 1)
+                self.attr_table.setCellWidget(row, 0, id_cell)
+                self._attr_select_checks[entry.attrid] = check
+
                 attribute_key = str(
                     getattr(entry, "source_attribute_key", "") or ""
                 ).strip()
@@ -2531,18 +2594,18 @@ QTableView#AttributeTable::item:selected {{
                 name_item.setTextAlignment(
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
                 )
-                self.attr_table.setItem(row, 2, name_item)
+                self.attr_table.setItem(row, 1, name_item)
                 property_item = self._readonly_item(property_text)
                 property_item.setTextAlignment(
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
                 )
-                self.attr_table.setItem(row, 3, property_item)
+                self.attr_table.setItem(row, 2, property_item)
                 access_item = self._readonly_item(entry.access)
                 access_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.attr_table.setItem(row, 4, access_item)
+                self.attr_table.setItem(row, 3, access_item)
                 type_item = self._readonly_item(_typeid_name(entry.typeid))
                 type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.attr_table.setItem(row, 5, type_item)
+                self.attr_table.setItem(row, 4, type_item)
                 range_item = self._readonly_item(
                     format_attr_range_display(
                         entry,
@@ -2552,17 +2615,17 @@ QTableView#AttributeTable::item:selected {{
                 range_item.setTextAlignment(
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
                 )
-                self.attr_table.setItem(row, 6, range_item)
+                self.attr_table.setItem(row, 5, range_item)
                 current_item = self._readonly_item(
                     format_attr_display_value(entry.current_value, entry.typeid)
                 )
                 current_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.attr_table.setItem(row, 7, current_item)
+                self.attr_table.setItem(row, 6, current_item)
 
                 send_cell, row_height = self._build_attr_send_widget(
                     entry, old_send.get(entry.attrid, "")
                 )
-                self.attr_table.setCellWidget(row, 8, send_cell)
+                self.attr_table.setCellWidget(row, 7, send_cell)
                 self.attr_table.setRowHeight(row, row_height)
         finally:
             self.attr_table.setUpdatesEnabled(True)

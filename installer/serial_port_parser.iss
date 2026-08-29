@@ -1,6 +1,6 @@
-; Fast-start onedir installer
+﻿; Fast-start onedir installer
 #define MyAppName          "SerialX"
-#define MyAppVersion       "3.5.7"
+#define MyAppVersion       "3.5.8"
 #define MyAppPublisher     "SerialX"
 #define MyAppExeName       "SerialX.exe"
 #define MyAppBaseName      "SerialX"

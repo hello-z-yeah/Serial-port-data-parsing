@@ -11,8 +11,8 @@ def _source() -> str:
 
 def test_wrapped_columns_use_content_and_available_width_caps():
     source = _source()
-    assert "self._attr_wrapped_column_maximums = {2: 260, 3: 320, 6: 220}" in source
-    assert "self._attr_wrapped_column_ratios = {2: 0.26, 3: 0.30, 6: 0.22}" in source
+    assert "self._attr_wrapped_column_maximums = {1: 260, 2: 120, 5: 220}" in source
+    assert "self._attr_wrapped_column_ratios = {1: 0.26, 2: 0.15, 5: 0.22}" in source
     assert "viewport_width = int(table.viewport().width())" in source
     assert "return max(minimum, min(adaptive_cap, measured))" in source
 

@@ -39,7 +39,7 @@ def test_current_value_column_remeasure_is_debounced():
     assert "self._attr_column_remeasure_timer.setInterval(250)" in source
     assert "def _schedule_attr_column_remeasure" in source
     assert "self._attr_column_remeasure_timer.start(250)" in source
-    assert "self._schedule_attr_column_remeasure(7)" in source
+    assert "self._schedule_attr_column_remeasure(6)" in source
 
 
 def test_preset_tables_protect_embedded_controls_and_can_scroll():

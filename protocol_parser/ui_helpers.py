@@ -425,7 +425,7 @@ def _format_fields_summary(
                     summaries.append("，".join(child_parts))
             continue
         summaries.append(f"{name}:{text}")
-    joiner = "\n" if cmd_code == "0x24" else "；"
+    joiner = "\n" if cmd_code in ("0x24", "0x10") else "；"
     return joiner.join(summaries)
 
 

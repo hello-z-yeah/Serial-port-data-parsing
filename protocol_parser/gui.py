@@ -4021,6 +4021,9 @@ class ProtocolParserApp(FluentWindow):
             return False
 
         self.is_collecting = True
+        # 重新绑定 MCU 自动回复：_stop_serial 时 set_collector(None)，
+        # rebind_mcu_auto_reply_session 内部检查 is_collecting，必须在设为 True 后再调用。
+        self.rebind_mcu_auto_reply_session()
         self._serial_reconnect_attempt = 0
         self._port_disappear_handled = False
         self._last_rx_overflow_reported = 0
@@ -4069,6 +4072,13 @@ class ProtocolParserApp(FluentWindow):
             self._tx_cycle_timer.stop()
             self._tx_cycle_timer = None
         self.tx_cycle = False
+        # 同步"自动发送"按钮视觉状态：停止监控后按钮必须回到未选中，
+        # 否则重启监控后按钮显示开启但实际不发送。
+        cycle_btn = getattr(self, "btn_cycle", None)
+        if cycle_btn is not None and cycle_btn.isChecked():
+            cycle_btn.blockSignals(True)
+            cycle_btn.setChecked(False)
+            cycle_btn.blockSignals(False)
         self._set_tx_controls_enabled(False)
         self._restart_port_watch_timer()
 

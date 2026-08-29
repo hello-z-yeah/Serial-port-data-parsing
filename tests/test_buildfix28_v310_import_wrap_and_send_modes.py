@@ -11,10 +11,10 @@ DPI = (ROOT / "protocol_parser" / "dpi_font.py").read_text(encoding="utf-8")
 
 
 def test_application_identity_is_v330_everywhere():
-    assert APP_VERSION == "3.5.7"
+    assert APP_VERSION == "3.5.8"
     assert f'#define MyAppVersion       "{APP_VERSION}"' in (ROOT / "installer" / "serial_port_parser.iss").read_text(encoding="utf-8-sig")
     version_info = (ROOT / "resources" / "version_info.txt").read_text(encoding="utf-8")
-    assert "filevers=(3, 5, 7, 0)" in version_info
+    assert "filevers=(3, 5, 8, 0)" in version_info
     assert f"StringStruct('ProductVersion', '{APP_VERSION}')" in version_info
 
 
@@ -30,8 +30,8 @@ def test_receive_font_control_is_hidden_without_removing_logic():
 
 def test_wrapped_attribute_rows_preserve_full_height_across_dpi_updates():
     assert "class WrappedAttributeTextDelegate" in MCU
+    assert "setItemDelegateForColumn(1" in MCU
     assert "setItemDelegateForColumn(2" in MCU
-    assert "setItemDelegateForColumn(3" in MCU
     assert 'setProperty("smstPreserveWrappedRowHeight", True)' in MCU
     assert 'table.property("smstPreserveWrappedRowHeight")' in DPI
     assert "QTimer.singleShot(160, self._resize_attr_rows_to_wrapped_content)" in MCU

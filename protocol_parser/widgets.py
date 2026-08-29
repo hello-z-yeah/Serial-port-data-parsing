@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal, QModelIndex, QObject, QEvent
 from PySide6.QtWidgets import (
     QLabel, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton,
-    QButtonGroup, QDialog, QSizePolicy, QTableWidget, QMessageBox,
+    QButtonGroup, QDialog, QSizePolicy, QTableWidget, QTableWidgetItem, QStyle, QHeaderView, QMessageBox,
 )
 from qfluentwidgets import (
     ToolTipFilter, ToolTipPosition, CardWidget, StrongBodyLabel,
@@ -155,6 +155,558 @@ class CellWidgetAlignedTable(TableWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reposition_cell_widgets()
+
+
+class FrozenColumnTable(QWidget):
+    """带左侧冻结列的表格：前 N 列不随横向滚动条移动。
+
+    采用双表格并排方案：左侧冻结表格只显示前 N 列，右侧主表格显示剩余列。
+    仅右侧主表格有横向和竖向滚动条，左侧冻结表格无滚动条。
+    双向同步垂直滚动、行选择、行高、item 内容和 cellWidget。
+    """
+
+    def __init__(self, parent=None, frozen_columns: int = 2):
+        super().__init__(parent)
+        self._frozen_column_count = max(1, int(frozen_columns))
+        self._syncing_selection = False
+        self._syncing_scroll = False
+        self._total_columns = 0
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # 左侧冻结表格（使用与主表格相同的类型，确保行高渲染行为一致）
+        self._frozen_table = CellWidgetAlignedTable(self)
+        self._frozen_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._frozen_table.verticalHeader().setVisible(False)
+        # 水平表头保持可见，与右侧主表格样式一致
+        self._frozen_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._frozen_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._frozen_table.setAlternatingRowColors(True)
+        self._frozen_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._frozen_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self._frozen_table.verticalHeader().setDefaultSectionSize(38)
+        # 冻结表格右侧保留一条细分隔线，其余样式由 setStyleSheet 统一同步
+        # 显式隐藏横向滚动条，确保不占用空间
+        self._frozen_table.setStyleSheet(
+            "QTableView { border: none; border-right: 1px solid %s; }"
+            "QScrollBar:horizontal { height: 0px; }"
+            % (PALETTE["card_border"])
+        )
+        self._apply_frozen_header_defaults()
+
+        # 右侧主表格
+        self._main_table = CellWidgetAlignedTable(self)
+        self._main_table.verticalHeader().setVisible(False)
+        self._main_table.setAlternatingRowColors(True)
+        self._main_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._main_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+
+        layout.addWidget(self._frozen_table)
+        layout.addWidget(self._main_table, 1)
+
+        # 同步垂直滚动（单向：主表格滚动 → 冻结表格跟随）
+        self._main_table.verticalScrollBar().valueChanged.connect(self._on_main_scroll)
+
+        # 同步选择
+        self._main_table.itemSelectionChanged.connect(self._sync_selection_to_frozen)
+        self._frozen_table.itemSelectionChanged.connect(self._sync_selection_from_frozen)
+
+        # 主表格行高变化时同步到冻结表格
+        self._main_table.verticalHeader().sectionResized.connect(self._on_row_resized)
+
+    # ---- 滚动同步 ----
+    def _apply_frozen_header_defaults(self) -> None:
+        """把冻结表格表头设成与主表格一致的默认行为（Fixed、不可移动等）。"""
+        fh = self._frozen_table.horizontalHeader()
+        fh.setMinimumSectionSize(46)
+        fh.setSectionsMovable(False)
+        fh.setCascadingSectionResizes(False)
+        fh.setStretchLastSection(False)
+        for col in range(self._frozen_table.columnCount()):
+            fh.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
+
+    def _on_main_scroll(self, value: int) -> None:
+        if self._syncing_scroll:
+            return
+        self._syncing_scroll = True
+        try:
+            # 先同步行高，确保滚动位置对齐
+            self._sync_all_row_heights()
+            # 直接设置冻结表格滚动条值，AlwaysOff 只隐藏控件不影响 setValue
+            self._frozen_table.verticalScrollBar().setValue(value)
+        finally:
+            self._syncing_scroll = False
+
+    # ---- 选择同步 ----
+    def _sync_selection_to_frozen(self) -> None:
+        if self._syncing_selection:
+            return
+        self._syncing_selection = True
+        try:
+            rows = {idx.row() for idx in self._main_table.selectedIndexes()}
+            self._frozen_table.clearSelection()
+            for row in rows:
+                self._frozen_table.selectRow(row)
+        finally:
+            self._syncing_selection = False
+
+    def _sync_selection_from_frozen(self) -> None:
+        if self._syncing_selection:
+            return
+        self._syncing_selection = True
+        try:
+            rows = {idx.row() for idx in self._frozen_table.selectedIndexes()}
+            self._main_table.clearSelection()
+            for row in rows:
+                self._main_table.selectRow(row)
+        finally:
+            self._syncing_selection = False
+
+    # ---- 行高同步 ----
+    def _on_row_resized(self, row: int, _old: int, new: int) -> None:
+        if self._frozen_table.rowHeight(row) != new:
+            self._frozen_table.setRowHeight(row, new)
+
+    def _sync_all_row_heights(self) -> None:
+        for row in range(self._main_table.rowCount()):
+            h = self._main_table.rowHeight(row)
+            if self._frozen_table.rowHeight(row) != h:
+                self._frozen_table.setRowHeight(row, h)
+
+    # ---- 列索引转换 ----
+    def _is_frozen_column(self, column: int) -> bool:
+        return column < self._frozen_column_count
+
+    def _main_column(self, column: int) -> int:
+        return column - self._frozen_column_count
+
+    # ---- 基础接口 ----
+    def setColumnCount(self, columns: int) -> None:
+        self._total_columns = int(columns)
+        frozen_cols = min(columns, self._frozen_column_count)
+        main_cols = max(0, columns - self._frozen_column_count)
+        self._frozen_table.setColumnCount(frozen_cols)
+        self._main_table.setColumnCount(main_cols)
+        self._apply_frozen_header_defaults()
+        self._update_frozen_table_width()
+
+    def columnCount(self) -> int:
+        return self._total_columns
+
+    def setRowCount(self, rows: int) -> None:
+        self._frozen_table.setRowCount(rows)
+        self._main_table.setRowCount(rows)
+        self._sync_all_row_heights()
+
+    def rowCount(self) -> int:
+        return self._main_table.rowCount()
+
+    def setItem(self, row: int, column: int, item) -> None:
+        if self._is_frozen_column(column):
+            self._frozen_table.setItem(row, column, item)
+        else:
+            self._main_table.setItem(row, self._main_column(column), item)
+
+    def item(self, row: int, column: int):
+        if self._is_frozen_column(column):
+            return self._frozen_table.item(row, column)
+        return self._main_table.item(row, self._main_column(column))
+
+    def setCellWidget(self, row: int, column: int, widget) -> None:
+        if self._is_frozen_column(column):
+            self._frozen_table.setCellWidget(row, column, widget)
+        else:
+            self._main_table.setCellWidget(row, self._main_column(column), widget)
+
+    def cellWidget(self, row: int, column: int):
+        if self._is_frozen_column(column):
+            return self._frozen_table.cellWidget(row, column)
+        return self._main_table.cellWidget(row, self._main_column(column))
+
+    def setColumnWidth(self, column: int, width: int) -> None:
+        if self._is_frozen_column(column):
+            self._frozen_table.setColumnWidth(column, width)
+            # 冻结表格宽度需要随列宽变化
+            self._update_frozen_table_width()
+        else:
+            self._main_table.setColumnWidth(self._main_column(column), width)
+
+    def _update_frozen_table_width(self) -> None:
+        total = 0
+        for col in range(self._frozen_table.columnCount()):
+            total += self._frozen_table.columnWidth(col)
+        self._frozen_table.setMinimumWidth(total)
+        self._frozen_table.setMaximumWidth(total)
+
+    def columnWidth(self, column: int) -> int:
+        if self._is_frozen_column(column):
+            return self._frozen_table.columnWidth(column)
+        return self._main_table.columnWidth(self._main_column(column))
+
+    def setRowHeight(self, row: int, height: int) -> None:
+        self._main_table.setRowHeight(row, height)
+        self._frozen_table.setRowHeight(row, height)
+
+    def rowHeight(self, row: int) -> int:
+        return self._main_table.rowHeight(row)
+
+    def setHorizontalHeaderLabels(self, labels) -> None:
+        frozen_labels = labels[:self._frozen_column_count]
+        main_labels = labels[self._frozen_column_count:]
+        self._frozen_table.setHorizontalHeaderLabels(frozen_labels)
+        self._main_table.setHorizontalHeaderLabels(main_labels)
+
+    def horizontalHeaderItem(self, column: int):
+        if self._is_frozen_column(column):
+            return self._frozen_table.horizontalHeaderItem(column)
+        return self._main_table.horizontalHeaderItem(self._main_column(column))
+
+    def setHorizontalHeaderItem(self, column: int, item) -> None:
+        if self._is_frozen_column(column):
+            self._frozen_table.setHorizontalHeaderItem(column, item)
+        else:
+            self._main_table.setHorizontalHeaderItem(self._main_column(column), item)
+
+    def setItemDelegateForColumn(self, column: int, delegate) -> None:
+        if self._is_frozen_column(column):
+            self._frozen_table.setItemDelegateForColumn(column, delegate)
+        else:
+            self._main_table.setItemDelegateForColumn(self._main_column(column), delegate)
+
+    def clearContents(self) -> None:
+        self._frozen_table.clearContents()
+        self._main_table.clearContents()
+
+    def selectRow(self, row: int) -> None:
+        self._main_table.selectRow(row)
+        self._frozen_table.selectRow(row)
+
+    def clearSelection(self) -> None:
+        self._main_table.clearSelection()
+        self._frozen_table.clearSelection()
+
+    def selectedIndexes(self):
+        return self._main_table.selectedIndexes()
+
+    # ---- 样式/外观接口（转发到两个表格） ----
+    def setSelectionBehavior(self, behavior) -> None:
+        self._main_table.setSelectionBehavior(behavior)
+        self._frozen_table.setSelectionBehavior(behavior)
+
+    def setSelectionMode(self, mode) -> None:
+        self._main_table.setSelectionMode(mode)
+        self._frozen_table.setSelectionMode(mode)
+
+    def setAlternatingRowColors(self, enable: bool) -> None:
+        self._main_table.setAlternatingRowColors(enable)
+        self._frozen_table.setAlternatingRowColors(enable)
+
+    def setWordWrap(self, on: bool) -> None:
+        self._main_table.setWordWrap(on)
+        self._frozen_table.setWordWrap(on)
+
+    def setTextElideMode(self, mode) -> None:
+        self._main_table.setTextElideMode(mode)
+        self._frozen_table.setTextElideMode(mode)
+
+    def setStyleSheet(self, ss: str) -> None:
+        self._main_table.setStyleSheet(ss)
+        # 冻结表格继承主表格样式，额外保留右边框分隔线
+        frozen_ss = ss + (
+            "\nQTableView { border: none; border-right: 1px solid %s; }"
+            % PALETTE["card_border"]
+        )
+        self._frozen_table.setStyleSheet(frozen_ss)
+
+    def styleSheet(self) -> str:
+        return self._main_table.styleSheet()
+
+    def setPalette(self, palette) -> None:
+        self._main_table.setPalette(palette)
+        self._frozen_table.setPalette(palette)
+
+    def palette(self):
+        return self._main_table.palette()
+
+    def font(self):
+        return self._main_table.font()
+
+    def setFont(self, font) -> None:
+        self._main_table.setFont(font)
+        self._frozen_table.setFont(font)
+
+    def itemDelegate(self):
+        return self._main_table.itemDelegate()
+
+    def setObjectName(self, name: str) -> None:
+        self._main_table.setObjectName(name)
+        self._frozen_table.setObjectName(name)
+
+    def objectName(self) -> str:
+        return self._main_table.objectName()
+
+    def setProperty(self, name: str, value) -> bool:
+        r1 = self._main_table.setProperty(name, value)
+        r2 = self._frozen_table.setProperty(name, value)
+        return r1 and r2
+
+    def property(self, name: str):
+        return self._main_table.property(name)
+
+    def setUpdatesEnabled(self, enable: bool) -> None:
+        self._main_table.setUpdatesEnabled(enable)
+        self._frozen_table.setUpdatesEnabled(enable)
+
+    def updatesEnabled(self) -> bool:
+        return self._main_table.updatesEnabled()
+
+    def viewport(self):
+        return self._main_table.viewport()
+
+    def model(self):
+        return self._main_table.model()
+
+    def setModel(self, model) -> None:
+        self._main_table.setModel(model)
+
+    def indexAt(self, pos):
+        return self._main_table.indexAt(pos)
+
+    def visualItemRect(self, item):
+        return self._main_table.visualItemRect(item)
+
+    def rowViewportPosition(self, row: int) -> int:
+        return self._main_table.rowViewportPosition(row)
+
+    def columnViewportPosition(self, column: int) -> int:
+        if self._is_frozen_column(column):
+            return self._frozen_table.columnViewportPosition(column)
+        return self._main_table.columnViewportPosition(self._main_column(column))
+
+    def itemAt(self, *args):
+        return self._main_table.itemAt(*args)
+
+    def setIndexWidget(self, index, widget) -> None:
+        self._main_table.setIndexWidget(index, widget)
+
+    def indexWidget(self, index):
+        return self._main_table.indexWidget(index)
+
+    def editItem(self, item) -> None:
+        self._main_table.editItem(item)
+
+    def openPersistentEditor(self, item) -> None:
+        self._main_table.openPersistentEditor(item)
+
+    def closePersistentEditor(self, item) -> None:
+        self._main_table.closePersistentEditor(item)
+
+    def sortItems(self, column: int, order=...) -> None:
+        if self._is_frozen_column(column):
+            self._frozen_table.sortItems(column, order)
+        else:
+            self._main_table.sortItems(self._main_column(column), order)
+
+    def findItems(self, text, flags):
+        return self._main_table.findItems(text, flags)
+
+    def setSpan(self, row: int, column: int, rowSpan: int, columnSpan: int) -> None:
+        self._main_table.setSpan(row, column, rowSpan, columnSpan)
+
+    def setShowGrid(self, show: bool) -> None:
+        self._main_table.setShowGrid(show)
+        self._frozen_table.setShowGrid(show)
+
+    def showGrid(self) -> bool:
+        return self._main_table.showGrid()
+
+    def setGridStyle(self, style) -> None:
+        self._main_table.setGridStyle(style)
+        self._frozen_table.setGridStyle(style)
+
+    def gridStyle(self):
+        return self._main_table.gridStyle()
+
+    def setSortingEnabled(self, enable: bool) -> None:
+        self._main_table.setSortingEnabled(enable)
+
+    def isSortingEnabled(self) -> bool:
+        return self._main_table.isSortingEnabled()
+
+    def setCornerButtonEnabled(self, enable: bool) -> None:
+        self._main_table.setCornerButtonEnabled(enable)
+
+    def isCornerButtonEnabled(self) -> bool:
+        return self._main_table.isCornerButtonEnabled()
+
+    def setDragDropMode(self, mode) -> None:
+        self._main_table.setDragDropMode(mode)
+
+    def dragDropMode(self):
+        return self._main_table.dragDropMode()
+
+    def setDragEnabled(self, enable: bool) -> None:
+        self._main_table.setDragEnabled(enable)
+
+    def dragEnabled(self) -> bool:
+        return self._main_table.dragEnabled()
+
+    def setAcceptDrops(self, enable: bool) -> None:
+        self._main_table.setAcceptDrops(enable)
+
+    def acceptDrops(self) -> bool:
+        return self._main_table.acceptDrops()
+
+    def setDropIndicatorShown(self, enable: bool) -> None:
+        self._main_table.setDropIndicatorShown(enable)
+
+    def showDropIndicator(self) -> bool:
+        return self._main_table.showDropIndicator()
+
+    def setTabKeyNavigation(self, enable: bool) -> None:
+        self._main_table.setTabKeyNavigation(enable)
+        self._frozen_table.setTabKeyNavigation(enable)
+
+    def tabKeyNavigation(self) -> bool:
+        return self._main_table.tabKeyNavigation()
+
+    def setTextElideMode(self, mode) -> None:
+        self._main_table.setTextElideMode(mode)
+        self._frozen_table.setTextElideMode(mode)
+
+    def textElideMode(self):
+        return self._main_table.textElideMode()
+
+    def setIconSize(self, size) -> None:
+        self._main_table.setIconSize(size)
+        self._frozen_table.setIconSize(size)
+
+    def iconSize(self):
+        return self._main_table.iconSize()
+
+    def setSelectionMode(self, mode) -> None:
+        self._main_table.setSelectionMode(mode)
+        self._frozen_table.setSelectionMode(mode)
+
+    def selectionMode(self):
+        return self._main_table.selectionMode()
+
+    def setSelectionBehavior(self, behavior) -> None:
+        self._main_table.setSelectionBehavior(behavior)
+        self._frozen_table.setSelectionBehavior(behavior)
+
+    def selectionBehavior(self):
+        return self._main_table.selectionBehavior()
+
+    def setSelectionModel(self, selectionModel) -> None:
+        self._main_table.setSelectionModel(selectionModel)
+
+    def selectionModel(self):
+        return self._main_table.selectionModel()
+
+    def selectedItems(self):
+        return self._main_table.selectedItems()
+
+    def selectedRanges(self):
+        return self._main_table.selectedRanges()
+
+    def setCurrentCell(self, row: int, column: int) -> None:
+        if self._is_frozen_column(column):
+            self._frozen_table.setCurrentCell(row, column)
+        else:
+            self._main_table.setCurrentCell(row, self._main_column(column))
+
+    def currentRow(self) -> int:
+        return self._main_table.currentRow()
+
+    def currentColumn(self) -> int:
+        col = self._main_table.currentColumn()
+        if col < 0:
+            return col
+        return col + self._frozen_column_count
+
+    def currentItem(self):
+        return self._main_table.currentItem()
+
+    def setCurrentItem(self, item) -> None:
+        self._main_table.setCurrentItem(item)
+
+    def scrollToItem(self, item, hint=...) -> None:
+        self._main_table.scrollToItem(item, hint)
+
+    def scrollTo(self, index, hint=...) -> None:
+        self._main_table.scrollTo(index, hint)
+
+    def resizeColumnsToContents(self) -> None:
+        self._main_table.resizeColumnsToContents()
+        self._frozen_table.resizeColumnsToContents()
+        self._update_frozen_table_width()
+
+    def resizeColumnToContents(self, column: int) -> None:
+        if self._is_frozen_column(column):
+            self._frozen_table.resizeColumnToContents(column)
+            self._update_frozen_table_width()
+        else:
+            self._main_table.resizeColumnToContents(self._main_column(column))
+
+    def resizeRowsToContents(self) -> None:
+        self._main_table.resizeRowsToContents()
+        self._sync_all_row_heights()
+
+    def resizeRowToContents(self, row: int) -> None:
+        self._main_table.resizeRowToContents(row)
+        self._sync_all_row_heights()
+
+    def setColumnHidden(self, column: int, hide: bool) -> None:
+        if self._is_frozen_column(column):
+            self._frozen_table.setColumnHidden(column, hide)
+            self._update_frozen_table_width()
+        else:
+            self._main_table.setColumnHidden(self._main_column(column), hide)
+
+    def isColumnHidden(self, column: int) -> bool:
+        if self._is_frozen_column(column):
+            return self._frozen_table.isColumnHidden(column)
+        return self._main_table.isColumnHidden(self._main_column(column))
+
+    def setRowHidden(self, row: int, hide: bool) -> None:
+        self._main_table.setRowHidden(row, hide)
+        self._frozen_table.setRowHidden(row, hide)
+
+    def isRowHidden(self, row: int) -> bool:
+        return self._main_table.isRowHidden(row)
+
+    def setColumnWidth(self, column: int, width: int) -> None:
+        if self._is_frozen_column(column):
+            self._frozen_table.setColumnWidth(column, width)
+            self._update_frozen_table_width()
+        else:
+            self._main_table.setColumnWidth(self._main_column(column), width)
+
+    def horizontalHeader(self):
+        return self._main_table.horizontalHeader()
+
+    def verticalHeader(self):
+        return self._main_table.verticalHeader()
+
+    def setHorizontalScrollBarPolicy(self, policy) -> None:
+        self._main_table.setHorizontalScrollBarPolicy(policy)
+
+    def setVerticalScrollBarPolicy(self, policy) -> None:
+        self._main_table.setVerticalScrollBarPolicy(policy)
+
+    def verticalScrollBar(self):
+        return self._main_table.verticalScrollBar()
+
+    def horizontalScrollBar(self):
+        return self._main_table.horizontalScrollBar()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_frozen_table_width()
+        self._sync_all_row_heights()
 
 
 def apply_tooltip(widget: QWidget, text: str) -> None:
